@@ -1,0 +1,60 @@
+{
+  "video_id": "V_TEST",
+  "title": "做空是什么",
+  "topic": "做空",
+  "status": "draft",
+  "total_duration_estimated": 18.0,
+  "total_duration_actual": null,
+  "shots": [
+    {
+      "shot_id": "S01",
+      "section": "钩子",
+      "text": "你知道股票跌了也能赚钱吗？",
+      "estimated_duration": 5.0,
+      "actual_start": null,
+      "actual_end": null,
+      "background_id": "BG_OFFICE_01",
+      "expression_id": "EXPR_SHOCK_01",
+      "scene_tags": [
+        "震惊"
+      ],
+      "element_insets": [],
+      "subtitle_style": "hook_big",
+      "audio_clip_path": null,
+      "status": "pending"
+    },
+    {
+      "shot_id": "S02",
+      "section": "共鸣",
+      "text": "去年大盘跌的时候，很多人账户都缩水了...",
+      "estimated_duration": 13.0,
+      "actual_start": null,
+      "actual_end": null,
+      "background_id": "MISSING: 股市大屏+红色K线",
+      "expression_id": "EXPR_WORRIED_02",
+      "scene_tags": [
+        "担忧",
+        "失落"
+      ],
+      "element_insets": [
+        {
+          "id": "MISSING: K 线下跌示意图",
+          "enter_offset": 1.0,
+          "duration": 3.0,
+          "frame_style": "tv_screen",
+          "position": "top_right"
+        }
+      ],
+      "subtitle_style": "正文",
+      "audio_clip_path": null,
+      "status": "pending"
+    }
+  ],
+  "final_audio_path": null,
+  "final_subtitle_path": null,
+  "final_video_path": null,
+  "cover_path": null,
+  "publish_title": null,
+  "publish_description": null,
+  "publish_tags": []
+}

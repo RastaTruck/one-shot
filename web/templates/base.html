@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}一二布布 · AI 视频工作台{% endblock %}</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            // 品牌色系：温暖的金融感
+            brand: {
+              50:  '#FFF8EC',
+              100: '#FFEDCE',
+              200: '#FFD999',
+              300: '#FFC166',
+              400: '#FFA838',
+              500: '#F48A0C',   // 主色
+              600: '#D06E05',
+              700: '#9F5404',
+              800: '#703B04',
+              900: '#4B2802',
+            },
+            // 灰度：Apple Ink-like
+            ink: {
+              50:  '#FAFAF7',   // 背景奶白
+              100: '#F4F3EE',
+              200: '#E8E6DE',
+              300: '#CFCCC0',
+              400: '#A09C8E',
+              500: '#6E6A5F',
+              600: '#4B4840',
+              700: '#2E2C27',
+              800: '#1C1B18',
+              900: '#0D0D0B',
+            }
+          },
+          fontFamily: {
+            display: ['"SF Pro Display"', '"PingFang SC"', '"Hiragino Sans GB"', 'system-ui', 'sans-serif'],
+            sans: ['"SF Pro Text"', '"PingFang SC"', '"Hiragino Sans GB"', 'system-ui', 'sans-serif'],
+          },
+          boxShadow: {
+            // DNA §色彩：克制阴影 · 层级靠边框不靠浮空
+            'soft':   '0 1px 2px rgba(13,13,11,.06)',
+            'medium': '0 2px 6px rgba(13,13,11,.08)',
+            'strong': '0 4px 16px rgba(13,13,11,.10)',
+          },
+          keyframes: {
+            // DNA §动效：ease-out-quart · 利落入场 · 不要 fadeInUp 软动效
+            fadeIn: {
+              '0%':   { opacity: 0 },
+              '100%': { opacity: 1 }
+            },
+            slideIn: {
+              '0%':   { opacity: 0, transform: 'translateY(4px)' },
+              '100%': { opacity: 1, transform: 'translateY(0)' }
+            },
+            shimmer: {
+              '0%':   { backgroundPosition: '-400px 0' },
+              '100%': { backgroundPosition: '400px 0' }
+            }
+          },
+          animation: {
+            'fade-in':  'fadeIn .2s cubic-bezier(0.25, 1, 0.5, 1) both',
+            'slide-in': 'slideIn .25s cubic-bezier(0.25, 1, 0.5, 1) both',
+            // 兼容性别名：旧模板里的 animate-fade-in-up 指向新的利落动画
+            'fade-in-up': 'slideIn .25s cubic-bezier(0.25, 1, 0.5, 1) both',
+            'shimmer':    'shimmer 1.6s linear infinite',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- HTMX + Alpine + Lucide -->
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.13.10/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <link rel="stylesheet" href="/static/css/custom.css">
+
+  <style>
+    html, body { height: 100%; }
+    body {
+      background: #FAFAF7;
+      color: #1C1B18;
+      -webkit-font-smoothing: antialiased;
+      font-feature-settings: "ss01","cv11";
+    }
+    [x-cloak] { display: none !important; }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline-block; }
+
+    /* 毛玻璃顶栏 */
+    .glass {
+      background: rgba(250, 250, 247, 0.78);
+      backdrop-filter: saturate(180%) blur(14px);
+      -webkit-backdrop-filter: saturate(180%) blur(14px);
+    }
+
+    /* Stepper 连接线 · DNA §色彩：强调色单色不渐变 */
+    .stepper-line { flex: 1; height: 2px; background: #E8E6DE; border-radius: 1px; }
+    .stepper-line.done { background: #F48A0C; }
+
+    /* 骨架屏闪光 */
+    .skeleton {
+      background: linear-gradient(90deg, #F0EEE8 0%, #E4E2DB 50%, #F0EEE8 100%);
+      background-size: 400px 100%;
+    }
+
+    /* 隐藏原生滚动条审美 */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #E8E6DE; border-radius: 10px; border: 2px solid #FAFAF7; }
+    ::-webkit-scrollbar-thumb:hover { background: #CFCCC0; }
+  </style>
+</head>
+<body class="flex h-screen overflow-hidden font-sans">
+
+  <!-- ==================== 侧边栏 ==================== -->
+  <aside class="w-[248px] shrink-0 bg-white border-r border-ink-200 flex flex-col">
+    <!-- Logo -->
+    <div class="h-[64px] flex items-center px-5 border-b border-ink-200">
+      <div class="relative w-9 h-9 rounded-lg bg-brand-500 flex items-center justify-center">
+        <span class="text-white font-black text-[15px] tracking-tight">布</span>
+        <div class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white"></div>
+      </div>
+      <div class="ml-3">
+        <div class="font-display font-semibold text-sm leading-tight text-ink-900">一二布布</div>
+        <div class="text-[11px] text-ink-500 leading-tight mt-0.5">AI 视频工作台</div>
+      </div>
+    </div>
+
+    <!-- 主导航 -->
+    <nav class="flex-1 overflow-y-auto py-4 px-3">
+      <!-- 工作台 -->
+      <div class="pb-1 px-3 text-[10px] font-semibold text-ink-400 uppercase tracking-[0.1em]">工作台</div>
+      <a href="/"
+         class="mt-1 flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition
+                {% if active_nav == 'projects' %}bg-ink-900 text-white shadow-soft{% else %}text-ink-700 hover:bg-ink-100{% endif %}">
+        <i data-lucide="layout-dashboard" class="w-[18px] h-[18px]"></i>
+        <span>项目看板</span>
+      </a>
+      <a href="/library"
+         class="mt-0.5 flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition
+                {% if active_nav == 'library' %}bg-ink-900 text-white shadow-soft{% else %}text-ink-700 hover:bg-ink-100{% endif %}">
+        <i data-lucide="images" class="w-[18px] h-[18px]"></i>
+        <span>素材库</span>
+      </a>
+
+      <!-- 当前项目 -->
+      {% if current_video %}
+      <div class="mt-6 pb-1 px-3 text-[10px] font-semibold text-ink-400 uppercase tracking-[0.1em]">当前项目</div>
+      <div class="mt-1 mx-2 p-3 rounded-xl bg-brand-50 border border-brand-100">
+        <div class="text-[11px] text-brand-700 font-medium">{{ current_video.status_label or '进行中' }}</div>
+        <div class="mt-0.5 text-[13px] font-semibold text-ink-900 truncate">{{ current_video.title }}</div>
+      </div>
+      {% for step in steps %}
+      {% set idx = loop.index0 %}
+      {% set done = idx <= current_step_index %}
+      {% set active = active_nav == step.key %}
+      <a href="/project/{{ current_video.video_id }}/{{ step.key }}"
+         class="mt-0.5 flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition
+                {% if active %}bg-ink-900 text-white shadow-soft
+                {% elif done %}text-ink-700 hover:bg-ink-100
+                {% else %}text-ink-500 hover:bg-ink-100{% endif %}">
+        <span class="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-semibold
+                     {% if done and not active %}bg-brand-500 text-white
+                     {% elif active %}bg-white/20 text-white
+                     {% else %}bg-ink-100 text-ink-400 border border-ink-200{% endif %}">
+          {% if done and not active %}✓{% else %}{{ idx + 1 }}{% endif %}
+        </span>
+        <span>{{ step.label_short }}</span>
+      </a>
+      {% endfor %}
+      {% endif %}
+    </nav>
+
+    <!-- 底部 -->
+    <div class="px-4 py-3 border-t border-ink-200">
+      <div class="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-ink-100/60">
+        <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+        <span class="text-[11px] text-ink-600 font-medium">Mock 模式</span>
+        <span class="ml-auto text-[10px] text-ink-400">v0.1</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== 主区 ==================== -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    <!-- 顶栏 -->
+    <header class="h-[64px] shrink-0 flex items-center px-8 border-b border-ink-200 glass sticky top-0 z-10">
+      <div class="flex-1 flex items-center gap-3">
+        {% block topbar %}
+        <h1 class="text-[15px] font-display font-semibold tracking-tight text-ink-900">
+          {% block page_title %}项目看板{% endblock %}
+        </h1>
+        {% endblock %}
+      </div>
+      <div class="flex items-center gap-2">
+        {% block topbar_right %}
+        <button class="btn-ghost">
+          <i data-lucide="bell" class="w-[16px] h-[16px]"></i>
+        </button>
+        <div class="w-8 h-8 rounded-lg bg-ink-900 flex items-center justify-center text-white text-xs font-bold">
+          我
+        </div>
+        {% endblock %}
+      </div>
+    </header>
+
+    {% block stepper %}
+    {% if current_video and show_stepper|default(true) %}
+    {% include "_stepper.html" %}
+    {% endif %}
+    {% endblock %}
+
+    <main class="flex-1 overflow-y-auto">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => lucide.createIcons());
+    document.body.addEventListener('htmx:afterSwap', () => lucide.createIcons());
+  </script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

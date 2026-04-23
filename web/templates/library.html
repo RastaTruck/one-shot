@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block page_title %}素材库{% endblock %}
+{% block stepper %}{% endblock %}
+
+{% block content %}
+<div x-data="{ tab: 'expressions', sceneFilter: '' }" class="px-8 py-8 max-w-[1440px] mx-auto">
+
+  <!-- 顶部：标题 + 搜索 -->
+  <section class="flex items-end justify-between mb-6 animate-fade-in-up">
+    <div>
+      <h1 class="font-display text-[28px] font-semibold tracking-tight text-ink-900">素材库</h1>
+      <p class="mt-1 text-[13px] text-ink-500">表情动图（预制）· 背景 · 画框元素 三大仓库 · 共 <b class="text-ink-900">{{ library.backgrounds|length + library.elements|length + library.expressions|length }}</b> 个资产</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="relative">
+        <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400"></i>
+        <input type="text" placeholder="搜索标签 / 描述 / ID..."
+               class="w-72 pl-9 pr-3 py-2.5 text-[13px] border border-ink-200 rounded-xl focus:border-brand-400 focus:ring-[3px] focus:ring-brand-100 outline-none transition" />
+      </div>
+      <button class="btn-primary" x-show="tab==='expressions'">
+        <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+        <span>批量导入表情</span>
+      </button>
+      <button class="btn-primary" x-show="tab!=='expressions'">
+        <i data-lucide="upload" class="w-4 h-4"></i>
+        <span>上传</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Tab 切换 -->
+  <section class="flex items-center gap-1 p-1 rounded-2xl bg-white border border-ink-200 mb-6 w-fit animate-fade-in-up">
+    {% for key, label, count, icon in [
+        ('expressions', '表情动图', library.expressions|length, 'smile'),
+        ('backgrounds', '背景', library.backgrounds|length, 'image'),
+        ('elements', '画框元素', library.elements|length, 'frame')
+    ] %}
+    <button @click="tab='{{ key }}'; sceneFilter=''"
+            :class="tab==='{{ key }}' ? 'bg-ink-900 text-white shadow-soft' : 'text-ink-600 hover:bg-ink-100'"
+            class="px-4 py-2 rounded-xl text-[13px] font-medium transition flex items-center gap-2">
+      <i data-lucide="{{ icon }}" class="w-3.5 h-3.5"></i>
+      <span>{{ label }}</span>
+      <span class="text-[11px] opacity-60">{{ count }}</span>
+    </button>
+    {% endfor %}
+  </section>
+
+  <!-- 场景标签筛选条（仅表情动图） -->
+  <section x-show="tab==='expressions'" x-cloak class="mb-5 flex items-center gap-2 flex-wrap">
+    <span class="text-[11px] text-ink-500 font-semibold tracking-wider uppercase">场景筛选:</span>
+    <button @click="sceneFilter=''"
+            :class="sceneFilter==='' ? 'bg-ink-900 text-white' : 'bg-white text-ink-600 hover:bg-ink-100 border border-ink-200'"
+            class="px-2.5 py-1 rounded-lg text-[11px] font-medium transition">全部</button>
+    {% for t in library.scene_tags %}
+    <button @click="sceneFilter='{{ t }}'"
+            :class="sceneFilter==='{{ t }}' ? 'bg-amber-500 text-white' : 'bg-white text-ink-600 hover:bg-amber-50 border border-ink-200'"
+            class="px-2.5 py-1 rounded-lg text-[11px] font-medium transition">#{{ t }}</button>
+    {% endfor %}
+  </section>
+
+  <!-- 背景 -->
+  <div x-show="tab==='backgrounds'" x-cloak class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+    {% for a in library.backgrounds %}
+    <div class="group rounded-2xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-medium transition overflow-hidden animate-fade-in-up"
+         style="animation-delay: {{ loop.index0 * 30 }}ms">
+      <div class="aspect-[16/10] flex items-center justify-center text-[48px] relative"
+           style="background: {{ a.bg }};">
+        <span class="opacity-90">{{ a.emoji }}</span>
+        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition flex gap-1">
+          <button class="w-7 h-7 rounded-md bg-white/90 backdrop-blur flex items-center justify-center">
+            <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+          </button>
+          <button class="w-7 h-7 rounded-md bg-white/90 backdrop-blur flex items-center justify-center">
+            <i data-lucide="more-horizontal" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      </div>
+      <div class="p-3">
+        <div class="text-[11px] font-mono text-ink-500 truncate">{{ a.id }}</div>
+        <div class="mt-1 flex items-center gap-1 flex-wrap">
+          {% for t in a.tags %}
+          <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-ink-100 text-ink-600">{{ t }}</span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- 画框元素 -->
+  <div x-show="tab==='elements'" x-cloak class="grid grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3">
+    {% for a in library.elements %}
+    <div class="group rounded-xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-soft transition overflow-hidden">
+      <div class="aspect-square flex items-center justify-center text-[40px]" style="background: {{ a.bg }};">
+        {{ a.emoji }}
+      </div>
+      <div class="px-2 py-1.5">
+        <div class="text-[10px] font-mono text-ink-500 truncate">{{ a.id }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- 表情动图 -->
+  <div x-show="tab==='expressions'" x-cloak class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+    {% for a in library.expressions %}
+    <div class="group rounded-2xl bg-white border border-ink-200 hover:border-blue-300 hover:shadow-medium transition overflow-hidden"
+         x-show="sceneFilter==='' || {{ a.scene_tags|tojson }}.includes(sceneFilter)">
+      <div class="aspect-[16/10] flex items-center justify-center text-[56px] relative" style="background: {{ a.bg }};">
+        <span class="opacity-90">{{ a.emoji }}</span>
+        <div class="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/30 transition">
+          <div class="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center opacity-0 hover:opacity-100 transition">
+            <i data-lucide="play" class="w-5 h-5 text-ink-900 ml-0.5"></i>
+          </div>
+        </div>
+        <div class="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-blue-600/90 text-white text-[10px] font-mono">alpha</div>
+        <div class="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-black/50 text-white text-[10px] font-mono">{{ a.duration }}s</div>
+      </div>
+      <div class="p-3">
+        <div class="flex items-center gap-1.5">
+          <div class="text-[11px] font-mono text-ink-500 truncate flex-1">{{ a.id }}</div>
+          <span class="text-[9px] px-1 py-0.5 rounded bg-ink-100 text-ink-500">强度 {{ a.intensity }}</span>
+        </div>
+        <div class="mt-1 flex items-center gap-1 flex-wrap">
+          {% for t in a.scene_tags %}
+          <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">#{{ t }}</span>
+          {% endfor %}
+          <span class="text-[10px] text-ink-400 ml-auto">{{ a.character }}</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}

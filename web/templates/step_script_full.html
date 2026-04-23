@@ -1,0 +1,484 @@
+{% extends "base.html" %}
+{% block page_title %}② 文案 · 完整文稿 · {{ current_video.title }}{% endblock %}
+
+{% block topbar_right %}
+<div class="hidden md:flex items-center gap-1 text-[12px]">
+  <i data-lucide="file-edit" class="w-3.5 h-3.5 text-brand-500"></i>
+  <span class="text-ink-500" x-data x-text="$store.full ? $store.full.statusText : '加载中'"></span>
+</div>
+{% endblock %}
+
+{% block content %}
+<script>
+document.addEventListener('alpine:init', () => {
+  const initFull = {{ full | tojson if full else 'null' }};
+  Alpine.store('full', {
+    videoId: "{{ current_video.video_id }}",
+    duration: {{ duration }},
+    full: initFull,
+    available: {{ available | tojson }},
+    refining: {},   // {idx: true}
+    saveTimer: null,
+    statusText: initFull ? `${initFull.total_chars||0} 字 · ${initFull.duration_sec}s` : '尚未生成',
+
+    save() {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = setTimeout(async () => {
+        // 重新计算总字数 + 清理过期警告
+        if (this.full) {
+          this.full.total_chars = (this.full.paragraphs || []).reduce((n, p) => n + (p.text||'').length, 0);
+          // 达标就清掉 warning
+          const lo = Math.round(this.full.duration_sec * this.full.pace_chars_per_sec * 0.85);
+          if (this.full.total_chars >= lo && this.full.char_warning) {
+            delete this.full.char_warning;
+          }
+        }
+        const r = await fetch('/api/script/full/save', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId, full: this.full}),
+        });
+        if (r.ok) this.statusText = `已保存 · ${this.full.total_chars} 字`;
+      }, 600);
+    },
+
+    mark(idx, type) {
+      const p = this.full.paragraphs[idx];
+      p.marked = (p.marked === type) ? null : type;
+      this.save();
+    },
+
+    delete(idx) {
+      if (!confirm('确认删除这一段？')) return;
+      this.full.paragraphs.splice(idx, 1);
+      this.full.paragraphs.forEach((p, i) => p.id = 'p' + (i+1));
+      this.save();
+    },
+
+    addAfter(idx) {
+      const newP = {id: 'pNew', role: '段落', text: '', duration_sec: 0, marked: null, edited: true};
+      this.full.paragraphs.splice(idx + 1, 0, newP);
+      this.full.paragraphs.forEach((p, i) => p.id = 'p' + (i+1));
+      this.save();
+    },
+
+    async regenerate() {
+      if (!confirm('用相同选题/风格/大纲重新生成本时长（' + this.full.duration_sec + 's）的完整文稿？\n当前稿会被覆盖（如已编辑的请先复制全文）。')) return;
+      this.statusText = `重新生成中 · 时长 ${this.full.duration_sec}s · 约 90-180 秒`;
+      try {
+        // 拿大纲：重新去 /api/script/full/load 拿 outline_id 然后查 drafts
+        const drafts = await fetch('/api/script/generate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId})
+        }).then(r=>r.json()).then(d=>d.drafts);
+        const outline = drafts.find(d => d.draft_id === this.full.outline_id) || drafts[0];
+        const r = await fetch('/api/script/full/generate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            video_id: this.videoId, outline,
+            duration_sec: this.full.duration_sec,
+            pace_chars_per_sec: this.full.pace_chars_per_sec,
+          })
+        });
+        const data = await r.json();
+        if (data.error) { alert('生成失败: ' + data.error); return; }
+        this.full = data.full;
+        this.statusText = `重新生成完成 · ${data.provider} · ¥${(data.cost||0).toFixed(4)} · ${data.full.total_chars} 字`;
+      } catch(e) {
+        alert('网络错误: ' + e.message);
+      }
+    },
+
+    async expandToTarget() {
+      const target = Math.round(this.full.duration_sec * this.full.pace_chars_per_sec);
+      const current = (this.full.paragraphs || []).reduce((n, p) => n + (p.text||'').length, 0);
+      if (current >= target * 0.85) { alert('字数已达标，无需扩写'); return; }
+      this.statusText = `让 AI 补字数 ${current} → 目标 ${target}…`;
+      // 依次对每段说"再扩 20 字"，直到总字数达标
+      for (let i = 0; i < this.full.paragraphs.length; i++) {
+        const nowSum = this.full.paragraphs.reduce((n,p) => n + (p.text||'').length, 0);
+        if (nowSum >= Math.round(target * 0.9)) break;
+        const need = Math.ceil((Math.round(target * 0.95) - nowSum) / (this.full.paragraphs.length - i));
+        await this.refine(i, `在保持 role 和 purpose 不变的前提下，把这段再扩写 ${need}-${need + 10} 字，加入更具体的数字/案例/机制细节`);
+      }
+      this.statusText = `扩写完成 · ${this.full.total_chars} 字`;
+    },
+
+    async refine(idx, instruction = '') {
+      this.refining[idx] = true;
+      try {
+        const r = await fetch('/api/script/full/refine', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId, full: this.full, paragraph_idx: idx, instruction}),
+        });
+        const data = await r.json();
+        if (data.error) { alert('重写失败: ' + data.error); return; }
+        const p = this.full.paragraphs[idx];
+        p.text = data.text;
+        p.duration_sec = data.duration_sec;
+        p.edited = true;
+        p.marked = null;
+        this.save();
+        this.statusText = `第 ${idx+1} 段已重写 · ${data.provider}`;
+      } finally { this.refining[idx] = false; }
+    },
+
+    async refineAllMarked(instruction = '按上下文重写得更紧凑') {
+      const idxs = (this.full.paragraphs || []).map((p, i) => p.marked === 'rewrite' ? i : -1).filter(i => i >= 0);
+      if (!idxs.length) { alert('没有标记为「重写」的段落'); return; }
+      this.statusText = `批量重写 ${idxs.length} 段中…`;
+      for (const i of idxs) { await this.refine(i, instruction); }
+      this.statusText = `批量重写完成 · ${idxs.length} 段`;
+    },
+
+    deleteAllMarked() {
+      const before = (this.full.paragraphs || []).length;
+      this.full.paragraphs = (this.full.paragraphs || []).filter(p => p.marked !== 'delete');
+      this.full.paragraphs.forEach((p, i) => p.id = 'p' + (i+1));
+      this.statusText = `删除了 ${before - this.full.paragraphs.length} 段`;
+      this.save();
+    },
+
+    markedCount() {
+      return (this.full?.paragraphs || []).reduce((acc, p) => {
+        if (p.marked === 'delete') acc.del++;
+        else if (p.marked === 'rewrite') acc.rew++;
+        return acc;
+      }, {del: 0, rew: 0});
+    },
+
+    paragraphChars(p) { return (p.text || '').length; },
+
+    fullText() {
+      return (this.full?.paragraphs || []).map(p => p.text || '').filter(Boolean).join('\n\n');
+    },
+
+    async copyFullText() {
+      try {
+        await navigator.clipboard.writeText(this.fullText());
+        this.statusText = '✓ 全文已复制到剪贴板';
+      } catch(e) {
+        alert('复制失败（浏览器限制）：\n\n' + this.fullText());
+      }
+    },
+  });
+});
+</script>
+
+<div x-data="{ get F() { return $store.full; } }" class="px-6 py-6 max-w-[1200px] mx-auto">
+
+  <!-- ========== 顶条 ========== -->
+  <div class="rounded-2xl bg-white border border-ink-200 shadow-soft p-4 mb-5">
+    <div class="flex items-center gap-3">
+      <div class="shrink-0 flex items-center gap-3 pr-4 border-r border-ink-200">
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center text-[20px]" style="background: {{ style_preset.bg }};">{{ style_preset.emoji }}</div>
+        <div class="min-w-0">
+          <div class="text-[10px] text-ink-500 flex items-center gap-1">
+            <i data-lucide="link" class="w-2.5 h-2.5"></i>
+            <span>选题 + 风格</span>
+            <a href="/project/{{ current_video.video_id }}/script" class="text-brand-600 hover:text-brand-800 underline ml-1">回上一步</a>
+          </div>
+          <div class="text-[13px] font-semibold text-ink-900 truncate max-w-[280px]">{{ current_video.title }}</div>
+          <div class="text-[10px] text-brand-700">风格: {{ style_preset.name }}</div>
+        </div>
+      </div>
+
+      <div class="flex-1 text-[12px] text-ink-600">
+        <div class="font-semibold text-ink-900">第 2 步 · 完整文稿编辑（人工审核）</div>
+        <div class="text-[11px] text-ink-500" x-show="F.full">
+          <span x-text="'目标 ' + F.full.duration_sec + 's · 实际 ' + (F.full.total_chars||0) + ' 字 ≈ ' + (((F.full.total_chars||0)/4).toFixed(0)) + 's'"></span>
+        </div>
+      </div>
+
+      <!-- 时长切换 + 操作 -->
+      <div class="shrink-0 flex items-center gap-1.5">
+        <template x-for="d in [60, 120, 180]" :key="d">
+          <a :href="'/project/{{ current_video.video_id }}/script/full?duration=' + d"
+             class="px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition"
+             :class="F.full && F.full.duration_sec === d ? 'bg-ink-900 text-white border-ink-900' : 'bg-white border-ink-200 text-ink-600 hover:border-brand-300'">
+            <span x-text="(d/60) + 'min'"></span>
+          </a>
+        </template>
+
+        <button @click="F.regenerate()" x-show="F.full"
+                class="ml-1 btn-ghost text-[11px]" title="用相同大纲重新生成本时长完整文稿">
+          <i data-lucide="refresh-cw" class="w-3 h-3"></i><span>重新生成</span>
+        </button>
+
+        <a href="/project/{{ current_video.video_id }}/script"
+           class="btn-ghost text-[11px]">
+          <i data-lucide="arrow-left" class="w-3 h-3"></i><span>换大纲/时长</span>
+        </a>
+
+        <a href="/project/{{ current_video.video_id }}/shots"
+           class="ml-1 btn-primary text-[11px]" style="background: linear-gradient(135deg, #059669, #047857);">
+          <span>定稿 · 进入分镜</span>
+          <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 没生成时的引导（也能直接在这里触发）========== -->
+  <div x-show="!F.full" x-cloak class="rounded-2xl bg-white border-2 border-dashed border-ink-200 p-12 text-center">
+    <i data-lucide="file-edit" class="w-12 h-12 mx-auto mb-3 text-ink-300"></i>
+    <div class="font-display font-semibold text-[15px] text-ink-900" x-text="'这个时长（' + F.duration + 's）还没生成完整文稿'"></div>
+    <div class="mt-1 text-[12px] text-ink-500">回上一步选大纲，或直接复用上次的大纲一键生成</div>
+    <div class="mt-4 flex items-center justify-center gap-2">
+      <a href="/project/{{ current_video.video_id }}/script" class="btn-ghost text-[12px]">
+        <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>回去选大纲</span>
+      </a>
+      <button @click="F.full = {duration_sec: F.duration, pace_chars_per_sec: 6, outline_id: 'd2'}; F.regenerate()"
+              class="btn-primary text-[12px]">
+        <i data-lucide="wand-2" class="w-3.5 h-3.5"></i><span>用上次大纲一键生成</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ========== 完整文稿主体 ========== -->
+  <div x-show="F.full" x-cloak class="space-y-3">
+
+    <!-- 🧭 框架卡（认知阶梯 / 核心观点 / 硬信息） -->
+    <div class="rounded-2xl bg-gradient-to-br from-ink-900 via-ink-800 to-brand-900 text-white p-5 shadow-strong relative overflow-hidden" x-show="F.full && F.full.framework">
+      <div class="absolute -top-10 -right-10 w-48 h-48 rounded-full bg-brand-500/20 blur-3xl"></div>
+      <div class="relative space-y-4">
+        <!-- 一句话核心观点 -->
+        <div>
+          <div class="text-[10px] text-brand-300 tracking-wider uppercase font-semibold mb-1.5 flex items-center gap-1">
+            <i data-lucide="target" class="w-3 h-3"></i><span>核心观点 · 一句话</span>
+          </div>
+          <div class="font-display font-semibold text-[16px] leading-snug" x-text="F.full.framework?.one_liner"></div>
+        </div>
+
+        <!-- 认知阶梯 -->
+        <div>
+          <div class="text-[10px] text-brand-300 tracking-wider uppercase font-semibold mb-2 flex items-center gap-1">
+            <i data-lucide="footprints" class="w-3 h-3"></i><span>逻辑次第 · 观众踩这几块石头</span>
+          </div>
+          <div class="flex items-center gap-1 flex-wrap">
+            <template x-for="(step, si) in (F.full.framework?.logical_arc || [])" :key="si">
+              <div class="flex items-center gap-1">
+                <div class="px-2.5 py-1 rounded-md bg-white/10 border border-white/15 text-[11px]">
+                  <span class="font-mono text-brand-300 mr-1" x-text="(si+1)"></span>
+                  <span x-text="step"></span>
+                </div>
+                <i data-lucide="arrow-right" class="w-3 h-3 text-white/30" x-show="si < (F.full.framework?.logical_arc?.length || 0) - 1"></i>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 硬信息清单 -->
+        <div x-show="F.full.framework?.info_points?.length">
+          <div class="text-[10px] text-brand-300 tracking-wider uppercase font-semibold mb-2 flex items-center gap-1">
+            <i data-lucide="database" class="w-3 h-3"></i><span>硬信息清单 · 视频会用到</span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-1.5">
+            <template x-for="ip in (F.full.framework?.info_points || [])" :key="ip">
+              <div class="px-2 py-1.5 rounded bg-white/5 border border-white/10 text-[11px] text-white/90 flex items-start gap-1">
+                <i data-lucide="check" class="w-2.5 h-2.5 shrink-0 mt-1 text-emerald-400"></i>
+                <span x-text="ip"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 节奏统计 + 字数警告 -->
+        <div class="flex items-center gap-3 text-[11px] text-white/60 pt-2 border-t border-white/10 flex-wrap">
+          <span>📝 实际 <b class="text-white" x-text="F.full.total_chars"></b> 字</span>
+          <span>·</span>
+          <span>目标 <b class="text-white" x-text="Math.round(F.full.duration_sec * F.full.pace_chars_per_sec * 0.85)"></b>-<b class="text-white" x-text="Math.round(F.full.duration_sec * F.full.pace_chars_per_sec * 1.15)"></b> 字</span>
+          <span>·</span>
+          <span>⏱ 实际 <b class="text-white" x-text="(F.full.total_chars / F.full.pace_chars_per_sec).toFixed(1)"></b>s / 目标 <b class="text-white" x-text="F.full.duration_sec"></b>s</span>
+          <span>·</span>
+          <span>⚡ <b class="text-white" x-text="F.full.pace_chars_per_sec"></b> 字/秒</span>
+          <button x-show="F.full.total_chars < Math.round(F.full.duration_sec * F.full.pace_chars_per_sec * 0.85)"
+                  @click="F.expandToTarget()"
+                  class="px-2 py-1 rounded-md bg-rose-500 hover:bg-rose-400 text-white text-[11px] font-semibold">
+            <i data-lucide="expand" class="w-3 h-3 inline"></i>
+            <span>字数不足 · 让 AI 再扩写</span>
+          </button>
+        </div>
+        <div x-show="F.full.summary" class="mt-1 text-[10.5px] text-white/50 italic" x-text="'差异化卖点: ' + F.full.summary"></div>
+        <div x-show="F.full.char_warning" class="mt-2 px-2 py-1 rounded bg-rose-500/20 border border-rose-400/30 text-[11px] text-rose-200" x-text="'⚠ ' + F.full.char_warning"></div>
+      </div>
+    </div>
+
+    <!-- 📖 完整口播全文（从头念到尾） -->
+    <div class="rounded-2xl bg-white border-2 border-brand-200 shadow-soft overflow-hidden" x-data="{ expanded: true }">
+      <div class="px-5 py-3 border-b border-ink-100 bg-gradient-to-r from-brand-50 to-transparent flex items-center gap-2">
+        <div class="w-7 h-7 rounded-lg bg-brand-500 text-white flex items-center justify-center">
+          <i data-lucide="book-open" class="w-4 h-4"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="font-display font-semibold text-[14px] text-ink-900">📖 完整口播全文 · 从头念到尾</div>
+          <div class="text-[11px] text-ink-500">
+            <span x-text="F.full.total_chars + ' 字 · ' + (F.full.total_chars/F.full.pace_chars_per_sec).toFixed(1) + ' 秒 · ' + F.full.paragraphs.length + ' 段'"></span>
+            · 下面是把所有段落按顺序连起来的全文，你在下方编辑任何段会自动同步
+          </div>
+        </div>
+        <button @click="F.copyFullText()" class="btn-ghost text-[11px]">
+          <i data-lucide="copy" class="w-3 h-3"></i><span>复制全文</span>
+        </button>
+        <button @click="expanded = !expanded" class="btn-ghost text-[11px]">
+          <i data-lucide="chevron-down" class="w-3 h-3" :class="!expanded && '-rotate-90'"></i>
+          <span x-text="expanded ? '收起' : '展开'"></span>
+        </button>
+      </div>
+
+      <div x-show="expanded" x-cloak>
+        <!-- 标题 -->
+        <div class="px-6 pt-5 pb-2">
+          <div class="text-[10px] text-ink-400 font-semibold tracking-wider uppercase mb-1">视频标题</div>
+          <div class="font-display font-bold text-[18px] text-ink-900" x-text="F.full.title"></div>
+        </div>
+        <!-- 正文（连续段落） -->
+        <div class="px-6 pb-5 space-y-3 max-h-[500px] overflow-y-auto">
+          <template x-for="(p, idx) in (F.full.paragraphs || [])" :key="'read-' + p.id + '-' + idx">
+            <div class="flex gap-3 group"
+                 :class="p.marked === 'delete' ? 'opacity-40' : ''">
+              <!-- 左侧：序号 + role 小标签 -->
+              <div class="shrink-0 w-16 pt-1">
+                <div class="text-[9px] text-ink-400 font-mono" x-text="'#' + (idx+1)"></div>
+                <div class="text-[10px] font-semibold mt-0.5"
+                     :class="{'text-rose-600': p.role === '钩子', 'text-blue-600': p.role === '前提' || p.role === '共鸣', 'text-amber-600': p.role === '冲突' || p.role === '反转', 'text-emerald-600': p.role === '证据' || p.role === '机制' || p.role === '原理' || p.role === '结论', 'text-yellow-600': p.role === '金句', 'text-violet-600': p.role === 'CTA'}"
+                     x-text="p.role"></div>
+                <div class="text-[9px] text-ink-400 mt-0.5" x-text="p.text.length + '字'"></div>
+              </div>
+              <!-- 正文 -->
+              <div class="flex-1 min-w-0 text-[14.5px] text-ink-900 leading-loose"
+                   :class="p.marked === 'delete' ? 'line-through' : ''"
+                   x-text="p.text"></div>
+            </div>
+          </template>
+        </div>
+        <!-- 底部：一键整段选中 -->
+        <div class="px-5 py-2.5 border-t border-ink-100 bg-ink-50/40 text-[10.5px] text-ink-500 flex items-center gap-3">
+          <i data-lucide="info" class="w-3 h-3 text-brand-500"></i>
+          <span>配音老师可以直接按这个顺序念；段间停顿自然分段</span>
+          <span class="ml-auto">
+            念读时长约 <b class="text-ink-900" x-text="(F.full.total_chars/F.full.pace_chars_per_sec).toFixed(1) + 's'"></b>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 标记操作栏 -->
+    <div class="rounded-xl bg-amber-50 border border-amber-200 p-3 flex items-center gap-3 flex-wrap" x-show="F.full && (F.markedCount().del > 0 || F.markedCount().rew > 0)">
+      <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i>
+      <span class="text-[12px] text-amber-900">
+        有标记: <b x-text="F.markedCount().del"></b> 段待删 · <b x-text="F.markedCount().rew"></b> 段待重写
+      </span>
+      <div class="ml-auto flex items-center gap-1.5">
+        <button @click="F.deleteAllMarked()" class="btn-ghost text-[11px] text-rose-700">
+          <i data-lucide="trash-2" class="w-3 h-3"></i><span>批量删除</span>
+        </button>
+        <button @click="F.refineAllMarked()" class="btn-ghost text-[11px] text-blue-700">
+          <i data-lucide="refresh-cw" class="w-3 h-3"></i><span>批量重写</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 分段编辑区标题 -->
+    <div class="pt-2 flex items-center gap-2 text-[12px] text-ink-600">
+      <i data-lucide="edit-3" class="w-3.5 h-3.5 text-ink-500"></i>
+      <span class="font-semibold text-ink-900">👇 分段结构化编辑</span>
+      <span class="text-ink-500">改任何一段会立即同步回上面的通读视图</span>
+    </div>
+
+    <!-- 段落列表 -->
+    <template x-for="(p, idx) in (F.full?.paragraphs || [])" :key="p.id + '-' + idx">
+      <div class="rounded-2xl bg-white border-2 transition overflow-hidden"
+           :class="p.marked === 'delete' ? 'border-rose-300 bg-rose-50/40 opacity-60' :
+                   p.marked === 'rewrite' ? 'border-blue-300 bg-blue-50/40' :
+                   p.edited ? 'border-emerald-300' : 'border-ink-200'">
+        <!-- 段头 -->
+        <div class="px-4 py-2 border-b border-ink-100 bg-ink-50/40">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-md bg-ink-900 text-white flex items-center justify-center text-[11px] font-mono font-bold" x-text="idx + 1"></div>
+            <span class="text-[11px] font-semibold text-ink-700" x-text="p.role"></span>
+            <span class="text-[10px] text-ink-400" x-text="(p.duration_sec || (p.text.length/(F.full.pace_chars_per_sec||5.5)).toFixed(1)) + 's · ' + p.text.length + '字'"></span>
+            <template x-if="p.info_density">
+              <span class="text-[9px] px-1.5 py-0.5 rounded font-mono"
+                    :class="p.info_density === '高' ? 'bg-emerald-100 text-emerald-700' : p.info_density === '中' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'"
+                    x-text="'密度' + p.info_density"></span>
+            </template>
+            <template x-if="p.marked === 'delete'">
+              <span class="badge text-[9px] bg-rose-500 text-white">待删除</span>
+            </template>
+            <template x-if="p.marked === 'rewrite'">
+              <span class="badge text-[9px] bg-blue-500 text-white">待重写</span>
+            </template>
+            <template x-if="p.edited && !p.marked">
+              <span class="badge text-[9px] bg-emerald-500 text-white">已改</span>
+            </template>
+
+            <div class="ml-auto flex items-center gap-0.5">
+            <!-- 标记: 删除 -->
+            <button @click="F.mark(idx, 'delete')" class="btn-ghost text-[10px] py-1 px-1.5"
+                    :class="p.marked === 'delete' ? 'bg-rose-100 text-rose-700' : 'text-ink-500 hover:text-rose-700'"
+                    title="标记为待删除（先标记再批量删，或单独点删除按钮立刻删）">
+              <i data-lucide="trash" class="w-3 h-3"></i>
+            </button>
+            <!-- 标记: 重写 -->
+            <button @click="F.mark(idx, 'rewrite')" class="btn-ghost text-[10px] py-1 px-1.5"
+                    :class="p.marked === 'rewrite' ? 'bg-blue-100 text-blue-700' : 'text-ink-500 hover:text-blue-700'"
+                    title="标记为待重写">
+              <i data-lucide="flag" class="w-3 h-3"></i>
+            </button>
+            <span class="w-px h-4 bg-ink-200 mx-1"></span>
+            <!-- AI 重写 -->
+            <button @click="F.refine(idx)" :disabled="F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5 text-blue-700" title="让 AI 立刻重写这段">
+              <template x-if="!F.refining[idx]"><i data-lucide="refresh-cw" class="w-3 h-3"></i></template>
+              <template x-if="F.refining[idx]"><i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i></template>
+              <span>重写</span>
+            </button>
+            <!-- 缩短 -->
+            <button @click="F.refine(idx, '缩短到原文 70% 长度')" :disabled="F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5" title="缩短">
+              <i data-lucide="scissors" class="w-3 h-3"></i>
+            </button>
+            <!-- 扩写 -->
+            <button @click="F.refine(idx, '扩写一倍，加入一个具体数字或案例')" :disabled="F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5" title="扩写">
+              <i data-lucide="expand" class="w-3 h-3"></i>
+            </button>
+            <span class="w-px h-4 bg-ink-200 mx-1"></span>
+            <!-- 立刻删除 -->
+            <button @click="F.delete(idx)" class="btn-ghost text-[10px] py-1 px-1.5 text-rose-600" title="立刻删除">
+              <i data-lucide="x" class="w-3 h-3"></i>
+            </button>
+            </div>
+          </div>
+          <!-- purpose: 这段在认知阶梯里做什么 -->
+          <div class="mt-1 text-[10.5px] text-brand-700 italic flex items-start gap-1" x-show="p.purpose">
+            <i data-lucide="footprints" class="w-2.5 h-2.5 shrink-0 mt-0.5"></i>
+            <span x-text="p.purpose"></span>
+          </div>
+        </div>
+
+        <!-- 段正文（直接编辑） -->
+        <div class="p-4">
+          <textarea
+              x-model="p.text"
+              @blur="p.edited = true; F.save()"
+              rows="3"
+              :class="p.marked === 'delete' ? 'line-through' : ''"
+              class="w-full text-[13.5px] text-ink-900 leading-relaxed outline-none focus:bg-brand-50/30 rounded px-2 py-1 -mx-1 bg-transparent border border-transparent focus:border-brand-200 resize-none"></textarea>
+        </div>
+
+        <!-- 段下方加段按钮（hover 出现） -->
+        <div class="text-center -mt-2 mb-1 opacity-0 hover:opacity-100 transition">
+          <button @click="F.addAfter(idx)" class="text-[10px] text-brand-600 hover:text-brand-800 px-3 py-1 rounded bg-white border border-ink-200 shadow-sm">
+            <i data-lucide="plus" class="w-2.5 h-2.5"></i><span>下方加一段</span>
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <!-- 文稿摘要 -->
+    <div x-show="F.full && F.full.summary" class="rounded-xl bg-ink-50 border border-ink-200 p-3 text-[11px] text-ink-600 italic flex items-start gap-2">
+      <i data-lucide="info" class="w-3.5 h-3.5 shrink-0 mt-0.5 text-brand-500"></i>
+      <span x-text="'AI 摘要: ' + F.full.summary"></span>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

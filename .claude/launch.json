@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "workbench",
+      "runtimeExecutable": "/Users/Zhuanz/.pyenv/versions/3.9.10/bin/python3",
+      "runtimeArgs": ["-m", "uvicorn", "web.app:app", "--host", "127.0.0.1", "--port", "8765", "--reload", "--app-dir", "/Users/Zhuanz/Documents/视频批量生成"],
+      "port": 8765
+    }
+  ]
+}

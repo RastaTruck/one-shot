@@ -1,0 +1,58 @@
+{
+  "backgrounds": [
+    {
+      "id": "BG_OFFICE_01",
+      "file": "data/assets/backgrounds/BG_OFFICE_01.png",
+      "tags": [
+        "办公室",
+        "书桌",
+        "电脑"
+      ],
+      "description": "明亮办公桌",
+      "style": "",
+      "meta": {}
+    }
+  ],
+  "characters": [],
+  "elements": [],
+  "expressions": [
+    {
+      "id": "EXPR_SHOCK_01",
+      "file": "data/assets/expressions/shock_01.webm",
+      "tags": [
+        "震惊"
+      ],
+      "description": "布布惊讶捂嘴",
+      "style": "",
+      "meta": {
+        "scene_tags": [
+          "震惊"
+        ],
+        "intensity": 3,
+        "has_alpha": true,
+        "duration": 2.4,
+        "character": "一二布布"
+      }
+    },
+    {
+      "id": "EXPR_WORRIED_01",
+      "file": "data/assets/expressions/worried_01.webm",
+      "tags": [
+        "担忧",
+        "失落"
+      ],
+      "description": "布布皱眉忧虑",
+      "style": "",
+      "meta": {
+        "scene_tags": [
+          "担忧",
+          "失落"
+        ],
+        "intensity": 2,
+        "has_alpha": true,
+        "duration": 3.0,
+        "character": "一二布布"
+      }
+    }
+  ]
+}

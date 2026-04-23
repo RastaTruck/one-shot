@@ -1,0 +1,28 @@
+<!-- 流水线进度条 -->
+<div class="glass border-b border-ink-200 px-8 py-5">
+  <div class="flex items-center max-w-4xl mx-auto">
+    {% for step in steps %}
+      {% set idx = loop.index0 %}
+      {% set done = idx <= current_step_index %}
+      {% set active = (active_nav == step.key) %}
+      <a href="/project/{{ current_video.video_id }}/{{ step.key }}"
+         class="flex items-center gap-2 shrink-0 group">
+        <div class="relative w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-semibold transition
+                    {% if active %}bg-ink-900 text-white shadow-medium ring-[3px] ring-brand-200
+                    {% elif done %}bg-gradient-to-br from-brand-400 to-brand-600 text-white shadow-soft
+                    {% else %}bg-white border border-ink-200 text-ink-400{% endif %}">
+          {% if done and not active %}<i data-lucide="check" class="w-4 h-4"></i>{% else %}{{ idx + 1 }}{% endif %}
+        </div>
+        <div class="text-[12px] leading-tight
+                    {% if active %}text-ink-900 font-semibold
+                    {% elif done %}text-ink-700 font-medium
+                    {% else %}text-ink-400{% endif %}">
+          {{ step.label_short }}
+        </div>
+      </a>
+      {% if not loop.last %}
+        <div class="stepper-line mx-3 {% if idx < current_step_index %}done{% endif %}"></div>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>

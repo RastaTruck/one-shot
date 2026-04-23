@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block page_title %}项目看板{% endblock %}
+{% block stepper %}{% endblock %}  {# 看板页不显示流水线 #}
+
+{% block topbar_right %}
+<button class="btn-ghost">
+  <i data-lucide="search" class="w-[16px] h-[16px]"></i>
+</button>
+<button class="btn-ghost">
+  <i data-lucide="bell" class="w-[16px] h-[16px]"></i>
+</button>
+<div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-300 to-brand-600 flex items-center justify-center text-white text-xs font-semibold">
+  我
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="px-8 py-8 max-w-[1280px] mx-auto">
+
+  <!-- ==================== Hero 区 ==================== -->
+  <section class="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-ink-900 via-ink-800 to-brand-900 text-white px-10 py-10 shadow-strong animate-fade-in-up">
+    <!-- 装饰圆 -->
+    <div class="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-brand-500/20 blur-3xl"></div>
+    <div class="absolute -bottom-24 -left-10 w-56 h-56 rounded-full bg-brand-400/10 blur-3xl"></div>
+
+    <div class="relative flex items-start justify-between gap-8">
+      <div class="flex-1 max-w-xl">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur text-[11px] font-medium text-brand-100 border border-white/10">
+          <span class="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse"></span>
+          AI 管线 · v0.1 · Mock 模式
+        </div>
+        <h1 class="mt-4 font-display text-[38px] leading-[1.15] font-semibold tracking-tight">
+          做更好的<br>金融科普视频。
+        </h1>
+        <p class="mt-3 text-[15px] text-white/70 leading-relaxed">
+          从灵感到成片，一条流水线走完。选题、文案、分镜、配音、剪辑 — 每一步都可视化参与。
+        </p>
+        <div class="mt-6 flex items-center gap-3">
+          <button class="px-5 py-2.5 rounded-full bg-white text-ink-900 font-semibold text-sm hover:bg-brand-50 transition shadow-soft flex items-center gap-2"
+                  hx-get="/project/new" hx-target="body" hx-swap="innerHTML">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span>新建项目</span>
+          </button>
+          <button class="px-5 py-2.5 rounded-full border border-white/20 text-white font-medium text-sm hover:bg-white/10 transition flex items-center gap-2">
+            <i data-lucide="play" class="w-4 h-4"></i>
+            <span>看看 Demo</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 右侧统计 -->
+      <div class="hidden md:grid grid-cols-2 gap-3 shrink-0">
+        {% for stat in hero_stats %}
+        <div class="relative overflow-hidden rounded-2xl bg-white/8 backdrop-blur-sm border border-white/10 px-5 py-4 min-w-[140px]">
+          <div class="text-[11px] text-white/60 font-medium">{{ stat.label }}</div>
+          <div class="mt-1 font-display text-[28px] font-semibold tabular-nums">{{ stat.value }}</div>
+          {% if stat.delta %}
+          <div class="text-[11px] text-emerald-300 mt-0.5 flex items-center gap-0.5">
+            <i data-lucide="trending-up" class="w-3 h-3"></i>
+            {{ stat.delta }}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 快速操作 ==================== -->
+  <section class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+    {% for action in quick_actions %}
+    <a href="{{ action.href }}"
+       class="group relative overflow-hidden rounded-2xl bg-white border border-ink-200 p-5 hover:border-brand-300 hover:shadow-medium transition animate-fade-in-up"
+       style="animation-delay: {{ loop.index0 * 60 }}ms">
+      <div class="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
+           style="background: {{ action.bg }}; color: {{ action.fg }};">
+        <i data-lucide="{{ action.icon }}" class="w-5 h-5"></i>
+      </div>
+      <div class="font-display font-semibold text-[15px] text-ink-900">{{ action.title }}</div>
+      <div class="mt-1 text-[13px] text-ink-500 leading-relaxed">{{ action.desc }}</div>
+      <i data-lucide="arrow-up-right" class="absolute top-5 right-5 w-4 h-4 text-ink-300 group-hover:text-brand-500 transition"></i>
+    </a>
+    {% endfor %}
+  </section>
+
+  <!-- ==================== 项目列表 ==================== -->
+  <section class="mt-10">
+    <div class="flex items-end justify-between mb-5">
+      <div>
+        <h2 class="font-display text-[22px] font-semibold tracking-tight text-ink-900">进行中的项目</h2>
+        <p class="mt-1 text-[13px] text-ink-500">当前有 {{ projects|length }} 个项目 · 点击任一卡片进入工作台</p>
+      </div>
+      <div class="flex items-center gap-1 p-1 rounded-xl bg-ink-100">
+        <button class="px-3 py-1.5 rounded-lg bg-white text-[12px] font-medium text-ink-900 shadow-soft">全部</button>
+        <button class="px-3 py-1.5 rounded-lg text-[12px] font-medium text-ink-500 hover:text-ink-900">草稿</button>
+        <button class="px-3 py-1.5 rounded-lg text-[12px] font-medium text-ink-500 hover:text-ink-900">进行中</button>
+        <button class="px-3 py-1.5 rounded-lg text-[12px] font-medium text-ink-500 hover:text-ink-900">已完成</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+      {% for p in projects %}
+      <a href="/project/{{ p.video_id }}/{{ p.next_step }}"
+         class="group relative overflow-hidden rounded-2xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-medium transition animate-fade-in-up"
+         style="animation-delay: {{ loop.index0 * 50 }}ms">
+        <!-- 封面 -->
+        <div class="h-[140px] relative overflow-hidden"
+             style="background: {{ p.cover_bg }};">
+          <div class="absolute inset-0 flex items-center justify-center">
+            <div class="text-white font-display font-bold text-[34px] opacity-90 tracking-tight">{{ p.cover_emoji }}</div>
+          </div>
+          <!-- 状态徽章 -->
+          <div class="absolute top-3 left-3">
+            <span class="badge {{ p.status_badge_class }}">{{ p.status_label }}</span>
+          </div>
+          <!-- 时长 -->
+          <div class="absolute top-3 right-3 px-2 py-0.5 rounded-md bg-black/40 backdrop-blur text-white text-[11px] font-medium">
+            {{ p.duration }}
+          </div>
+        </div>
+
+        <!-- 信息 -->
+        <div class="p-4">
+          <div class="text-[10px] text-ink-400 font-medium tracking-wider uppercase">{{ p.category }}</div>
+          <div class="mt-1 font-display font-semibold text-[15px] text-ink-900 leading-tight line-clamp-1">
+            {{ p.title }}
+          </div>
+          <div class="mt-1 text-[12px] text-ink-500 line-clamp-1">{{ p.hook }}</div>
+
+          <!-- 流水线进度 -->
+          <div class="mt-4 flex items-center gap-1.5">
+            {% for i in range(6) %}
+            <div class="flex-1 h-1 rounded-full
+                        {% if i < p.step_done %}bg-gradient-to-r from-brand-400 to-brand-600
+                        {% elif i == p.step_done %}bg-brand-200
+                        {% else %}bg-ink-200{% endif %}"></div>
+            {% endfor %}
+          </div>
+
+          <!-- 当前步骤 -->
+          <div class="mt-3 flex items-center justify-between text-[11px] text-ink-500">
+            <div class="flex items-center gap-1">
+              <i data-lucide="{{ p.current_step_icon }}" class="w-3 h-3"></i>
+              <span>{{ p.current_step_label }}</span>
+            </div>
+            <div>{{ p.updated_ago }}</div>
+          </div>
+        </div>
+      </a>
+      {% endfor %}
+
+      <!-- 新建卡片 -->
+      <button hx-get="/project/new" hx-target="body" hx-swap="innerHTML"
+              class="group flex flex-col items-center justify-center min-h-[272px] rounded-2xl border-2 border-dashed border-ink-200 hover:border-brand-400 hover:bg-brand-50/30 transition animate-fade-in-up">
+        <div class="w-14 h-14 rounded-2xl bg-white border border-ink-200 group-hover:border-brand-300 group-hover:bg-brand-50 flex items-center justify-center transition">
+          <i data-lucide="plus" class="w-6 h-6 text-ink-400 group-hover:text-brand-500 transition"></i>
+        </div>
+        <div class="mt-3 font-display font-semibold text-[14px] text-ink-700 group-hover:text-brand-700 transition">
+          新建项目
+        </div>
+        <div class="mt-1 text-[12px] text-ink-400">从一个选题灵感开始</div>
+      </button>
+    </div>
+  </section>
+
+  <!-- ==================== 最近活动 / 空状态可扩展 ==================== -->
+  <section class="mt-12 mb-8">
+    <div class="rounded-2xl bg-white border border-ink-200 p-6">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-8 h-8 rounded-lg bg-brand-100 text-brand-700 flex items-center justify-center">
+          <i data-lucide="sparkles" class="w-4 h-4"></i>
+        </div>
+        <h3 class="font-display font-semibold text-[15px] text-ink-900">2.0 功能预告</h3>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="feature-soon">📺 参考模仿</div>
+        <div class="feature-soon">🔥 热点监听</div>
+        <div class="feature-soon">🎭 风格预设</div>
+        <div class="feature-soon">🎵 智能卡点</div>
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

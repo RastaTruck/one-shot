@@ -1,0 +1,127 @@
+/* 一二布布 · AI 视频工作台 自定义样式
+   主要依赖 Tailwind CDN，这里只放 Tailwind 不方便表达的部分
+*/
+
+/* 滚动条美化 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+
+/* 卡片 · DNA §色彩：边框锚定层级 · 不靠阴影浮空 */
+.card {
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #E8E6DE;
+  transition: border-color .15s cubic-bezier(0.25, 1, 0.5, 1), box-shadow .15s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.card:hover {
+  border-color: #F48A0C;
+  box-shadow: 0 2px 6px rgba(13,13,11,.06);
+}
+
+/* 主按钮 · 单色硬橙 · 不渐变 · 字重加重 */
+.btn-primary {
+  background: #F48A0C;
+  color: white;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  transition: background-color .15s cubic-bezier(0.25, 1, 0.5, 1), box-shadow .15s cubic-bezier(0.25, 1, 0.5, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary:hover { background: #D06E05; box-shadow: 0 1px 3px rgba(208, 110, 5, .35); }
+.btn-primary:active { background: #9F5404; }
+.btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-secondary {
+  background: white;
+  color: #2E2C27;
+  border: 1px solid #CFCCC0;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  transition: border-color .15s cubic-bezier(0.25, 1, 0.5, 1), background-color .15s cubic-bezier(0.25, 1, 0.5, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-secondary:hover { background: #F4F3EE; border-color: #2E2C27; }
+
+.btn-ghost {
+  color: #4B4840;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color .15s cubic-bezier(0.25, 1, 0.5, 1), color .15s cubic-bezier(0.25, 1, 0.5, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.btn-ghost:hover { background: #F4F3EE; color: #1C1B18; }
+
+/* 徽章 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-gray { background: #F3F4F6; color: #6B7280; }
+.badge-brand { background: #FFEFCC; color: #A66811; }
+.badge-green { background: #D1FAE5; color: #065F46; }
+.badge-blue { background: #DBEAFE; color: #1E40AF; }
+.badge-red { background: #FEE2E2; color: #991B1B; }
+
+/* 表单控件 */
+.input,
+.textarea,
+.select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color .15s;
+  background: white;
+}
+.input:focus,
+.textarea:focus,
+.select:focus {
+  outline: none;
+  border-color: #F48A0C;
+  box-shadow: 0 0 0 3px rgba(244, 138, 12, .18);
+}
+.textarea { min-height: 80px; resize: vertical; }
+
+/* 2.0 功能占位按钮样式 */
+.feature-soon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px dashed #D1D5DB;
+  border-radius: 8px;
+  color: #9CA3AF;
+  font-size: 13px;
+  cursor: not-allowed;
+  background: #FAFAFA;
+}
+.feature-soon::after {
+  content: "2.0";
+  font-size: 10px;
+  padding: 1px 6px;
+  background: #FFEFCC;
+  color: #A66811;
+  border-radius: 4px;
+  margin-left: 4px;
+}

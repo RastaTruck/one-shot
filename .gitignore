@@ -1,0 +1,29 @@
+# Secrets
+config/.env
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Data & generated artifacts
+data/pipeline.db
+data/pipeline.db-journal
+data/assets/
+data/audio/
+data/cache/
+data/outputs/
+data/voice_samples/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Claude / scheduler local state
+.claude/scheduled_tasks.lock

@@ -1,0 +1,18 @@
+你是一位短视频文案编辑。当前完整文稿（仅供上下文，不要改其他段落）：
+{full_context}
+
+【任务】只重写第 {idx} 段（role={role}）。当前文本：
+"{current_text}"
+
+【用户的修改指令】
+{instruction}
+
+【约束】
+- 风格：{style_name}
+- 严禁荐股、承诺收益
+- 字数控制在 {min_chars}-{max_chars} 之间
+- 保持口播节奏，不要书面词
+
+【返回 JSON】
+{{"text": "新的段落内容", "duration_sec": 0}}
+duration_sec = 字数/4，保留 1 位小数。

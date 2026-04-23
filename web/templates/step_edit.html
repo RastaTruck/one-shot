@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block page_title %}⑥ 剪辑 · {{ current_video.title }}{% endblock %}
+
+{% block content %}
+<div class="px-8 py-8 max-w-[1440px] mx-auto">
+
+  <!-- 视频播放器 + 右侧信息 -->
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-5 animate-fade-in-up">
+    <!-- 左：大视频播放器 -->
+    <div class="lg:col-span-2">
+      <div class="relative rounded-2xl overflow-hidden bg-ink-900 shadow-strong aspect-video">
+        <!-- 占位画面 -->
+        <div class="absolute inset-0 bg-gradient-to-br from-ink-800 via-ink-900 to-brand-900 flex items-center justify-center">
+          <!-- 演示：把当前镜头作为封面 -->
+          <div class="text-center text-white px-8">
+            <div class="text-[96px] mb-4">📉</div>
+            <div class="font-display font-semibold text-[32px] leading-tight">做空是什么？</div>
+            <div class="mt-2 text-[14px] text-white/60">3 分钟看懂熊市赚钱逻辑</div>
+          </div>
+        </div>
+
+        <!-- 播放按钮中央 -->
+        <button class="absolute inset-0 flex items-center justify-center group">
+          <div class="w-20 h-20 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-strong group-hover:scale-110 transition">
+            <i data-lucide="play" class="w-8 h-8 text-ink-900 ml-1"></i>
+          </div>
+        </button>
+
+        <!-- 底部控件 -->
+        <div class="absolute left-0 right-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+          <!-- 进度 -->
+          <div class="flex items-center gap-2 text-white text-[11px] font-mono mb-2">
+            <span>00:18</span>
+            <div class="flex-1 h-1 bg-white/20 rounded-full relative">
+              <div class="absolute left-0 top-0 h-full w-[20%] bg-brand-500 rounded-full"></div>
+              <div class="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white" style="left: calc(20% - 6px);"></div>
+            </div>
+            <span>01:30</span>
+          </div>
+          <!-- 控件 -->
+          <div class="flex items-center gap-3 text-white">
+            <button class="hover:text-brand-400 transition"><i data-lucide="play" class="w-5 h-5"></i></button>
+            <button class="hover:text-brand-400 transition"><i data-lucide="volume-2" class="w-5 h-5"></i></button>
+            <div class="ml-auto flex items-center gap-3">
+              <span class="text-[11px] px-2 py-0.5 rounded bg-white/10">1080p</span>
+              <button class="hover:text-brand-400 transition"><i data-lucide="settings" class="w-4 h-4"></i></button>
+              <button class="hover:text-brand-400 transition"><i data-lucide="maximize" class="w-4 h-4"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 左上角：状态 -->
+        <div class="absolute top-4 left-4 flex items-center gap-2">
+          <span class="px-2.5 py-1 rounded-md bg-black/50 backdrop-blur text-white text-[11px] font-medium flex items-center gap-1.5">
+            <div class="w-1.5 h-1.5 rounded-full bg-brand-400"></div>
+            初剪 · v1
+          </span>
+        </div>
+        <!-- 右上角 -->
+        <div class="absolute top-4 right-4">
+          <button class="px-2.5 py-1 rounded-md bg-black/50 backdrop-blur text-white text-[11px] font-medium hover:bg-black/70 transition flex items-center gap-1.5">
+            <i data-lucide="download" class="w-3 h-3"></i>
+            <span>下载 MP4</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 视频元信息 -->
+      <div class="mt-4 grid grid-cols-4 gap-3">
+        <div class="p-3 rounded-xl bg-white border border-ink-200">
+          <div class="text-[10px] text-ink-500">时长</div>
+          <div class="mt-0.5 font-display font-semibold text-[18px] tabular-nums text-ink-900">01:30</div>
+        </div>
+        <div class="p-3 rounded-xl bg-white border border-ink-200">
+          <div class="text-[10px] text-ink-500">分辨率</div>
+          <div class="mt-0.5 font-display font-semibold text-[18px] text-ink-900">1080p</div>
+        </div>
+        <div class="p-3 rounded-xl bg-white border border-ink-200">
+          <div class="text-[10px] text-ink-500">文件大小</div>
+          <div class="mt-0.5 font-display font-semibold text-[18px] tabular-nums text-ink-900">24.7 MB</div>
+        </div>
+        <div class="p-3 rounded-xl bg-white border border-ink-200">
+          <div class="text-[10px] text-ink-500">本条成本</div>
+          <div class="mt-0.5 font-display font-semibold text-[18px] tabular-nums text-brand-700">¥ 18.40</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右：封面 + 标题 + 发布包 -->
+    <div class="space-y-4">
+      <!-- 封面候选 -->
+      <div class="rounded-2xl bg-white border border-ink-200 p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <i data-lucide="image" class="w-4 h-4 text-brand-500"></i>
+            <div class="font-display font-semibold text-[14px] text-ink-900">AI 封面</div>
+          </div>
+          <button class="btn-ghost text-[11px]"><i data-lucide="refresh-ccw" class="w-3 h-3"></i>重生</button>
+        </div>
+        <div class="aspect-[9/16] rounded-xl overflow-hidden relative shadow-medium"
+             style="background: linear-gradient(135deg, #F48A0C 0%, #D06E05 50%, #2E2C27 100%);">
+          <div class="absolute inset-0 p-4 flex flex-col justify-between text-white">
+            <div>
+              <div class="text-[11px] font-semibold opacity-80">金融概念 · 3 分钟</div>
+              <div class="mt-2 font-display font-bold text-[28px] leading-tight">做空<br>是什么？</div>
+            </div>
+            <div class="text-[10px] opacity-70">跌了也能赚 · 一次讲透</div>
+          </div>
+          <div class="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 flex items-center justify-center">
+            <i data-lucide="check" class="w-3.5 h-3.5 text-ink-900"></i>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center gap-2">
+          <div class="feature-soon text-[10px]">🖼️ 多封面 AB</div>
+        </div>
+      </div>
+
+      <!-- 发布文案 -->
+      <div class="rounded-2xl bg-white border border-ink-200 p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <i data-lucide="megaphone" class="w-4 h-4 text-blue-500"></i>
+          <div class="font-display font-semibold text-[14px] text-ink-900">AI 发布包</div>
+        </div>
+        <div class="space-y-3">
+          <div>
+            <div class="text-[10px] text-ink-500 mb-1">标题</div>
+            <div class="p-2.5 rounded-lg bg-ink-50 border border-ink-100 text-[13px] text-ink-900 font-medium">
+              做空是什么？3 分钟看懂熊市赚钱逻辑｜一二布布
+            </div>
+          </div>
+          <div>
+            <div class="text-[10px] text-ink-500 mb-1">简介</div>
+            <div class="p-2.5 rounded-lg bg-ink-50 border border-ink-100 text-[12px] text-ink-700 leading-relaxed">
+              股票跌了也能赚钱？这个操作叫"做空"。迈克尔·贝瑞靠它赚了 1 亿美金。一条视频讲透原理、风险和普通人如何参与。
+            </div>
+          </div>
+          <div>
+            <div class="text-[10px] text-ink-500 mb-1">标签</div>
+            <div class="flex items-center gap-1.5 flex-wrap">
+              {% for tag in ['做空','金融科普','熊市','投资入门','一二布布'] %}
+              <span class="badge badge-brand">#{{ tag }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 时间轴 -->
+  <section class="mt-8 rounded-2xl bg-white border border-ink-200 p-6 animate-fade-in-up">
+    <div class="flex items-center justify-between mb-5">
+      <div>
+        <div class="flex items-center gap-2">
+          <i data-lucide="film" class="w-4 h-4 text-brand-500"></i>
+          <div class="text-[11px] font-semibold text-ink-500 tracking-wider uppercase">时间轴预览</div>
+        </div>
+        <h3 class="mt-1 font-display font-semibold text-[16px] text-ink-900">7 个镜头 · 按分镜表装配</h3>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="feature-soon">🎵 智能卡点</div>
+        <div class="feature-soon">📤 多平台导出</div>
+      </div>
+    </div>
+
+    <!-- 轨道 1：视频 -->
+    <div class="space-y-3">
+      <div>
+        <div class="text-[10px] text-ink-500 mb-1 flex items-center gap-1">
+          <i data-lucide="film" class="w-3 h-3"></i> 视频轨
+        </div>
+        <div class="flex items-center gap-[2px] h-14">
+          {% for s in shots %}
+          <div class="h-full rounded-md overflow-hidden relative group cursor-pointer hover:ring-2 hover:ring-brand-400 transition"
+               style="flex-grow: {{ s.duration }}; background: {{ s.section_color }}30; border: 1px solid {{ s.section_color }};">
+            <div class="absolute inset-0 p-2 flex flex-col justify-between">
+              <div class="flex items-center gap-1">
+                <span class="text-[9px] font-mono font-semibold" style="color: {{ s.section_color }};">{{ s.id }}</span>
+              </div>
+              <div class="text-[9px] truncate" style="color: {{ s.section_color }};">{{ s.char.emoji }} {{ s.bg.emoji }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- 轨道 2：字幕 -->
+      <div>
+        <div class="text-[10px] text-ink-500 mb-1 flex items-center gap-1">
+          <i data-lucide="caption" class="w-3 h-3"></i> 字幕轨
+        </div>
+        <div class="flex items-center gap-[2px] h-7">
+          {% for s in shots %}
+          <div class="h-full rounded-md bg-ink-900/80 flex items-center px-2 text-white text-[10px] truncate"
+               style="flex-grow: {{ s.duration }};">
+            {{ s.text[:14] }}...
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- 轨道 3：音频 -->
+      <div>
+        <div class="text-[10px] text-ink-500 mb-1 flex items-center gap-1">
+          <i data-lucide="audio-waveform" class="w-3 h-3"></i> 音频轨
+        </div>
+        <div class="h-10 rounded-md bg-emerald-50 border border-emerald-200 flex items-center px-2 gap-[2px]">
+          {% for i in range(80) %}
+          <div class="flex-1 rounded-sm bg-emerald-500/60"
+               style="height: {{ [8,14,20,11,25,18,9,22,15,28,12,19,26,10,21,16,24,13,27,17,23,11,25,14,20,8,18,12,22,9,26,15,19,13,24,11,28,16,20,8,14,22,18,25,12,19,15,26,9,23,17,21,14,28,11,18,24,13,20,16,25,9,22,15,28,12,19,17,11,26,14,20,18,24,13,22,16,9,25,28][i] }}px;"></div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- 时间刻度 -->
+    <div class="mt-3 flex items-center justify-between text-[10px] font-mono text-ink-400">
+      <span>0s</span>
+      <span>15s</span>
+      <span>30s</span>
+      <span>45s</span>
+      <span>60s</span>
+      <span>75s</span>
+      <span>90s</span>
+    </div>
+  </section>
+
+  <!-- 底栏：终审 -->
+  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink-900 text-white rounded-2xl shadow-strong px-6 py-3 flex items-center gap-4 z-20" style="max-width:820px">
+    <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center">
+      <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="text-[10px] text-ink-300">成片终审 · 最后一步</div>
+      <div class="text-[13px] font-medium truncate">确认通过后进入发布队列 · 通过也可选择打回修改某一步</div>
+    </div>
+    <button class="shrink-0 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-[13px] font-medium flex items-center gap-2 border border-white/10">
+      <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+      <span>打回修改</span>
+    </button>
+    <button class="shrink-0 px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-400 to-emerald-600 font-semibold text-[13px] hover:opacity-90 transition flex items-center gap-2">
+      <i data-lucide="check" class="w-4 h-4"></i>
+      <span>终审通过</span>
+    </button>
+  </div>
+
+</div>
+{% endblock %}

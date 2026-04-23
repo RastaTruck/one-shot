@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block page_title %}② 文案 · 要素提炼 · {{ current_video.title }}{% endblock %}
+
+{% block topbar_right %}
+<div class="hidden md:flex items-center gap-1 text-[12px]">
+  <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-brand-500"></i>
+  <span class="text-ink-500" x-data x-text="$store.script ? $store.script.statusText : '加载中'"></span>
+</div>
+{% endblock %}
+
+{% block content %}
+<script>
+document.addEventListener('alpine:init', () => {
+  Alpine.store('script', {
+    videoId: "{{ current_video.video_id }}",
+    topic: {{ topic_title | tojson }},
+    drafts: {{ initial_drafts | tojson }},
+    snippets: [],   // 灵感库
+    pickedOutlineId: null,
+    duration: 60,
+    pace: 5.5,        // 字/秒：4.5 严肃 / 5.5 标准 / 6 高密度（小林风）
+    loading: false,
+    fullLoading: false,
+    provider: '',
+    cost: 0,
+    statusText: '就绪',
+
+    async init() {
+      // 拉灵感库
+      this.refreshSnippets();
+    },
+
+    async generate(force = false) {
+      if (!force && this.drafts && this.drafts.length === 3) return;
+      this.loading = true;
+      this.statusText = '生成 3 套要素提炼中 · 约 30 秒';
+      try {
+        const r = await fetch('/api/script/generate', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({video_id: this.videoId})
+        });
+        const data = await r.json();
+        this.drafts = data.drafts;
+        this.provider = data.provider; this.cost = data.cost;
+        this.statusText = `要素提炼完成 · ${this.provider} · ¥${(this.cost||0).toFixed(4)}`;
+      } catch(e) {
+        this.statusText = '生成失败：' + e.message;
+      } finally { this.loading = false; }
+    },
+
+    pickOutline(draft) {
+      this.pickedOutlineId = draft.draft_id;
+      this.statusText = `已选大纲 ${draft.draft_id.toUpperCase()} · ${draft.label}`;
+    },
+
+    async saveSnippet(kind, text, source) {
+      const r = await fetch('/api/snippet/save', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({video_id: this.videoId, kind, text, source_note: source}),
+      });
+      if (r.ok) {
+        await this.refreshSnippets();
+        this.statusText = `✓ 已收藏到灵感库 · ${kind}`;
+      }
+    },
+
+    async refreshSnippets() {
+      const r = await fetch('/api/snippet/list?video_id=' + this.videoId);
+      const data = await r.json();
+      this.snippets = data.snippets || [];
+    },
+
+    async deleteSnippet(snippet_id) {
+      await fetch('/api/snippet/' + snippet_id, {method:'DELETE'});
+      await this.refreshSnippets();
+    },
+
+    async generateFull() {
+      const outline = this.drafts.find(d => d.draft_id === this.pickedOutlineId);
+      if (!outline) { alert('请先在左边选一篇大纲'); return; }
+      this.fullLoading = true;
+      const targetChars = Math.round(this.duration * this.pace);
+      const estSec = this.duration <= 60 ? '30-60 秒' : this.duration <= 120 ? '60-120 秒' : '90-180 秒';
+      this.statusText = `按 ${this.duration}s × ${this.pace} 字/秒 ≈ ${targetChars} 字扩写中 · 约 ${estSec}`;
+      try {
+        const r = await fetch('/api/script/full/generate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId, outline,
+            duration_sec: this.duration, pace_chars_per_sec: this.pace}),
+        });
+        const data = await r.json();
+        if (data.error) { alert('生成失败：' + data.error); return; }
+        this.statusText = `完整文稿已生成 · ${data.provider} · ¥${(data.cost||0).toFixed(4)} · ${data.full?.total_chars||0} 字`;
+        // 跳转完整文稿编辑页
+        window.location.href = `/project/${this.videoId}/script/full?duration=${this.duration}`;
+      } catch(e) {
+        alert('网络错误：' + e.message);
+      } finally { this.fullLoading = false; }
+    },
+
+    snippetsByKind(kind) { return this.snippets.filter(s => s.kind === kind); },
+    pickedOutline() { return this.drafts.find(d => d.draft_id === this.pickedOutlineId); },
+  });
+});
+</script>
+
+<div x-data="{ get S() { return this.$store.script; },
+  init() { this.S.init(); if (!this.S.drafts || this.S.drafts.length !== 3) this.S.generate(); }
+}" class="px-6 py-6 max-w-[1800px] mx-auto">
+
+  <!-- ========== 顶条 ========== -->
+  <div class="rounded-2xl bg-white border border-ink-200 shadow-soft p-4 mb-5">
+    <div class="flex items-center gap-3">
+      <div class="shrink-0 flex items-center gap-3 pr-4 border-r border-ink-200">
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center text-[20px]" style="background: {{ style_preset.bg }};">{{ style_preset.emoji }}</div>
+        <div class="min-w-0">
+          <div class="text-[10px] text-ink-500 flex items-center gap-1">
+            <i data-lucide="link" class="w-2.5 h-2.5"></i>
+            <span>继承自选题</span>
+            <a href="/project/{{ current_video.video_id }}/topic?phase=explore" class="text-brand-600 hover:text-brand-800 underline ml-1">改</a>
+          </div>
+          <div class="text-[13px] font-semibold text-ink-900 truncate max-w-[280px]">{{ current_video.title }}</div>
+          <div class="text-[10px] text-brand-700 flex items-center gap-1">
+            <span>风格: {{ style_preset.name }}</span>
+            <a href="/project/{{ current_video.video_id }}/topic?phase=direct" class="text-brand-600 hover:text-brand-800 underline">换</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex-1 text-[12px] text-ink-600">
+        <div class="font-semibold text-ink-900">第 1 步 · 要素提炼</div>
+        <div class="text-[11px] text-ink-500">AI 给你 3 个差异化方向 · 选一个 + 时长 → 生成完整口播文稿</div>
+      </div>
+
+      <div class="shrink-0 flex items-center gap-1.5">
+        <button @click="S.generate(true)" :disabled="S.loading" class="btn-ghost text-[11px]">
+          <i data-lucide="refresh-cw" class="w-3 h-3"></i><span>重新提炼</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 主体：3 个大纲 + 右侧选定+灵感库 ========== -->
+  <div class="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1fr_400px] gap-4">
+
+    <!-- Loading 骨架 -->
+    <template x-if="S.loading && !S.drafts.length">
+      <template x-for="i in 3" :key="i">
+        <div class="rounded-2xl bg-white border border-ink-200 p-5 space-y-3">
+          <div class="h-4 w-20 bg-ink-100 rounded animate-pulse"></div>
+          <div class="h-6 bg-ink-100 rounded animate-pulse"></div>
+          <div class="h-16 bg-ink-50 rounded animate-pulse"></div>
+        </div>
+      </template>
+    </template>
+
+    <!-- 3 个大纲 -->
+    <template x-for="(d, di) in S.drafts" :key="d.draft_id">
+      <div class="rounded-2xl bg-white border-2 transition cursor-pointer overflow-hidden flex flex-col"
+           @click="S.pickOutline(d)"
+           :class="S.pickedOutlineId === d.draft_id ? 'border-emerald-500 ring-4 ring-emerald-100 shadow-medium' : 'border-ink-200 hover:border-brand-300 hover:shadow-soft'">
+        <!-- 头 -->
+        <div class="px-4 py-3 border-b border-ink-100 flex items-center gap-2"
+             :style="di === 0 ? 'background: linear-gradient(135deg, #FEE2E2, #FFF);' :
+                      di === 1 ? 'background: linear-gradient(135deg, #EEF4FF, #FFF);' :
+                                 'background: linear-gradient(135deg, #FFF8EC, #FFF);'">
+          <div class="w-8 h-8 rounded-lg bg-white border border-ink-200 flex items-center justify-center text-[14px] font-bold font-mono"
+               x-text="'D' + (di+1)"></div>
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px] font-semibold text-ink-900" x-text="d.label"></div>
+            <div class="text-[10px] text-ink-500" x-text="d.tone + ' · 大纲约 ' + (d.est_chars || 0) + ' 字'"></div>
+          </div>
+          <template x-if="S.pickedOutlineId === d.draft_id">
+            <div class="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center">
+              <i data-lucide="check" class="w-4 h-4"></i>
+            </div>
+          </template>
+        </div>
+
+        <!-- 字段块（每块带"📌 收藏"按钮，单独入灵感库） -->
+        <div class="p-3 space-y-2.5 flex-1" @click.stop>
+          <!-- hook -->
+          <div class="rounded-xl border border-rose-100 bg-rose-50/30 p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] font-semibold text-rose-700 tracking-wider uppercase flex items-center gap-1">
+                <i data-lucide="sparkles" class="w-2.5 h-2.5"></i><span>钩子方向</span>
+              </div>
+              <button @click="S.saveSnippet('hook', d.hook, 'D' + (di+1) + ' ' + d.label)"
+                      class="text-[10px] text-amber-600 hover:text-amber-800 font-semibold flex items-center gap-0.5"
+                      title="收藏此钩子到灵感库">
+                <i data-lucide="bookmark-plus" class="w-2.5 h-2.5"></i><span>收藏</span>
+              </button>
+            </div>
+            <div class="text-[13px] text-ink-900 leading-relaxed font-medium" x-text="d.hook"></div>
+          </div>
+
+          <!-- body 3 段 -->
+          <template x-for="(b, bi) in d.body" :key="bi">
+            <div class="rounded-xl border border-blue-100 bg-blue-50/20 p-3">
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="text-[10px] font-semibold text-blue-700 tracking-wider uppercase flex items-center gap-1">
+                  <span class="bg-blue-100 text-blue-800 font-mono px-1 rounded" x-text="b.step"></span>
+                  <span x-text="b.role"></span>
+                </div>
+                <button @click="S.saveSnippet('case', b.text, 'D' + (di+1) + ' ' + b.step + ' ' + b.role)"
+                        class="text-[10px] text-amber-600 hover:text-amber-800 font-semibold flex items-center gap-0.5"
+                        title="收藏此案例/段落到灵感库">
+                  <i data-lucide="bookmark-plus" class="w-2.5 h-2.5"></i><span>收藏</span>
+                </button>
+              </div>
+              <div class="text-[12.5px] text-ink-800 leading-relaxed" x-text="b.text"></div>
+            </div>
+          </template>
+
+          <!-- golden -->
+          <div class="rounded-xl border border-amber-100 bg-gradient-to-br from-amber-50 to-amber-50/20 p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] font-semibold text-amber-700 tracking-wider uppercase flex items-center gap-1">
+                <i data-lucide="quote" class="w-2.5 h-2.5"></i><span>金句</span>
+              </div>
+              <button @click="S.saveSnippet('golden', d.golden, 'D' + (di+1) + ' ' + d.label)"
+                      class="text-[10px] text-amber-600 hover:text-amber-800 font-semibold flex items-center gap-0.5"
+                      title="收藏此金句到灵感库">
+                <i data-lucide="bookmark-plus" class="w-2.5 h-2.5"></i><span>收藏</span>
+              </button>
+            </div>
+            <div class="text-[13px] text-ink-900 italic font-semibold" x-text="'&ldquo;' + d.golden + '&rdquo;'"></div>
+          </div>
+
+          <!-- cta -->
+          <div class="rounded-xl border border-violet-100 bg-violet-50/20 p-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <div class="text-[10px] font-semibold text-violet-700 tracking-wider uppercase flex items-center gap-1">
+                <i data-lucide="megaphone" class="w-2.5 h-2.5"></i><span>CTA</span>
+              </div>
+              <button @click="S.saveSnippet('cta', d.cta, 'D' + (di+1) + ' ' + d.label)"
+                      class="text-[10px] text-amber-600 hover:text-amber-800 font-semibold flex items-center gap-0.5"
+                      title="收藏此 CTA 到灵感库">
+                <i data-lucide="bookmark-plus" class="w-2.5 h-2.5"></i><span>收藏</span>
+              </button>
+            </div>
+            <div class="text-[12.5px] text-ink-800" x-text="d.cta"></div>
+          </div>
+        </div>
+
+        <!-- 卡底操作：选这一篇 -->
+        <div class="px-4 py-3 border-t border-ink-100 bg-ink-50/30">
+          <button @click="S.pickOutline(d)"
+                  class="w-full py-2 rounded-lg text-[12px] font-semibold transition flex items-center justify-center gap-1"
+                  :class="S.pickedOutlineId === d.draft_id ? 'bg-emerald-500 text-white' : 'bg-white border border-ink-200 text-ink-700 hover:border-emerald-400 hover:text-emerald-700'">
+            <template x-if="S.pickedOutlineId === d.draft_id">
+              <span class="flex items-center gap-1"><i data-lucide="check" class="w-3.5 h-3.5"></i><span>已选这一篇</span></span>
+            </template>
+            <template x-if="S.pickedOutlineId !== d.draft_id">
+              <span>选这一篇大纲</span>
+            </template>
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <!-- 右侧：选定 + 时长 + 灵感库 -->
+    <aside class="rounded-2xl bg-white border border-ink-200 shadow-soft overflow-hidden flex flex-col sticky top-4 self-start max-h-[calc(100vh-2rem)]">
+      <!-- 顶部状态 -->
+      <div class="px-4 py-3 border-b border-ink-100 flex items-center gap-2"
+           :class="S.pickedOutlineId ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white' : 'bg-ink-50'">
+        <i data-lucide="target" class="w-4 h-4"></i>
+        <div class="flex-1 min-w-0">
+          <div class="text-[13px] font-semibold" x-text="S.pickedOutlineId ? '已选: ' + S.pickedOutlineId.toUpperCase() : '尚未选大纲'"></div>
+          <div class="text-[10px] opacity-80" x-text="S.pickedOutlineId ? S.pickedOutline()?.label : '从左边 3 张里点一张'"></div>
+        </div>
+      </div>
+
+      <!-- 时长 + 节奏 + 生成 -->
+      <div class="p-4 space-y-3 border-b border-ink-100">
+        <!-- 时长 -->
+        <div>
+          <label class="text-[11px] font-semibold text-ink-700 mb-1.5 flex items-center gap-1">
+            <i data-lucide="clock" class="w-3 h-3 text-brand-500"></i><span>目标时长</span>
+          </label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <template x-for="d in [60, 120, 180]" :key="d">
+              <button @click="S.duration = d"
+                      :class="S.duration === d ? 'bg-ink-900 text-white border-ink-900' : 'bg-white text-ink-700 border-ink-200 hover:border-brand-300'"
+                      class="py-2 rounded-lg text-[12px] font-semibold border transition">
+                <span x-text="(d/60) + ' 分钟'"></span>
+              </button>
+            </template>
+          </div>
+        </div>
+        <!-- 节奏 -->
+        <div>
+          <label class="text-[11px] font-semibold text-ink-700 mb-1.5 flex items-center gap-1">
+            <i data-lucide="zap" class="w-3 h-3 text-amber-500"></i><span>口播节奏 / 信息密度</span>
+          </label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <button @click="S.pace = 4.5"
+                    :class="S.pace === 4.5 ? 'bg-ink-900 text-white border-ink-900' : 'bg-white text-ink-700 border-ink-200 hover:border-amber-300'"
+                    class="py-2 rounded-lg text-[11px] border transition">
+              <div class="font-semibold">慢节奏</div>
+              <div class="text-[9px] opacity-60">4.5 字/秒</div>
+            </button>
+            <button @click="S.pace = 5.5"
+                    :class="S.pace === 5.5 ? 'bg-ink-900 text-white border-ink-900' : 'bg-white text-ink-700 border-ink-200 hover:border-amber-300'"
+                    class="py-2 rounded-lg text-[11px] border transition">
+              <div class="font-semibold">标准</div>
+              <div class="text-[9px] opacity-60">5.5 字/秒</div>
+            </button>
+            <button @click="S.pace = 6"
+                    :class="S.pace === 6 ? 'bg-ink-900 text-white border-ink-900' : 'bg-white text-ink-700 border-ink-200 hover:border-amber-300'"
+                    class="py-2 rounded-lg text-[11px] border transition">
+              <div class="font-semibold">高密度</div>
+              <div class="text-[9px] opacity-60">6 字/秒 · 小林风</div>
+            </button>
+          </div>
+        </div>
+
+        <!-- 估算 -->
+        <div class="rounded-lg bg-brand-50 border border-brand-200 p-2.5 text-center">
+          <div class="text-[11px] text-brand-700">
+            目标 <b class="text-ink-900" x-text="Math.round(S.duration * S.pace)"></b> 字 ≈
+            <b class="text-ink-900" x-text="S.duration"></b> 秒
+          </div>
+          <div class="text-[10px] text-ink-500 mt-0.5">
+            浮动 ±15% · 实际 <span x-text="Math.round(S.duration * S.pace * 0.85)"></span>-<span x-text="Math.round(S.duration * S.pace * 1.15)"></span> 字
+          </div>
+        </div>
+
+        <button @click="S.generateFull()" :disabled="!S.pickedOutlineId || S.fullLoading"
+                class="w-full py-3 rounded-xl bg-gradient-to-r from-brand-500 to-brand-700 text-white font-semibold text-[13px] shadow-medium flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed transition hover:shadow-lg">
+          <template x-if="!S.fullLoading"><i data-lucide="file-edit" class="w-4 h-4"></i></template>
+          <template x-if="S.fullLoading"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i></template>
+          <span x-text="S.fullLoading ? 'AI 写文稿中…' : '生成完整文稿 → 编辑'"></span>
+        </button>
+        <div class="text-[10px] text-ink-400 text-center leading-relaxed">
+          AI 会先设计逻辑次第（认知阶梯）+ 框架，再扩写文稿；<br>
+          每段都带 purpose（在认知阶梯里做什么）
+        </div>
+      </div>
+
+      <!-- 灵感库 -->
+      <div class="flex-1 overflow-y-auto">
+        <div class="px-4 py-3 flex items-center gap-2 border-b border-ink-100">
+          <i data-lucide="bookmark" class="w-3.5 h-3.5 text-amber-500"></i>
+          <span class="text-[12px] font-semibold text-ink-900">灵感库</span>
+          <span class="text-[10px] text-ink-400" x-text="'共 ' + S.snippets.length + ' 条'"></span>
+        </div>
+        <div class="p-3 space-y-3" x-show="S.snippets.length > 0">
+          <template x-for="kind in [['hook','钩子','rose'], ['case','案例段落','blue'], ['golden','金句','amber'], ['cta','CTA','violet']]" :key="kind[0]">
+            <div x-show="S.snippetsByKind(kind[0]).length > 0">
+              <div class="text-[10px] font-semibold tracking-wider uppercase mb-1.5"
+                   :class="{'text-rose-700': kind[2]==='rose', 'text-blue-700': kind[2]==='blue', 'text-amber-700': kind[2]==='amber', 'text-violet-700': kind[2]==='violet'}"
+                   x-text="kind[1] + ' (' + S.snippetsByKind(kind[0]).length + ')'"></div>
+              <div class="space-y-1.5">
+                <template x-for="s in S.snippetsByKind(kind[0])" :key="s.snippet_id">
+                  <div class="group rounded-lg border border-ink-200 p-2 bg-ink-50/40 hover:bg-amber-50/40 hover:border-amber-300 transition relative">
+                    <div class="text-[12px] text-ink-800 leading-relaxed pr-5" x-text="s.text"></div>
+                    <div class="text-[9px] text-ink-400 mt-1" x-text="s.source_note"></div>
+                    <button @click="S.deleteSnippet(s.snippet_id)"
+                            class="absolute top-1 right-1 w-5 h-5 rounded text-ink-400 hover:text-rose-500 hover:bg-white opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                      <i data-lucide="x" class="w-3 h-3"></i>
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div x-show="S.snippets.length === 0" class="p-6 text-center text-[11px] text-ink-400">
+          <i data-lucide="bookmark" class="w-6 h-6 mx-auto mb-2 text-ink-300"></i>
+          <div>还没收藏内容</div>
+          <div class="mt-1">在大纲卡里点 📌 收藏，<br>未来生成新文稿时可以参考。</div>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+</div>
+{% endblock %}
