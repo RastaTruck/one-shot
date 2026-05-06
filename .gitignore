@@ -14,7 +14,10 @@ venv/
 # Data & generated artifacts
 data/pipeline.db
 data/pipeline.db-journal
-data/assets/
+# assets 正式素材纳入 git（263MB，无单文件 > 6MB）
+# 仅排除垃圾桶和原始备份目录
+data/assets/_trash/
+data/assets/**/_orig/
 data/audio/
 data/cache/
 data/outputs/
