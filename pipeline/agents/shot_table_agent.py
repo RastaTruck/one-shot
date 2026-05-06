@@ -503,9 +503,11 @@ def generate_shot_table(
     sid_counter = 0
     # 跨 shot 全局使用计数——防止同一表情频繁出现
     expr_usage: dict[str, int] = {}
-    # 近期使用窗口：记录最近 RECENT_WINDOW 个表情 id，避免连续重复
+    elem_usage: dict[str, int] = {}
+    # 近期使用窗口：记录最近 RECENT_WINDOW 个表情/元素 id，避免连续重复
     RECENT_WINDOW = 5
     recent_exprs: list[str] = []
+    recent_elems: list[str] = []
     # 布局均匀交替计数：每 LAYOUT_CYCLE 个 shot 中，最后 1 个放 element（left_right）
     # 其余用 center（只有表情），保证 2:1 节奏（2 center → 1 element）
     LAYOUT_CYCLE = 3   # 3 shot 为一个周期
@@ -569,8 +571,12 @@ def generate_shot_table(
             # 5. 元素：只在 want_element 时才取，其余 shot 不加 element
             elem_id_1 = ""
             if want_element:
-                elem_pool_shot = _pick_element_pool(sub, library, k=4)
-                elem_id_1 = elem_pool_shot[0].id if elem_pool_shot else ""
+                elem_pool_shot = _pick_element_pool(sub, library, k=8)
+                if elem_pool_shot:
+                    elem_id_1 = _pick_least_used(elem_pool_shot, elem_usage, recent_elems)
+                    recent_elems.append(elem_id_1)
+                    if len(recent_elems) > RECENT_WINDOW:
+                        recent_elems.pop(0)
 
             # 背景：所有 shot 强制用 bible 锁定的同一张
             bg_id = locked_bg_id
