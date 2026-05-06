@@ -397,14 +397,14 @@
         </button>
         {{ loading_banner(
             cond='S.fullLoading',
-            label='DeepSeek 正在扩写完整文稿',
+            label='AI 正在扩写完整文稿',
             elapsed='S.elapsedSec',
             est=90,
             note='通常 60-180 秒（按时长扩写）。完成后会自动跳转编辑页。',
         ) }}
         {{ loading_banner(
             cond='S.loading',
-            label='DeepSeek 正在生成 3 套要素大纲',
+            label='AI 正在生成 3 套要素大纲',
             elapsed='S.elapsedSec',
             est=30,
             note='通常 25-40 秒。请勿刷新或返回。',
