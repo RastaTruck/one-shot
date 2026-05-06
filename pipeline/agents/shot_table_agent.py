@@ -620,6 +620,12 @@ def generate_shot_table(
     # 元素最多重复次数阈值：超过则跳过（宁可不放也不放重复的）
     ELEM_MAX_REUSE = 1  # 非强制 shot 里每个元素最多用 1 次
 
+    # 双表情节奏控制：每 DUAL_CYCLE 个 shot 中，DUAL_POSITIONS 位置触发双表情
+    # 目标：约 40% 双表情（2/5）；双表情帧不加元素，避免三者同框
+    DUAL_CYCLE = 5
+    DUAL_POSITIONS = {1, 4}   # 0-indexed，2/5 = 40%
+    dual_counter = 0
+
     for para in paragraphs:
         section = _infer_section(para.get("role", ""))
         para_text = (para.get("text") or "").strip()
@@ -659,32 +665,43 @@ def generate_shot_table(
 
             # 3. 从池里选使用次数最少、且不在近期窗口内的表情
             expr_id_1 = ""
+            expr_id_2 = ""
             if expr_pool_shot:
                 expr_id_1 = _pick_least_used(expr_pool_shot, expr_usage, recent_exprs)
-                # 更新近期窗口
                 recent_exprs.append(expr_id_1)
                 if len(recent_exprs) > RECENT_WINDOW:
                     recent_exprs.pop(0)
 
-            # 4. 布局均匀交替规则
-            # 周期 LAYOUT_CYCLE = 3：前两个 shot 用 center（只有表情）
-            # 第三个 shot 尝试带 element（left_right）
-            # 特例：文案含数据/图表强关键词的 shot 强制带 element
+            # 3b. 双表情：在同一情绪池里选第二个，40% 频率触发
+            #   - 双表情帧不加 element（三者同框太杂）
+            #   - 只有池 ≥ 2 个可选且 expr_id_1 存在时才触发
+            want_dual_expr = (dual_counter % DUAL_CYCLE) in DUAL_POSITIONS
+            dual_counter += 1
+            if want_dual_expr and expr_id_1:
+                pool_for_2 = [a for a in expr_pool_shot if a.id != expr_id_1]
+                if pool_for_2:
+                    expr_id_2 = _pick_least_used(pool_for_2, expr_usage, recent_exprs)
+                    recent_exprs.append(expr_id_2)
+                    if len(recent_exprs) > RECENT_WINDOW:
+                        recent_exprs.pop(0)
+
+            # 4. 布局均匀交替规则（双表情帧跳过 element 判断）
             ELEMENT_FORCE_KWS = ["数据", "图表", "K线", "走势", "%", "万", "亿", "倍", "胜率", "概率"]
             force_element = any(kw in sub for kw in ELEMENT_FORCE_KWS)
-            want_element = force_element or (layout_counter % LAYOUT_CYCLE == LAYOUT_CYCLE - 1)
+            # 双表情帧不加 element；强制 element 关键词也仅在单表情帧生效
+            want_element = (not expr_id_2) and (
+                force_element or (layout_counter % LAYOUT_CYCLE == LAYOUT_CYCLE - 1)
+            )
             layout_counter += 1
 
-            # 5. 元素：只在 want_element 时才取，其余 shot 不加 element
+            # 5. 元素：只在 want_element 时才取
             elem_id_1 = ""
             if want_element:
                 elem_pool_shot = _pick_element_pool(sub, library, k=12)
                 if elem_pool_shot:
-                    # 检查当前池内最小使用次数
                     min_usage_in_pool = min(elem_usage.get(a.id, 0) for a in elem_pool_shot)
-                    # 非强制 shot：池已耗尽（全部用过≥阈值次）→ 跳过，宁可 center 也不重复
                     if not force_element and min_usage_in_pool >= ELEM_MAX_REUSE:
-                        pass  # elem_id_1 保持空，走 center 布局
+                        pass  # 池耗尽 → 不放元素
                     else:
                         elem_id_1 = _pick_least_used(elem_pool_shot, elem_usage, recent_elems)
                         recent_elems.append(elem_id_1)
@@ -707,17 +724,26 @@ def generate_shot_table(
                 ))
 
             # ---- beats 布局规则 ----
-            # center  → 只有表情居中（2/3 的 shot）
-            # left_right → 表情左 + 元素右（1/3 的 shot，或含数据关键词时强制）
+            # center     → 单表情居中（约 60% 的 shot）
+            # left_right → 双表情并列（约 40%）或 表情+元素（含数据关键词/周期触发）
             beats: list[_st.Beat] = []
             if expr_id_1:
-                if elem_id_1:
+                if expr_id_2:
+                    # 双表情并列：两个表情左右各站，无 element
+                    beats = [_st.Beat(
+                        duration_ratio=1.0, layout="left_right",
+                        left=_st.BeatSlot(asset_id=expr_id_1, asset_kind="expression"),
+                        right=_st.BeatSlot(asset_id=expr_id_2, asset_kind="expression"),
+                    )]
+                elif elem_id_1:
+                    # 单表情 + 元素
                     beats = [_st.Beat(
                         duration_ratio=1.0, layout="left_right",
                         left=_st.BeatSlot(asset_id=expr_id_1, asset_kind="expression"),
                         right=_st.BeatSlot(asset_id=elem_id_1, asset_kind="element"),
                     )]
                 else:
+                    # 单表情居中
                     beats = [_st.Beat(
                         duration_ratio=1.0, layout="center",
                         left=_st.BeatSlot(asset_id=expr_id_1, asset_kind="expression"),
