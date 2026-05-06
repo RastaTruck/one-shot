@@ -58,13 +58,15 @@ def generate_fused_topics(
     try:
         parsed = json.loads(content)
         topics = parsed.get("topics") or []
-        # 给 id 兜底（万一模型没返回完整 id）
+        # 给 id 兜底 + 把生成时的意图/受众标记到每条候选上（文案阶段继承用）
         for i, t in enumerate(topics):
             if not t.get("id"):
                 t["id"] = f"F{i+1:02d}"
             t.setdefault("origins", [{"sid": "src_kw", "label": f"关键词: {keywords[:20]}"}])
             t.setdefault("style_spectrum", {"serious": 70, "humor": 70, "healing": 60, "analyst": 70, "counter": 70})
             t.setdefault("best_style", "humor")
+            t["intent"] = intent        # 继承到 topic.picked，文案 agent 可读
+            t["audience"] = audience    # 同上
         assert topics
     except (json.JSONDecodeError, AssertionError, TypeError) as e:
         state.finish_task(task_id, success=False, error=f"parse error: {e}; content[:200]={content[:200]}", cost_cny=cost)

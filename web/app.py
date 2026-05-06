@@ -1421,6 +1421,12 @@ def _script_topic_for(video_id: str) -> str:
     return proj["title"] if proj else video_id
 
 
+def _script_topic_meta_for(video_id: str) -> dict:
+    """返回完整的 topic picked 对象（含 intent/perspective/audience），供文案 agent 继承。"""
+    picked = _state.load_project_topic(video_id)
+    return picked if isinstance(picked, dict) else {}
+
+
 @app.get("/project/{video_id}/script", response_class=HTMLResponse)
 async def page_script(request: Request, video_id: str):
     style = _script_style_for(video_id)
@@ -1440,6 +1446,7 @@ async def page_script(request: Request, video_id: str):
             "title": full.get("title") or full.get("framework", {}).get("one_liner", ""),
             "updated_at": full.get("updated_at"),
         }
+    topic_meta = _script_topic_meta_for(video_id)
     return TEMPLATES.TemplateResponse("step_script.html", build_ctx(
         request, "script", video_id,
         style_preset=style,
@@ -1447,6 +1454,7 @@ async def page_script(request: Request, video_id: str):
         initial_working=working,
         archives=archives,
         topic_title=_script_topic_for(video_id),
+        topic_meta=topic_meta,
         full_summary=full_summary,
     ))
 
@@ -1458,7 +1466,8 @@ async def api_script_generate(payload: dict):
         raise HTTPException(400, "video_id required")
     style = _script_style_for(video_id)
     topic = _script_topic_for(video_id)
-    result = _script_writer.generate_three_drafts(video_id, topic, style)
+    topic_meta = _script_topic_meta_for(video_id)
+    result = _script_writer.generate_three_drafts(video_id, topic, style, topic_meta=topic_meta)
     _state.save_script_drafts(video_id, result["drafts"])
     # 首次生成：若没有工作稿，默认用 d1 初始化
     if _state.load_script_working(video_id) is None and result["drafts"]:

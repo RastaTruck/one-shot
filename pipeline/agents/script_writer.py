@@ -14,6 +14,64 @@ from pipeline.tools import llm_client
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "config" / "prompts"
 
+# ============================================================
+# 意图 → 规则 / 叙事路径 / 标签提示
+# ============================================================
+_INTENT_RULES: dict[str, str] = {
+    "搞懂概念": """\
+核心任务：解释「这个东西是什么」，让零基础的人听完能用一句话向别人解释。
+✓ 正确方向：定义本身、本质原理、用类比/故事/数字让人瞬间理解「是什么」
+✗ 禁止越界：不写「XX对YY的影响」（那是探讨影响的任务）
+✗ 禁止越界：不给操作建议或步骤（那是学会操作的任务）""",
+
+    "探讨影响": """\
+核心任务：拆解「这件事会怎么影响你/社会/市场」，有主体、有时间维度、有量化感。
+✓ 正确方向：具体生活场景的变化、连锁反应链条、数据量化影响规模
+✗ 禁止越界：不做纯概念解释（假设观众已知这是什么）
+✗ 禁止越界：不给操作建议，只分析/呈现影响""",
+
+    "学会操作": """\
+核心任务：给出「可落地执行的步骤或决策框架」，让观众看完知道该怎么做。
+✓ 正确方向：判断信号（什么时候用）+ 行动步骤 + 避坑提醒
+✗ 禁止越界：不做纯知识讲解，每套必须有可执行的「行动锚点」
+✗ 禁止越界：不写影响分析，聚焦「怎么做」""",
+
+    "引发共鸣": """\
+核心任务：让观众说「这说的就是我」，情绪先于知识，故事先于道理。
+✓ 正确方向：具体人物处境、情感认同、让人想评论「我也是」的结尾
+✗ 禁止越界：不做知识科普，不列步骤，核心是情感共振
+✗ 禁止越界：钩子必须是情感/处境切入，不是信息量堆积""",
+}
+
+_DRAFT_ROUTES: dict[str, str] = {
+    "搞懂概念": """\
+d1（类比拆解）：用1-2个精准的生活类比，把概念「可视化」——让人听完能说「哦原来就像XX一样」
+d2（场景还原）：设计一个「主角第一次遇到这件事」的具体场景，随情节推进自然讲清概念
+d3（数字解码）：用一个震撼数字切入展示量级或比例，再往回倒推解释概念本身的运作原理""",
+
+    "探讨影响": """\
+d1（身边变化）：聚焦离观众最近的影响——房贷/存款/消费/工作，用真实数字量化「你今天就能感受到」
+d2（连锁反应）：从一个直接影响出发，展开多米诺骨牌式的间接影响链条，层层递进
+d3（数据画像）：用3个核心数据，从宏观到微观呈现影响的真实规模与结构，让人感受到量级""",
+
+    "学会操作": """\
+d1（信号判断）：教观众识别「什么时候该行动/注意/触发」，核心是判断条件而非步骤，让人学会「看时机」
+d2（步骤拆解）：最简操作流程，用「第一步/第二步/第三步」结构，每步聚焦一个关键动作
+d3（避坑清单）：从3个最高频错误切入，每个错误配一个正确做法，帮观众绕过来""",
+
+    "引发共鸣": """\
+d1（镜中人）：选一个典型处境（工资/存款/贷款/投资失误），让观众在主角身上看见自己，情绪积累到最后揭示洞察
+d2（转折顿悟）：先呈现观众的「错误认知/无奈处境」，再用一个认知转折带来「原来如此」的释然
+d3（说出心声）：直接替观众说出他们想说但说不出口的话，用第一人称制造强烈认同感""",
+}
+
+_INTENT_LABEL_HINTS: dict[str, str] = {
+    "搞懂概念": "类比拆解 / 场景还原 / 数字解码 / 图解式 / 极简版",
+    "探讨影响": "身边变化 / 连锁反应 / 数据画像 / 影响全景 / 微观感知",
+    "学会操作": "信号判断 / 步骤拆解 / 避坑清单 / 实操版 / 决策框架",
+    "引发共鸣": "镜中人 / 转折顿悟 / 说出心声 / 情感共振 / 观众自白",
+}
+
 
 def _read_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text(encoding="utf-8")
@@ -72,17 +130,36 @@ def _stub_drafts(topic: str, style_name: str) -> list[dict[str, Any]]:
     ]
 
 
-def generate_three_drafts(video_id: str, topic: str, style: dict[str, Any]) -> dict[str, Any]:
-    """返回 {"drafts": [...], "provider": str, "cost": float}"""
+def generate_three_drafts(
+    video_id: str,
+    topic: str,
+    style: dict[str, Any],
+    topic_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """返回 {"drafts": [...], "provider": str, "cost": float}
+    topic_meta 可传入选题时保存的完整 topic 对象，用于读取 intent/perspective/audience。
+    """
     _ensure_video_row(video_id, topic)
+    meta = topic_meta or {}
+    intent = meta.get("intent") or "搞懂概念"
+    audience = meta.get("audience") or "完全小白"
+    perspective = meta.get("perspective") or "类比降维"
+
     system = _fill(
         _read_prompt("script_gen.txt"),
         style_name=style.get("name", "默认"),
         style_desc=style.get("desc", ""),
         style_sample=style.get("sample", ""),
+        intent=intent,
+        audience=audience,
+        perspective=perspective,
+        intent_rules=_INTENT_RULES.get(intent, _INTENT_RULES["搞懂概念"]),
+        draft_routes=_DRAFT_ROUTES.get(intent, _DRAFT_ROUTES["搞懂概念"]),
+        intent_label_hints=_INTENT_LABEL_HINTS.get(intent, ""),
     )
     user = f"选题：{topic}"
-    task_id = state.start_task(video_id, agent="script_writer", input_data={"topic": topic})
+    task_id = state.start_task(video_id, agent="script_writer",
+                               input_data={"topic": topic, "intent": intent, "audience": audience})
 
     result = llm_client.call_json_with_fallback(system, user)
     if result is None:
