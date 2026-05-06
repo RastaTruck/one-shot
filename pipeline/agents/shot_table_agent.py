@@ -505,13 +505,18 @@ def generate_shot_table(
     expr_usage: dict[str, int] = {}
     elem_usage: dict[str, int] = {}
     # 近期使用窗口：记录最近 RECENT_WINDOW 个表情/元素 id，避免连续重复
-    RECENT_WINDOW = 5
+    # 8 = 典型视频 15-20 shot 里，同一个表情至少间隔 8 个 shot 才可能复现
+    RECENT_WINDOW = 8
     recent_exprs: list[str] = []
     recent_elems: list[str] = []
     # 布局均匀交替计数：每 LAYOUT_CYCLE 个 shot 中，最后 1 个放 element（left_right）
-    # 其余用 center（只有表情），保证 2:1 节奏（2 center → 1 element）
-    LAYOUT_CYCLE = 3   # 3 shot 为一个周期
+    # 其余用 center（只有表情），保证约 1:4 节奏（4 center → 1 element）
+    # 改为 5 是因为：典型 topic 元素池只有 5-8 个，CYCLE=3 时一个 15-shot 视频
+    # 需要 5 个 element slot，池耗尽后必然重复；CYCLE=5 降到 3 个 slot 更安全。
+    LAYOUT_CYCLE = 5   # 5 shot 为一个周期
     layout_counter = 0  # 当前周期内已分配的 shot 数
+    # 元素最多重复次数阈值：超过则跳过（宁可不放也不放重复的）
+    ELEM_MAX_REUSE = 1  # 非强制 shot 里每个元素最多用 1 次
 
     for para in paragraphs:
         section = _infer_section(para.get("role", ""))
@@ -571,12 +576,18 @@ def generate_shot_table(
             # 5. 元素：只在 want_element 时才取，其余 shot 不加 element
             elem_id_1 = ""
             if want_element:
-                elem_pool_shot = _pick_element_pool(sub, library, k=8)
+                elem_pool_shot = _pick_element_pool(sub, library, k=12)
                 if elem_pool_shot:
-                    elem_id_1 = _pick_least_used(elem_pool_shot, elem_usage, recent_elems)
-                    recent_elems.append(elem_id_1)
-                    if len(recent_elems) > RECENT_WINDOW:
-                        recent_elems.pop(0)
+                    # 检查当前池内最小使用次数
+                    min_usage_in_pool = min(elem_usage.get(a.id, 0) for a in elem_pool_shot)
+                    # 非强制 shot：池已耗尽（全部用过≥阈值次）→ 跳过，宁可 center 也不重复
+                    if not force_element and min_usage_in_pool >= ELEM_MAX_REUSE:
+                        pass  # elem_id_1 保持空，走 center 布局
+                    else:
+                        elem_id_1 = _pick_least_used(elem_pool_shot, elem_usage, recent_elems)
+                        recent_elems.append(elem_id_1)
+                        if len(recent_elems) > RECENT_WINDOW:
+                            recent_elems.pop(0)
 
             # 背景：所有 shot 强制用 bible 锁定的同一张
             bg_id = locked_bg_id
