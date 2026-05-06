@@ -10,13 +10,12 @@
 
 {% block content %}
 <script>
-document.addEventListener('alpine:init', () => {
+(function(){ var _fn = function() {
   const initSources = {{ real_sources | tojson }};
   const initPool    = {{ real_pool | tojson }};
   const initPicked  = {{ real_picked | tojson }};
   Alpine.store('topic', {
     videoId: "{{ current_video.video_id }}",
-    mode: "{{ active_mode }}",
     keywords: initSources.keywords || "",
     notes:    initSources.notes || "",
     extra:    initSources.extra || "",
@@ -43,11 +42,18 @@ document.addEventListener('alpine:init', () => {
       }, 500);
     },
 
+    elapsedSec: 0,
+    _tickHandle: null,
+
     async generate() {
       if (!this.keywords.trim()) { this.error = '请先填关键词'; return; }
       this.loading = true; this.error = '';
+      this.elapsedSec = 0;
       this.statusText = '生成中 · DeepSeek 通常 25-40 秒';
       const t0 = Date.now();
+      this._tickHandle = setInterval(() => {
+        this.elapsedSec = Math.round((Date.now() - t0) / 1000);
+      }, 500);
       try {
         const r = await fetch('/api/topic/generate', {
           method: 'POST',
@@ -55,7 +61,7 @@ document.addEventListener('alpine:init', () => {
           body: JSON.stringify({
             video_id: this.videoId, keywords: this.keywords,
             notes: this.notes, extra: this.extra,
-            mode: this.mode, n_topics: this.nTopics,
+            n_topics: this.nTopics,
           })
         });
         const data = await r.json();
@@ -68,6 +74,7 @@ document.addEventListener('alpine:init', () => {
       } catch(e) {
         this.error = '网络错误：' + e.message; this.statusText = '失败';
       } finally {
+        if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null; }
         this.loading = false;
       }
     },
@@ -104,7 +111,9 @@ document.addEventListener('alpine:init', () => {
       } finally { this.saving = false; }
     }
   });
-});
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
 </script>
 <div x-data='{
   activeStyle: "humor",
@@ -114,46 +123,29 @@ document.addEventListener('alpine:init', () => {
   showFusion: true
 }' class="px-6 py-6 max-w-[1600px] mx-auto pb-28">
 
-  <!-- ============ 顶部 · 创作模式 + 阶段导航 ============ -->
-  <div class="flex flex-col md:flex-row md:items-center gap-3 mb-5 animate-fade-in-up">
-    <!-- 创作模式 -->
-    <div class="flex items-center gap-1 p-1 rounded-2xl bg-white border border-ink-200 shadow-soft w-fit">
-      {% for m in creation_modes %}
-      <a href="?phase={{ phase }}&mode={{ m.key }}"
-         class="px-4 py-2 rounded-xl text-[13px] font-medium transition flex items-center gap-2
-                {% if m.key == active_mode %}bg-ink-900 text-white shadow-medium
-                {% else %}text-ink-600 hover:bg-ink-100{% endif %}">
-        <i data-lucide="{{ m.icon }}" class="w-3.5 h-3.5"></i>
-        <span>{{ m.label }}</span>
-        <span class="text-[10px] opacity-60 hidden lg:inline">· {{ m.desc }}</span>
-      </a>
-      {% endfor %}
-    </div>
-
-    <!-- 阶段导航 -->
-    <div class="ml-auto flex items-center gap-1 text-[12px]">
-      <a href="?phase=explore&mode={{ active_mode }}"
-         class="flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium transition
-                {% if phase == 'explore' %}bg-brand-500 text-white shadow-medium
-                {% else %}bg-white border border-ink-200 text-ink-500 hover:text-ink-900{% endif %}">
-        <i data-lucide="compass" class="w-3.5 h-3.5"></i>
-        <span>A · 探索题材</span>
-      </a>
-      <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-ink-300"></i>
-      <a href="?phase=direct&mode={{ active_mode }}"
-         class="flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium transition
-                {% if phase == 'direct' %}bg-brand-500 text-white shadow-medium
-                {% elif phase == 'explore' %}bg-white border border-ink-200 text-ink-400
-                {% else %}bg-white border border-ink-200 text-ink-500 hover:text-ink-900{% endif %}">
-        <i data-lucide="palette" class="w-3.5 h-3.5"></i>
-        <span>B · 定向风格</span>
-      </a>
-      <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-ink-300"></i>
-      <span class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-ink-400 bg-white border border-ink-200">
-        <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
-        <span>进入文案</span>
-      </span>
-    </div>
+  <!-- ============ 顶部 · 阶段导航 ============ -->
+  <div class="flex items-center justify-end gap-1 mb-5 text-[12px] animate-fade-in-up">
+    <a href="?phase=explore"
+       class="flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium transition
+              {% if phase == 'explore' %}bg-brand-500 text-white shadow-medium
+              {% else %}bg-white border border-ink-200 text-ink-500 hover:text-ink-900{% endif %}">
+      <i data-lucide="compass" class="w-3.5 h-3.5"></i>
+      <span>A · 探索题材</span>
+    </a>
+    <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-ink-300"></i>
+    <a href="?phase=direct"
+       class="flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium transition
+              {% if phase == 'direct' %}bg-brand-500 text-white shadow-medium
+              {% elif phase == 'explore' %}bg-white border border-ink-200 text-ink-400
+              {% else %}bg-white border border-ink-200 text-ink-500 hover:text-ink-900{% endif %}">
+      <i data-lucide="palette" class="w-3.5 h-3.5"></i>
+      <span>B · 定向风格</span>
+    </a>
+    <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-ink-300"></i>
+    <span class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-ink-400 bg-white border border-ink-200">
+      <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+      <span>进入文案</span>
+    </span>
   </div>
 
   {# ============================================================ #}
@@ -237,17 +229,41 @@ document.addEventListener('alpine:init', () => {
         </div>
 
         <!-- 主行动 -->
-        <div class="p-4 pt-0">
-          <button x-data @click="$store.topic.generate()" :disabled="$store.topic.loading || !$store.topic.keywords.trim()"
+        <div class="p-4 pt-0" x-data>
+          <button @click="$store.topic.generate()" :disabled="$store.topic.loading || !$store.topic.keywords.trim()"
                   class="w-full py-3.5 rounded-xl bg-gradient-to-r from-ink-900 via-ink-800 to-brand-700 text-white font-display font-semibold text-[14px] shadow-strong hover:shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
             <template x-if="!$store.topic.loading"><i data-lucide="wand-2" class="w-4 h-4"></i></template>
             <template x-if="$store.topic.loading"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i></template>
             <span x-text="$store.topic.loading ? 'DeepSeek 生成中…' : 'AI 生成候选选题'"></span>
             <span class="text-[11px] opacity-70 px-1.5 py-0.5 rounded bg-white/10" x-text="$store.topic.nTopics + ' 条'"></span>
           </button>
-          <div x-data class="mt-2 text-center text-[11px]"
-               :class="$store.topic.error ? 'text-rose-600' : 'text-ink-500'"
-               x-text="$store.topic.error || $store.topic.statusText"></div>
+
+          <!-- Loading 大字反馈 · 不允许用户以为按钮坏了 -->
+          <template x-if="$store.topic.loading">
+            <div class="mt-3 rounded-xl border-2 border-brand-300 bg-brand-50 p-3.5">
+              <div class="flex items-center gap-2.5">
+                <i data-lucide="loader-2" class="w-5 h-5 text-brand-600 animate-spin shrink-0"></i>
+                <div class="flex-1 min-w-0">
+                  <div class="font-display font-semibold text-[13px] text-ink-900">
+                    DeepSeek 正在生成 <span x-text="$store.topic.nTopics"></span> 条候选 · 已等待 <span x-text="$store.topic.elapsedSec" class="font-mono text-brand-700"></span> 秒
+                  </div>
+                  <div class="text-[11px] text-ink-600 mt-0.5">通常需 25-40 秒，最长可能 60 秒。请勿刷新或返回。</div>
+                </div>
+              </div>
+              <!-- 进度条（按 35 秒预估 cap 100%） -->
+              <div class="mt-2.5 h-1.5 rounded-full bg-white/70 overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-brand-400 to-brand-600 transition-all duration-500"
+                     :style="`width: ${Math.min(100, ($store.topic.elapsedSec / 35) * 100)}%`"></div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 完成 / 错误反馈 -->
+          <template x-if="!$store.topic.loading && ($store.topic.error || $store.topic.statusText)">
+            <div class="mt-2 text-center text-[11px]"
+                 :class="$store.topic.error ? 'text-rose-600 font-semibold' : 'text-ink-500'"
+                 x-text="$store.topic.error || $store.topic.statusText"></div>
+          </template>
         </div>
       </div>
     </div>
@@ -267,7 +283,7 @@ document.addEventListener('alpine:init', () => {
             <div class="font-display font-semibold text-[15px] truncate" x-text="$store.topic.picked?.title"></div>
             <div class="text-[11px] text-white/80 mt-0.5" x-text="($store.topic.picked?.category||'') + ' · 评分 ' + ($store.topic.picked?.score||0)"></div>
           </div>
-          <a :href="'?phase=direct&mode=' + $store.topic.mode"
+          <a href="?phase=direct"
              class="shrink-0 px-4 py-2 rounded-lg bg-white text-emerald-700 font-semibold text-[12px] flex items-center gap-1 hover:bg-emerald-50">
             <span>下一步：风格定向</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
@@ -369,7 +385,7 @@ document.addEventListener('alpine:init', () => {
             <span>AI 推荐 <b class="text-white" x-text="S.picked?.best_style"></b></span>
           </div>
         </div>
-        <a href="?phase=explore&mode={{ active_mode }}" class="shrink-0 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-[12px] flex items-center gap-1">
+        <a href="?phase=explore" class="shrink-0 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-[12px] flex items-center gap-1">
           <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>换题</span>
         </a>
       </div>
@@ -429,7 +445,7 @@ document.addEventListener('alpine:init', () => {
           <span x-text="($store.styleStore.picked?.emoji || '') + ' ' + ($store.styleStore.picked?.name || '')"></span>
         </div>
       </div>
-      <a :href="'/project/' + $store.topic.videoId + '/script'"
+      <a href="{{ next_step_url }}"
          class="shrink-0 px-5 py-2.5 rounded-xl bg-white text-emerald-700 font-semibold text-[13px] flex items-center gap-1.5 hover:bg-emerald-50">
         <span>进入文案 · AI 写 3 套</span>
         <i data-lucide="arrow-right" class="w-4 h-4"></i>
@@ -442,7 +458,7 @@ document.addEventListener('alpine:init', () => {
       <i data-lucide="alert-triangle" class="w-6 h-6 mx-auto text-amber-600 mb-2"></i>
       <div class="text-[13px] text-amber-900 font-semibold">还没有选定题材</div>
       <div class="mt-1 text-[11px] text-amber-700">先回到「探索题材」选一个，再来挑风格</div>
-      <a href="?phase=explore&mode={{ active_mode }}" class="inline-block mt-3 btn-primary text-[12px]">
+      <a href="?phase=explore" class="inline-block mt-3 btn-primary text-[12px]">
         <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>回去选题</span>
       </a>
     </div>

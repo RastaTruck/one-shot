@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block page_title %}灵感库 · 从积累开始{% endblock %}
+{% block stepper %}{% endblock %}
+
+{% block content %}
+<script>
+(function(){ var _fn = function() {
+  Alpine.store('insp', {
+    selected: new Set(),
+    creating: false,
+    error: '',
+
+    toggle(snippetId) {
+      if (this.selected.has(snippetId)) {
+        this.selected.delete(snippetId);
+      } else {
+        this.selected.add(snippetId);
+      }
+      // 触发 reactivity（Set 修改 Alpine 不自动响应，赋新引用）
+      this.selected = new Set(this.selected);
+    },
+    has(snippetId) { return this.selected.has(snippetId); },
+    get count() { return this.selected.size; },
+
+    async createProject() {
+      if (!this.count) return;
+      this.creating = true;
+      this.error = '';
+      try {
+        const r = await fetch('/api/inspiration/create-project', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({snippet_ids: [...this.selected]}),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) {
+          this.error = j.detail || '创建失败';
+          return;
+        }
+        // 跳到新项目的选题页
+        window.location.href = `/project/${j.video_id}/topic`;
+      } catch (e) {
+        this.error = '网络错误：' + e.message;
+      } finally {
+        this.creating = false;
+      }
+    },
+
+    async deleteSnippet(snippetId) {
+      if (!confirm('确认删除这条灵感？')) return;
+      const r = await fetch('/api/snippet/' + snippetId, {method: 'DELETE'});
+      if (r.ok) {
+        // 从选中集移除 + reload 页面（简单起见）
+        this.selected.delete(snippetId);
+        location.reload();
+      }
+    },
+  });
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
+</script>
+
+<div class="px-8 py-6 max-w-[1200px] mx-auto" x-data>
+
+  <!-- 页头 -->
+  <div class="rounded-xl border border-ink-200 bg-white shadow-soft p-5 mb-6 flex items-center gap-4">
+    <div class="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
+      <i data-lucide="sparkles" class="w-6 h-6 text-amber-600"></i>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="text-[18px] font-display font-semibold text-ink-900">灵感库</div>
+      <div class="mt-0.5 text-[13px] text-ink-600">
+        从已收藏的 <b>{{ total }}</b> 条片段里挑灵感作为新选题的起点 · 文案页右侧"灵感库"面板可持续收藏
+      </div>
+    </div>
+    <a href="/" class="btn-outline text-[12px]">
+      <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> 回项目看板
+    </a>
+  </div>
+
+  {% if total == 0 %}
+  <!-- 空状态 -->
+  <div class="rounded-2xl bg-white border-2 border-dashed border-ink-200 p-12 text-center">
+    <div class="w-14 h-14 mx-auto rounded-2xl bg-ink-50 text-ink-400 flex items-center justify-center mb-3">
+      <i data-lucide="bookmark" class="w-6 h-6"></i>
+    </div>
+    <div class="font-display font-semibold text-[15px] text-ink-900">灵感库还空着</div>
+    <div class="mt-1 text-[12px] text-ink-500 leading-relaxed">
+      在做项目时，文案页右侧的「灵感库」面板可以收藏好钩子 / 金句 / 案例段落 / CTA。<br>
+      积累一段时间后，这里会成为你的「选题素材库」，随时基于积累开始下一个选题。
+    </div>
+    <a href="/" class="inline-block mt-4 btn-primary text-[12px]">
+      <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> 先去看看正在进行的项目
+    </a>
+  </div>
+  {% else %}
+
+  <!-- 分组列表 -->
+  <div class="space-y-5 pb-24">
+    {% for group in grouped %}
+    <section class="rounded-xl border border-ink-200 bg-white shadow-soft overflow-hidden">
+      <div class="flex items-center px-5 py-3 border-b border-ink-100 bg-ink-50/40">
+        <div class="w-7 h-7 rounded-lg bg-{{ group.color }}-100 text-{{ group.color }}-700 flex items-center justify-center mr-2.5">
+          <i data-lucide="{{ group.icon }}" class="w-3.5 h-3.5"></i>
+        </div>
+        <div class="text-[14px] font-display font-semibold text-ink-900">{{ group.label }}</div>
+        <span class="ml-2 text-[11px] text-ink-500">· {{ group['items']|length }} 条</span>
+      </div>
+
+      <div class="p-3 space-y-2">
+        {% for s in group['items'] %}
+        <div x-data class="rounded-lg border transition cursor-pointer p-3 flex items-start gap-3"
+             :class="$store.insp.has({{ s.snippet_id }})
+                       ? 'border-brand-400 bg-brand-50/40 shadow-soft'
+                       : 'border-ink-200 bg-white hover:border-ink-300'"
+             @click="$store.insp.toggle({{ s.snippet_id }})">
+          <!-- checkbox -->
+          <div class="mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition"
+               :class="$store.insp.has({{ s.snippet_id }})
+                         ? 'border-brand-500 bg-brand-500 text-white'
+                         : 'border-ink-300 bg-white'">
+            <template x-if="$store.insp.has({{ s.snippet_id }})">
+              <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            </template>
+          </div>
+          <!-- 文本 + 来源 -->
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] text-ink-900 leading-relaxed">{{ s.text }}</div>
+            <div class="mt-1.5 flex items-center gap-2 text-[10px] text-ink-400">
+              <i data-lucide="film" class="w-3 h-3"></i>
+              <span>来自 <a href="/project/{{ s.video_id }}/script" class="text-ink-500 hover:text-brand-600 underline" @click.stop>{{ s.video_title or s.video_id }}</a></span>
+              {% if s.source_note %}<span>·</span><span>{{ s.source_note }}</span>{% endif %}
+            </div>
+          </div>
+          <!-- 删除 -->
+          <button @click.stop="$store.insp.deleteSnippet({{ s.snippet_id }})"
+                  class="shrink-0 w-7 h-7 rounded-md text-ink-300 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition"
+                  title="删除这条灵感">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+
+  <!-- 底部 sticky 操作栏 -->
+  <div x-data class="fixed bottom-0 left-[248px] right-0 px-8 py-4 bg-white/95 border-t border-ink-200 backdrop-blur z-20"
+       x-show="$store.insp.count > 0"
+       x-transition.opacity>
+    <div class="max-w-[1200px] mx-auto flex items-center gap-3">
+      <div class="flex-1 text-[13px] text-ink-700">
+        已选 <b class="text-brand-700"><span x-text="$store.insp.count"></span></b> 条灵感
+        <span class="text-ink-400 ml-2">· 这些片段会作为新项目的 <code class="text-[11px] bg-ink-100 px-1 rounded">notes</code> 预填</span>
+      </div>
+      <button @click="$store.insp.selected = new Set()"
+              class="btn-ghost text-[12px]">
+        清空选择
+      </button>
+      <button @click="$store.insp.createProject()"
+              :disabled="$store.insp.creating"
+              class="btn-primary text-[13px]">
+        <template x-if="!$store.insp.creating"><i data-lucide="sparkles" class="w-4 h-4"></i></template>
+        <template x-if="$store.insp.creating"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i></template>
+        <span x-text="$store.insp.creating ? '创建中…' : ('基于 ' + $store.insp.count + ' 条灵感创建项目')"></span>
+      </button>
+    </div>
+    <template x-if="$store.insp.error">
+      <div class="mt-2 max-w-[1200px] mx-auto px-3 py-1.5 rounded text-[11px] text-red-700 bg-red-50 border border-red-200"
+           x-text="$store.insp.error"></div>
+    </template>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

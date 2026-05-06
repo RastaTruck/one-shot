@@ -152,6 +152,30 @@ CREATE TABLE IF NOT EXISTS snippet_library (
 );
 CREATE INDEX IF NOT EXISTS idx_snippet_video ON snippet_library(video_id);
 CREATE INDEX IF NOT EXISTS idx_snippet_kind ON snippet_library(kind);
+
+-- 画风锁定：style_bible 快照 + 生成的参考图列表
+CREATE TABLE IF NOT EXISTS project_style_bible (
+    video_id       TEXT PRIMARY KEY,
+    bible_json     TEXT NOT NULL,
+    images_json    TEXT NOT NULL,
+    total_cost_cny REAL NOT NULL DEFAULT 0,
+    locked         INTEGER NOT NULL DEFAULT 0,
+    updated_at     REAL NOT NULL
+);
+
+-- 分镜表（shot_table 完整序列化）
+CREATE TABLE IF NOT EXISTS project_shot_table (
+    video_id   TEXT PRIMARY KEY,
+    table_json TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+-- 语义断句表（LLM 切分 + 用户审核后的最终单元列表）
+CREATE TABLE IF NOT EXISTS project_segments (
+    video_id      TEXT PRIMARY KEY,
+    segments_json TEXT NOT NULL,
+    updated_at    REAL NOT NULL
+);
 """
 
 
@@ -299,6 +323,107 @@ def load_project_topic_pool(video_id: str) -> list[dict[str, Any]] | None:
     with get_conn() as conn:
         row = conn.execute("SELECT pool_json FROM project_topic_pool WHERE video_id = ?", (video_id,)).fetchone()
         return json.loads(row["pool_json"]) if row else None
+
+
+# ---------- 画风锁定（style_bible + 参考图） ----------
+
+def save_project_style_bible(
+    video_id: str, bible: dict[str, Any], images: list[dict[str, Any]],
+    total_cost_cny: float = 0.0, locked: bool = False,
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO project_style_bible
+                 (video_id, bible_json, images_json, total_cost_cny, locked, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(video_id) DO UPDATE SET
+                 bible_json = excluded.bible_json,
+                 images_json = excluded.images_json,
+                 total_cost_cny = excluded.total_cost_cny,
+                 locked = excluded.locked,
+                 updated_at = excluded.updated_at""",
+            (
+                video_id,
+                json.dumps(bible, ensure_ascii=False),
+                json.dumps(images, ensure_ascii=False),
+                float(total_cost_cny),
+                1 if locked else 0,
+                time.time(),
+            ),
+        )
+
+
+def load_project_style_bible(video_id: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT bible_json, images_json, total_cost_cny, locked, updated_at "
+            "FROM project_style_bible WHERE video_id = ?",
+            (video_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "bible": json.loads(row["bible_json"]),
+            "images": json.loads(row["images_json"]),
+            "total_cost_cny": row["total_cost_cny"],
+            "locked": bool(row["locked"]),
+            "updated_at": row["updated_at"],
+        }
+
+
+def set_project_style_bible_locked(video_id: str, locked: bool) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE project_style_bible SET locked = ?, updated_at = ? WHERE video_id = ?",
+            (1 if locked else 0, time.time(), video_id),
+        )
+        return cur.rowcount > 0
+
+
+# ---------- 分镜表（整表 JSON） ----------
+
+def save_project_segments(video_id: str, segments: list[dict[str, Any]]) -> None:
+    """保存 LLM 断句 / 用户审核后的 segments 列表。"""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO project_segments (video_id, segments_json, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(video_id) DO UPDATE SET
+                 segments_json = excluded.segments_json,
+                 updated_at = excluded.updated_at""",
+            (video_id, json.dumps(segments, ensure_ascii=False), time.time()),
+        )
+
+
+def load_project_segments(video_id: str) -> list[dict[str, Any]] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT segments_json FROM project_segments WHERE video_id = ?",
+            (video_id,),
+        ).fetchone()
+        return json.loads(row["segments_json"]) if row else None
+
+
+def save_project_shot_table(video_id: str, table_dict: dict[str, Any]) -> None:
+    """保存 ShotTable.to_dict() 输出。"""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO project_shot_table (video_id, table_json, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(video_id) DO UPDATE SET
+                 table_json = excluded.table_json,
+                 updated_at = excluded.updated_at""",
+            (video_id, json.dumps(table_dict, ensure_ascii=False), time.time()),
+        )
+
+
+def load_project_shot_table(video_id: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT table_json FROM project_shot_table WHERE video_id = ?",
+            (video_id,),
+        ).fetchone()
+        return json.loads(row["table_json"]) if row else None
 
 
 # ---------- script 表操作 ----------

@@ -1,328 +1,468 @@
 {% extends "base.html" %}
-{% block page_title %}④ 素材 · {{ current_video.title }}{% endblock %}
+{% block page_title %}⑤ 素材 · AI 任务队列 · {{ current_video.title }}{% endblock %}
+
+{% block topbar_right %}
+<div class="hidden md:flex items-center gap-3 text-[12px]" x-data>
+  <span class="text-ink-500">
+    🎤 <span x-text="$store.assets.audioReady"></span>/<span x-text="$store.assets.audioTotal"></span>
+  </span>
+  <span class="text-ink-500">
+    🖼️ <span x-text="$store.assets.imageReady"></span>/<span x-text="$store.assets.imageTotal"></span>
+  </span>
+  <span class="text-ink-500">
+    🎬 <span x-text="$store.assets.videoReady"></span>/<span x-text="$store.assets.videoTotal"></span>
+  </span>
+  <span class="text-ink-400">· AI 成本 ¥<span x-text="$store.assets.totalCost.toFixed(2)"></span></span>
+  {% include "_next_step_btn.html" %}
+</div>
+{% endblock %}
 
 {% block content %}
-{% set cal = assets.style_calibration %}
-{% set picked_sample = cal.samples | selectattr('picked') | first %}
-{% set insets_done = assets.insets | selectattr('status','equalto','done') | list %}
-{% set insets_gen = assets.insets | selectattr('status','equalto','generating') | list %}
-{% set insets_pend = assets.insets | selectattr('status','equalto','pending') | list %}
-{% set audios_done = assets.audios | selectattr('status','equalto','done') | list %}
+<script>
+(function(){ var _fn = function() {
+  const initQueue = {{ queue | tojson }};
+  const initVoices = {{ voice_presets | tojson }};
+  const initSubs = {{ subtitle_presets | tojson }};
 
-<div class="px-8 py-8 max-w-[1280px] mx-auto" x-data="{ promptOpen: false }">
+  Alpine.store('assets', {
+    videoId: "{{ current_video.video_id }}",
+    tab: 'audio', // audio | image | video
 
-  <!-- 顶部：三阶段进度总览 -->
-  <section class="rounded-2xl bg-gradient-to-br from-ink-900 to-ink-800 text-white p-6 animate-fade-in-up">
-    <div class="flex items-start justify-between gap-6">
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <i data-lucide="layers" class="w-4 h-4 text-brand-400"></i>
-          <div class="text-[11px] font-semibold text-brand-300 tracking-wider uppercase">素材生产 · 三阶段</div>
-        </div>
-        <h2 class="mt-2 font-display font-semibold text-[18px]">画风校准 → 画框批量生成 → 配音</h2>
-        <div class="mt-4 flex items-center gap-1.5 flex-wrap text-[11px]">
-          <!-- 阶段 1 -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full {% if cal.confirmed %}bg-emerald-500{% else %}bg-amber-500{% endif %} text-white flex items-center justify-center text-[10px] font-bold">1</span>
-            <span>画风校准 {% if cal.confirmed %}<b class="text-emerald-300">✓ 已确认</b>{% else %}<b class="text-amber-300">待确认</b>{% endif %}</span>
-          </div>
-          <i data-lucide="arrow-right" class="w-3 h-3 text-white/40"></i>
-          <!-- 阶段 2 -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full bg-brand-500 text-white flex items-center justify-center text-[10px] font-bold">2</span>
-            <span>画框元素 <b class="text-brand-300">{{ insets_done|length }}/{{ assets.insets|length }}</b></span>
-          </div>
-          <i data-lucide="arrow-right" class="w-3 h-3 text-white/40"></i>
-          <!-- 阶段 3 -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">3</span>
-            <span>配音 <b class="text-emerald-300">{{ audios_done|length }}/{{ assets.audios|length }}</b></span>
-          </div>
-        </div>
-        <div class="mt-3 text-[11px] text-white/60 flex items-center gap-4">
-          <span>🎭 表情库命中 {{ assets.expression_hits.matched }}/{{ assets.expression_hits.total }}（无需生成）</span>
-          <span>🎞️ 元素库复用 {{ assets.element_hits.matched }}/{{ assets.element_hits.total_needed }}（无需生成）</span>
-          <span>🖼️ 仅 {{ assets.insets|length }} 个画框需新生成</span>
-        </div>
-      </div>
+    audio:  initQueue.audio  || {tasks:[], ready:0, total:0},
+    image:  initQueue.image  || {tasks:[], ready:0, total:0},
+    video:  initQueue.video  || {tasks:[], ready:0, total:0},
+    totalCost: initQueue.total_cost_cny || 0,
+    voices: initVoices,
+    subtitles: initSubs,
+    voiceId: initQueue.bible_voice_id,
+    subtitleId: initQueue.bible_subtitle_style,
+    busy: {},
+    errors: {},
+
+    get audioReady(){ return this.audio.ready; },
+    get audioTotal(){ return this.audio.total; },
+    get imageReady(){ return this.image.ready; },
+    get imageTotal(){ return this.image.total; },
+    get videoReady(){ return this.video.ready; },
+    get videoTotal(){ return this.video.total; },
+
+    voiceName() { const v = this.voices.find(x => x.id === this.voiceId); return v ? v.name : this.voiceId; },
+
+    _key(kind, idx) { return kind + '__' + idx; },
+
+    recompute() {
+      this.audio.ready = this.audio.tasks.filter(t => t.status === 'ready').length;
+      this.audio.total = this.audio.tasks.length;
+      this.image.ready = this.image.tasks.filter(t => t.status === 'image_ready').length;
+      this.image.total = this.image.tasks.length;
+      this.video.ready = this.video.tasks.filter(t => t.status === 'video_ready').length;
+      this.video.total = this.video.tasks.length;
+      this.totalCost = [...this.image.tasks, ...this.video.tasks]
+          .reduce((s, t) => s + (t.cost || 0), 0);
+    },
+
+    // ---------- 配音 ----------
+    async genAudio(i) {
+      const t = this.audio.tasks[i];
+      if (!t) return;
+      const key = this._key('audio', i);
+      this.busy[key] = true; delete this.errors[key];
+      try {
+        const r = await fetch('/api/assets/audio/generate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id:this.videoId, shot_id:t.shot_id}),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) { this.errors[key] = j.detail || '失败'; return; }
+        t.audio_url = j.audio_url; t.status = 'ready';
+        this.recompute();
+      } catch(e) { this.errors[key] = e.message; }
+      finally { delete this.busy[key]; setTimeout(()=>lucide.createIcons(), 50); }
+    },
+
+    async genAllAudio(force = false) {
+      const key = force ? 'audio_all_force' : 'audio_all';
+      this.busy[key] = true;
+      try {
+        const r = await fetch('/api/assets/audio/generate_all', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id:this.videoId, force}),
+        });
+        const j = await r.json();
+        const resultsByShot = {};
+        (j.results || []).forEach(rr => { if (rr.shot_id) resultsByShot[rr.shot_id] = rr; });
+        this.audio.tasks.forEach(t => {
+          const rr = resultsByShot[t.shot_id];
+          if (rr && rr.ok && rr.audio_url) {
+            t.audio_url = rr.audio_url;
+            t.status = 'ready';
+          } else if (rr && rr.ok && rr.skipped && rr.audio_url) {
+            t.audio_url = rr.audio_url;
+            t.status = 'ready';
+          }
+        });
+        this.recompute();
+      } finally { delete this.busy[key]; setTimeout(()=>lucide.createIcons(), 50); }
+    },
+
+    // ---------- 生图 ----------
+    async genImage(i) {
+      const t = this.image.tasks[i];
+      if (!t) return;
+      const key = this._key('image', i);
+      this.busy[key] = true; delete this.errors[key];
+      try {
+        const r = await fetch('/api/assets/l3/generate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            video_id:this.videoId, shot_id:t.shot_id,
+            inset_index:t.inset_index, intent:t.intent
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) { this.errors[key] = j.error || j.detail || '失败'; return; }
+        t.status = 'image_ready'; t.image_url = j.url;
+        t.image_prompt = j.prompt; t.cost = j.cost; t.provider = j.provider;
+        // 生图完成后自动在视频队列加一项（not_requested）
+        const existsInVideo = this.video.tasks.find(v => v.shot_id === t.shot_id && v.inset_index === t.inset_index);
+        if (!existsInVideo) {
+          this.video.tasks.push({
+            shot_id: t.shot_id, section: t.section,
+            inset_index: t.inset_index, intent: t.intent,
+            image_url: j.url, video_url: null, video_task_id: null,
+            cost: 0, status: 'not_requested',
+          });
+        } else {
+          existsInVideo.image_url = j.url;
+        }
+        this.recompute();
+      } catch(e) { this.errors[key] = e.message; }
+      finally { delete this.busy[key]; setTimeout(()=>lucide.createIcons(), 50); }
+    },
+
+    // ---------- 视频 ----------
+    async upgradeVideo(i) {
+      const t = this.video.tasks[i];
+      if (!t || !t.image_url) return;
+      const key = this._key('video', i);
+      this.busy[key] = true; delete this.errors[key];
+      try {
+        const r = await fetch('/api/assets/l3/upgrade_video', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            video_id:this.videoId, shot_id:t.shot_id,
+            inset_index:t.inset_index, image_url:t.image_url,
+            motion_prompt:t.intent
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) { this.errors[key] = j.error || j.detail || '失败'; return; }
+        t.video_task_id = j.task_id; t.status = 'running';
+        this._pollVideo(i);
+      } catch(e) { this.errors[key] = e.message; }
+      finally { delete this.busy[key]; setTimeout(()=>lucide.createIcons(), 50); }
+    },
+
+    async _pollVideo(i) {
+      const t = this.video.tasks[i];
+      if (!t || !t.video_task_id) return;
+      const key = this._key('video', i);
+      const max = 120;
+      for (let k = 0; k < max; k++) {
+        await new Promise(r => setTimeout(r, 5000));
+        try {
+          const url = `/api/assets/l3/video_status?task_id=${encodeURIComponent(t.video_task_id)}&video_id=${encodeURIComponent(this.videoId)}&shot_id=${encodeURIComponent(t.shot_id)}&inset_index=${t.inset_index}`;
+          const r = await fetch(url);
+          const j = await r.json();
+          if (j.status === 'succeeded') {
+            t.video_url = j.video_url; t.status = 'video_ready'; t.cost = j.cost || 2.5;
+            this.recompute(); return;
+          } else if (j.status === 'failed') {
+            this.errors[key] = j.error || '视频失败'; return;
+          }
+        } catch(e) {}
+      }
+      this.errors[key] = '视频轮询超时';
+    },
+  });
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
+</script>
+
+<div class="px-8 py-6 max-w-[1200px] mx-auto" x-data>
+
+  <!-- 风格未确认 警告 -->
+  {% if not bible_confirmed %}
+  <div class="rounded-xl border border-amber-300 bg-amber-50 p-4 mb-5 flex items-start gap-3">
+    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
+    <div class="flex-1 text-[13px] text-amber-900">
+      风格还没 5/5 确认。AI 生图会用当前 style_bible，但建议先到"画风"把身份确认齐再进来。
     </div>
-  </section>
-
-  <!-- ========= 阶段 1 · 画框画风校准 ========= -->
-  <section class="mt-6 rounded-2xl bg-white border {% if cal.confirmed %}border-emerald-200{% else %}border-amber-300{% endif %} overflow-hidden animate-fade-in-up">
-    <header class="px-5 py-4 border-b border-ink-100 flex items-center gap-3 {% if cal.confirmed %}bg-gradient-to-r from-emerald-50 to-transparent{% else %}bg-gradient-to-r from-amber-50 to-transparent{% endif %}">
-      <div class="w-9 h-9 rounded-xl {% if cal.confirmed %}bg-emerald-500{% else %}bg-amber-500{% endif %} text-white flex items-center justify-center font-bold">1</div>
-      <div class="flex-1">
-        <div class="font-display font-semibold text-[15px] text-ink-900">画框画风校准</div>
-        <div class="text-[11px] text-ink-500">先用「规范提示词」生成示例图，确认画风后再批量生产每个画框的具体内容</div>
-      </div>
-      {% if cal.confirmed %}
-      <span class="badge badge-green">✓ 已确认 · 可批量生成</span>
-      {% else %}
-      <span class="badge badge-brand">⏳ 等待确认</span>
-      {% endif %}
-    </header>
-
-    <div class="p-5 grid grid-cols-1 lg:grid-cols-5 gap-5">
-
-      <!-- 左：规范提示词 -->
-      <div class="lg:col-span-3 space-y-3">
-        <div>
-          <div class="flex items-baseline gap-2 mb-1.5">
-            <div class="text-[11px] font-semibold text-ink-700">规范提示词 (Standard Prompt)</div>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-ink-100 text-ink-500">所有画框共用</span>
-          </div>
-          <textarea rows="4" class="w-full px-3 py-2.5 text-[12px] font-mono border border-ink-200 rounded-lg bg-ink-50 text-ink-800 leading-relaxed focus:border-brand-400 focus:ring-[3px] focus:ring-brand-100 outline-none transition"
-                    placeholder="输入画风描述...">{{ cal.standard_prompt }}</textarea>
-          <div class="mt-1 text-[10px] text-ink-500">这段提示词会**拼接到每个画框的具体场景提示词前**，保证全视频画风统一</div>
-        </div>
-
-        <div>
-          <div class="flex items-baseline gap-2 mb-1.5">
-            <div class="text-[11px] font-semibold text-ink-700">反向提示词 (Negative)</div>
-            <span class="text-[10px] text-ink-400">避免出现的元素</span>
-          </div>
-          <input type="text" class="w-full px-3 py-2 text-[12px] font-mono border border-ink-200 rounded-lg bg-ink-50 text-ink-800 focus:border-brand-400 focus:ring-[3px] focus:ring-brand-100 outline-none transition"
-                 value="{{ cal.negative_prompt }}" />
-        </div>
-
-        <!-- 画风风格快选 -->
-        <div>
-          <div class="text-[11px] font-semibold text-ink-700 mb-1.5">风格模板（点选自动填规范提示词）</div>
-          <div class="flex items-center gap-2 flex-wrap">
-            {% for s in ["MBE 扁平","手绘插画","像素复古","3D 卡通","水彩风"] %}
-            <button class="px-3 py-1.5 rounded-lg text-[11px] font-medium transition
-                           {% if s == cal.style_hint %}bg-brand-500 text-white{% else %}bg-white border border-ink-200 text-ink-600 hover:bg-brand-50 hover:border-brand-200{% endif %}">
-              {{ s }}
-            </button>
-            {% endfor %}
-          </div>
-        </div>
-
-        <div class="flex items-center gap-2 pt-2 border-t border-ink-100">
-          <button class="px-4 py-2 rounded-xl bg-ink-900 text-white text-[12px] font-semibold flex items-center gap-1.5 hover:bg-ink-800">
-            <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
-            <span>重新生成 3 张示例图</span>
-          </button>
-          {% if cal.confirmed %}
-          <button class="px-4 py-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-[12px] font-semibold flex items-center gap-1.5">
-            <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
-            <span>画风已确认</span>
-          </button>
-          {% else %}
-          <button class="px-4 py-2 rounded-xl bg-emerald-500 text-white text-[12px] font-semibold flex items-center gap-1.5 hover:bg-emerald-600">
-            <i data-lucide="check" class="w-3.5 h-3.5"></i>
-            <span>确认此画风 · 开始批量生成</span>
-          </button>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- 右：示例图预览 -->
-      <div class="lg:col-span-2">
-        <div class="text-[11px] font-semibold text-ink-700 mb-2 flex items-center gap-1.5">
-          <i data-lucide="image" class="w-3.5 h-3.5 text-brand-500"></i>
-          <span>示例图预览</span>
-          <span class="text-[10px] text-ink-400 font-normal">（测试题材：生活小物）</span>
-        </div>
-        <div class="grid grid-cols-3 gap-2">
-          {% for sp in cal.samples %}
-          <div class="rounded-xl border-2 overflow-hidden transition cursor-pointer
-                      {% if sp.picked %}border-brand-500 shadow-medium ring-2 ring-brand-100{% else %}border-ink-200 hover:border-brand-300{% endif %}">
-            <div class="aspect-square flex items-center justify-center text-[42px] relative" style="background: {{ sp.thumb_bg }};">
-              <span class="opacity-90">{{ sp.emoji }}</span>
-              {% if sp.picked %}
-              <div class="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-brand-500 flex items-center justify-center shadow">
-                <i data-lucide="star" class="w-3 h-3 text-white"></i>
-              </div>
-              {% endif %}
-            </div>
-            <div class="px-2 py-1.5 text-[10px] text-ink-600 truncate">{{ sp.prompt_extra }}</div>
-          </div>
-          {% endfor %}
-        </div>
-        <div class="mt-2 text-[10px] text-ink-500 leading-snug">
-          ⭐ 用规范提示词试跑的测试题材。画风满意后点左侧「确认」，之后所有画框用同套标准生成 → 风格统一。
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========= 阶段 2 · 画框元素批量生成 ========= -->
-  <section class="mt-6 rounded-2xl bg-white border border-ink-200 overflow-hidden animate-fade-in-up">
-    <header class="px-5 py-4 border-b border-ink-100 flex items-center gap-3 bg-gradient-to-r from-brand-50 to-transparent">
-      <div class="w-9 h-9 rounded-xl bg-brand-500 text-white flex items-center justify-center font-bold">2</div>
-      <div class="flex-1">
-        <div class="font-display font-semibold text-[15px] text-ink-900">画框元素批量生成</div>
-        <div class="text-[11px] text-ink-500">元素库找不到的针对性素材 · 每项都是「规范提示词 + 场景提示词」拼接生成</div>
-      </div>
-      <div class="text-right">
-        <div class="text-[10px] text-ink-500">进度</div>
-        <div class="text-[14px] font-display font-semibold text-ink-900">{{ insets_done|length }} / {{ assets.insets|length }}</div>
-      </div>
-      <button class="px-3 py-2 rounded-xl bg-brand-500 text-white text-[12px] font-medium flex items-center gap-1.5 hover:bg-brand-600
-                     {% if not cal.confirmed %}opacity-50 cursor-not-allowed{% endif %}"
-              {% if not cal.confirmed %}disabled{% endif %}>
-        <i data-lucide="zap" class="w-3.5 h-3.5"></i>
-        <span>{% if cal.confirmed %}批量重跑{% else %}先确认画风{% endif %}</span>
-      </button>
-    </header>
-
-    {% if not cal.confirmed %}
-    <div class="p-6 text-center">
-      <div class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[12px]">
-        <i data-lucide="lock" class="w-4 h-4"></i>
-        <span>请先完成「画风校准」再开始批量生成</span>
-      </div>
-    </div>
-    {% else %}
-    <div class="p-5 space-y-3">
-      {% for a in assets.insets %}
-      <article class="rounded-xl border border-ink-200 overflow-hidden hover:border-brand-300 transition">
-        <div class="flex">
-          <!-- 缩略图 -->
-          <div class="w-40 shrink-0 aspect-[4/3] flex items-center justify-center text-[48px] relative" style="background: {{ a.thumb_bg }};">
-            {% if a.status == 'generating' %}
-            <div class="absolute inset-0 bg-black/40 flex flex-col items-center justify-center text-white">
-              <div class="w-7 h-7 rounded-full border-2 border-white/60 border-t-white animate-spin"></div>
-              <div class="mt-2 text-[11px] font-medium">生成中…</div>
-            </div>
-            {% else %}
-            <span class="opacity-90">{{ a.emoji }}</span>
-            {% endif %}
-            {% if a.status == 'done' %}
-            <div class="absolute top-2 right-2 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center shadow">
-              <i data-lucide="check" class="w-3 h-3 text-white"></i>
-            </div>
-            {% endif %}
-            <div class="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px] font-mono">{{ a.frame }}</div>
-          </div>
-
-          <!-- 信息 + 提示词 -->
-          <div class="flex-1 min-w-0 p-4">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-[11px] px-1.5 py-0.5 rounded bg-ink-100 font-mono text-ink-600">{{ a.shot }}</span>
-              <div class="text-[14px] font-semibold text-ink-900">{{ a.label }}</div>
-              {% if a.status == 'done' %}
-              <span class="badge badge-green text-[10px]">✓ 已生成</span>
-              {% elif a.status == 'generating' %}
-              <span class="badge badge-brand text-[10px]">⏳ 生成中</span>
-              {% else %}
-              <span class="badge badge-gray text-[10px]">排队</span>
-              {% endif %}
-            </div>
-            <div class="text-[11px] text-ink-500 mt-1 italic">来自台词 "{{ a.source_phrase }}"</div>
-
-            <!-- 双提示词展示 -->
-            <div class="mt-3 space-y-1.5">
-              <details class="group/p">
-                <summary class="flex items-center gap-1.5 cursor-pointer text-[10px] text-ink-500 hover:text-ink-700 select-none">
-                  <i data-lucide="chevron-right" class="w-3 h-3 transition group-open/p:rotate-90"></i>
-                  <span class="font-semibold">完整提示词（规范 + 场景）</span>
-                </summary>
-                <div class="mt-2 space-y-1.5 pl-4">
-                  <div class="rounded-md bg-ink-50 border border-ink-200 p-2">
-                    <div class="text-[9px] text-ink-500 font-semibold mb-1">📐 规范部分（继承自阶段 1）</div>
-                    <div class="text-[10px] font-mono text-ink-700 leading-relaxed">{{ cal.standard_prompt }}</div>
-                  </div>
-                  <div class="rounded-md bg-brand-50 border border-brand-200 p-2">
-                    <div class="text-[9px] text-brand-700 font-semibold mb-1">🎯 场景部分（本画框特有）</div>
-                    <div class="text-[10px] font-mono text-ink-800 leading-relaxed">{{ a.scene_prompt }}</div>
-                  </div>
-                </div>
-              </details>
-            </div>
-
-            <div class="mt-3 flex items-center gap-1">
-              {% if a.status == 'done' %}
-              <button class="btn-ghost text-[11px]"><i data-lucide="eye" class="w-3 h-3"></i><span>预览</span></button>
-              <button class="btn-ghost text-[11px]"><i data-lucide="refresh-ccw" class="w-3 h-3"></i><span>重跑</span></button>
-              <button class="btn-ghost text-[11px]"><i data-lucide="upload" class="w-3 h-3"></i><span>入库复用</span></button>
-              {% elif a.status == 'generating' %}
-              <span class="text-[10px] text-amber-600">预计 20s</span>
-              {% else %}
-              <button class="btn-ghost text-[11px]"><i data-lucide="play" class="w-3 h-3"></i><span>立即生成</span></button>
-              <button class="btn-ghost text-[11px]"><i data-lucide="pencil" class="w-3 h-3"></i><span>改提示词</span></button>
-              {% endif %}
-            </div>
-          </div>
-        </div>
-      </article>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </section>
-
-  <!-- ========= 阶段 3 · 配音 ========= -->
-  <section class="mt-6 rounded-2xl bg-white border border-ink-200 overflow-hidden animate-fade-in-up">
-    <header class="px-5 py-4 border-b border-ink-100 flex items-center gap-3 bg-gradient-to-r from-emerald-50 to-transparent">
-      <div class="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold">3</div>
-      <div class="flex-1">
-        <div class="font-display font-semibold text-[15px] text-ink-900">AI 配音</div>
-        <div class="text-[11px] text-ink-500">MiniMax · 青年男声沉稳 · 跟画框生成并行</div>
-      </div>
-      <div class="text-right">
-        <div class="text-[10px] text-ink-500">完成</div>
-        <div class="text-[14px] font-display font-semibold text-ink-900">{{ audios_done|length }} / {{ assets.audios|length }}</div>
-      </div>
-    </header>
-    <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-      {% for a in assets.audios %}
-      <div class="rounded-xl border border-ink-200 hover:border-emerald-300 transition p-3">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="text-[10px] font-mono text-ink-400">{{ a.shot }}</span>
-          <div class="text-[11px] font-medium text-ink-700">{{ a.label }}</div>
-          <div class="ml-auto flex items-center gap-1">
-            {% if a.status == 'done' %}
-            <span class="badge badge-green text-[10px]">✓ {{ a.duration }}</span>
-            {% elif a.status == 'generating' %}
-            <span class="badge badge-brand text-[10px]">合成中</span>
-            {% else %}
-            <span class="badge badge-gray text-[10px]">排队</span>
-            {% endif %}
-          </div>
-        </div>
-        <div class="text-[12px] text-ink-700 leading-relaxed line-clamp-2">{{ a.text }}</div>
-        {% if a.status == 'done' %}
-        <div class="mt-3 flex items-center gap-2">
-          <button class="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 transition">
-            <i data-lucide="play" class="w-3.5 h-3.5 ml-0.5"></i>
-          </button>
-          <div class="flex-1 flex items-center gap-[2px] h-6">
-            {% for i in range(28) %}
-            <div class="flex-1 rounded-sm bg-emerald-400/60"
-                 style="height: {{ [8,14,20,11,25,18,9,22,15,28,12,19,26,10,21,16,24,13,27,17,23,11,25,14,20,8,18,12][i % 28] }}px;"></div>
-            {% endfor %}
-          </div>
-          <button class="btn-ghost text-[10px] py-0.5 px-1.5"><i data-lucide="refresh-ccw" class="w-3 h-3"></i></button>
-        </div>
-        {% elif a.status == 'generating' %}
-        <div class="mt-2 h-1 bg-amber-100 rounded-full overflow-hidden">
-          <div class="h-full bg-amber-500 rounded-full animate-pulse" style="width: 70%"></div>
-        </div>
-        {% endif %}
-      </div>
-      {% endfor %}
-    </div>
-  </section>
-
-  <!-- 底栏 -->
-  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink-900 text-white rounded-2xl shadow-strong px-6 py-3 flex items-center gap-4 z-20" style="max-width:760px">
-    <div class="w-8 h-8 rounded-lg bg-brand-500/20 text-brand-300 flex items-center justify-center">
-      <i data-lucide="layers" class="w-4 h-4"></i>
-    </div>
-    <div class="flex-1 min-w-0">
-      <div class="text-[10px] text-ink-300">素材三阶段</div>
-      <div class="text-[13px] font-medium truncate">
-        画风 {% if cal.confirmed %}✓{% else %}⏳{% endif %} · 画框 {{ insets_done|length }}/{{ assets.insets|length }} · 配音 {{ audios_done|length }}/{{ assets.audios|length }}
-      </div>
-    </div>
-    <a href="/project/{{ current_video.video_id }}/audio"
-       class="shrink-0 px-5 py-2 rounded-xl bg-gradient-to-r from-brand-400 to-brand-600 font-semibold text-[13px] hover:opacity-90 transition flex items-center gap-2">
-      <span>全部通过 · 下一步</span>
-      <i data-lucide="arrow-right" class="w-4 h-4"></i>
-    </a>
+    <a href="/project/{{ current_video.video_id }}/style" class="btn-outline text-[12px] py-1 px-2">前往画风</a>
   </div>
+  {% endif %}
+
+  <!-- 顶部进度总览 -->
+  <div class="rounded-xl border border-ink-200 bg-white shadow-soft p-5 mb-5">
+    <div class="flex items-start gap-4 mb-3">
+      <div class="w-10 h-10 rounded-lg bg-brand-50 border border-brand-100 flex items-center justify-center shrink-0">
+        <i data-lucide="list-checks" class="w-5 h-5 text-brand-600"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[15px] font-display font-semibold text-ink-900">AI 任务队列</div>
+        <div class="mt-1 text-[13px] text-ink-700 leading-relaxed">
+          这一步只干一件事：<b>跑 AI 该干的活，人工审</b>。L0/L1/L2 库存素材在画风页已锁定，剪辑直接消费。
+          三个队列相对独立，但视频依赖生图先完成。
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 种任务一目了然 -->
+    <div class="grid grid-cols-3 gap-3">
+      <div class="rounded-lg border border-ink-200 p-3">
+        <div class="flex items-center gap-2">
+          <i data-lucide="mic" class="w-4 h-4 text-emerald-600"></i>
+          <div class="text-[12px] font-semibold text-ink-800">AI 配音</div>
+          <span class="ml-auto px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px]">EDGE-TTS</span>
+        </div>
+        <div class="mt-1 text-[18px] font-display font-bold text-ink-900">
+          <span x-text="$store.assets.audioReady"></span> / <span x-text="$store.assets.audioTotal"></span>
+        </div>
+        <div class="text-[11px] text-ink-500">已生成 / 总段数</div>
+      </div>
+      <div class="rounded-lg border border-ink-200 p-3">
+        <div class="flex items-center gap-2">
+          <i data-lucide="image" class="w-4 h-4 text-purple-600"></i>
+          <div class="text-[12px] font-semibold text-ink-800">AI 生图</div>
+          <span class="ml-auto px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[10px]">ARK</span>
+        </div>
+        <div class="mt-1 text-[18px] font-display font-bold text-ink-900">
+          <span x-text="$store.assets.imageReady"></span> / <span x-text="$store.assets.imageTotal"></span>
+        </div>
+        <div class="text-[11px] text-ink-500">已生成 / 需 AI 兜底的任务</div>
+      </div>
+      <div class="rounded-lg border border-ink-200 p-3">
+        <div class="flex items-center gap-2">
+          <i data-lucide="video" class="w-4 h-4 text-purple-600"></i>
+          <div class="text-[12px] font-semibold text-ink-800">AI 生视频</div>
+          <span class="ml-auto px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[10px]">ARK</span>
+        </div>
+        <div class="mt-1 text-[18px] font-display font-bold text-ink-900">
+          <span x-text="$store.assets.videoReady"></span> / <span x-text="$store.assets.videoTotal"></span>
+        </div>
+        <div class="text-[11px] text-ink-500">已生成 / 可升级的图</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-4 border-b border-ink-200">
+    <template x-for="t in [
+      {id:'audio', icon:'mic', name:'配音', count:$store.assets.audioTotal, ready:$store.assets.audioReady},
+      {id:'image', icon:'image', name:'AI 生图', count:$store.assets.imageTotal, ready:$store.assets.imageReady},
+      {id:'video', icon:'video', name:'AI 生视频', count:$store.assets.videoTotal, ready:$store.assets.videoReady}
+    ]" :key="t.id">
+      <button @click="$store.assets.tab = t.id"
+              class="px-4 py-2 text-[13px] font-medium border-b-2 transition -mb-px flex items-center gap-1.5"
+              :class="$store.assets.tab === t.id
+                       ? 'border-brand-500 text-ink-900'
+                       : 'border-transparent text-ink-500 hover:text-ink-800'">
+        <i :data-lucide="t.icon" class="w-4 h-4"></i>
+        <span x-text="t.name"></span>
+        <span class="ml-1 text-[11px] text-ink-400" x-text="`(${t.ready}/${t.count})`"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- ============================== 配音队列 ============================== -->
+  <template x-if="$store.assets.tab === 'audio'">
+    <div class="space-y-2">
+      <!-- 头部操作 -->
+      <div class="flex items-center gap-3 p-3 rounded-lg bg-ink-50/40 border border-ink-200">
+        <div class="flex-1 text-[12px] text-ink-700">
+          声线：<b class="text-ink-900" x-text="$store.assets.voiceName()"></b>
+          <span class="ml-2 text-ink-400">· 由画风页锁定</span>
+        </div>
+        <button class="btn-primary text-[12px]" @click="$store.assets.genAllAudio(false)"
+                :disabled="!!$store.assets.busy['audio_all'] || !!$store.assets.busy['audio_all_force']">
+          <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+          <span x-text="$store.assets.busy['audio_all'] ? '生成中…' : '一键全部生成'"></span>
+        </button>
+        <button class="btn-ghost text-[12px] text-ink-500" @click="$store.assets.genAllAudio(true)"
+                :disabled="!!$store.assets.busy['audio_all'] || !!$store.assets.busy['audio_all_force']"
+                title="强制重新合成所有配音（清除旧缓存）">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+          <span x-text="$store.assets.busy['audio_all_force'] ? '重新合成中…' : '重新合成'"></span>
+        </button>
+      </div>
+
+      <template x-for="(t, i) in $store.assets.audio.tasks" :key="t.shot_id">
+        <div class="rounded-lg border border-ink-200 bg-white p-3 flex items-start gap-3">
+          <div class="w-10 h-10 rounded-lg bg-ink-800 text-white flex items-center justify-center font-bold text-[12px] shrink-0" x-text="t.shot_id"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-brand-100 text-brand-700" x-text="t.section"></span>
+              <span class="text-[11px] text-ink-500">约 <span x-text="t.duration_estimated.toFixed(1)"></span>s</span>
+            </div>
+            <div class="mt-1 text-[13px] text-ink-800 line-clamp-2" x-text="t.text"></div>
+            <template x-if="t.audio_url">
+              <div class="mt-2 flex items-center gap-2">
+                <span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px]">EDGE-TTS</span>
+                <audio :src="t.audio_url" controls preload="none"
+                       class="h-8" style="max-width: 280px;"></audio>
+              </div>
+            </template>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <template x-if="t.status === 'ready'">
+              <span class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 text-[11px] border border-emerald-200">
+                <i data-lucide="check" class="w-3 h-3 inline"></i> 就绪
+              </span>
+            </template>
+            <template x-if="!$store.assets.busy[$store.assets._key('audio', i)]">
+              <button class="btn-outline text-[11px] py-1 px-2" @click="$store.assets.genAudio(i)">
+                <i data-lucide="sparkles" class="w-3 h-3"></i>
+                <span x-text="t.status === 'ready' ? '重生' : '生成'"></span>
+              </button>
+            </template>
+            <template x-if="$store.assets.busy[$store.assets._key('audio', i)]">
+              <span class="text-[11px] text-brand-600 animate-pulse">生成中…</span>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <!-- ============================== 生图队列 ============================== -->
+  <template x-if="$store.assets.tab === 'image'">
+    <div class="space-y-2">
+      <div class="p-3 rounded-lg bg-ink-50/40 border border-ink-200 flex items-center">
+        <div class="flex-1 text-[12px] text-ink-600">
+          只列出分镜里标记"AI 兜底"的画框元素（Shot.element_insets 里 MISSING 的项）。
+          生图用画风页 style_bible 的约束词。
+        </div>
+      </div>
+
+      <template x-if="!$store.assets.image.tasks.length">
+        <div class="rounded-lg border-2 border-dashed border-ink-200 py-12 text-center text-[13px] text-ink-400">
+          没有需要 AI 生图的任务 · 库存全部命中 ✨
+        </div>
+      </template>
+
+      <template x-for="(t, i) in $store.assets.image.tasks" :key="t.shot_id + '__' + t.inset_index">
+        <div class="rounded-lg border border-ink-200 bg-white p-3 flex items-start gap-3">
+          <!-- 图片缩略 -->
+          <div class="w-20 h-20 rounded-md overflow-hidden bg-ink-100 border border-ink-200 shrink-0 relative">
+            <template x-if="t.image_url">
+              <img :src="t.image_url" class="w-full h-full object-cover">
+            </template>
+            <template x-if="!t.image_url">
+              <div class="w-full h-full flex items-center justify-center text-ink-400">
+                <i data-lucide="image" class="w-5 h-5"></i>
+              </div>
+            </template>
+            <template x-if="t.image_url">
+              <div class="absolute top-0.5 left-0.5 px-1 rounded bg-brand-500/90 text-white text-[9px]">🎨 v1</div>
+            </template>
+          </div>
+
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-[11px] text-ink-500" x-text="t.shot_id + ' · #' + t.inset_index"></span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-brand-100 text-brand-700" x-text="t.section"></span>
+              <span class="text-[10px] text-ink-400" x-text="t.frame_style + ' · ' + t.position"></span>
+            </div>
+            <div class="mt-1 text-[13px] text-ink-800 line-clamp-2" x-text="t.intent"></div>
+            <template x-if="t.image_prompt">
+              <details class="mt-1.5">
+                <summary class="text-[10px] text-ink-400 cursor-pointer hover:text-brand-600">完整 prompt</summary>
+                <div class="mt-1 p-2 rounded bg-ink-50 text-[10px] text-ink-600 font-mono leading-relaxed whitespace-pre-wrap" x-text="t.image_prompt"></div>
+              </details>
+            </template>
+          </div>
+
+          <div class="flex flex-col items-end gap-1 shrink-0">
+            <template x-if="t.status === 'image_ready'">
+              <span class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 text-[11px] border border-emerald-200">
+                <i data-lucide="check" class="w-3 h-3 inline"></i> ¥<span x-text="(t.cost||0).toFixed(2)"></span>
+              </span>
+            </template>
+            <template x-if="!$store.assets.busy[$store.assets._key('image', i)]">
+              <button class="btn-outline text-[11px] py-1 px-2" @click="$store.assets.genImage(i)">
+                <i data-lucide="sparkles" class="w-3 h-3"></i>
+                <span x-text="t.status === 'image_ready' ? '重生' : '生成'"></span>
+              </button>
+            </template>
+            <template x-if="$store.assets.busy[$store.assets._key('image', i)]">
+              <span class="text-[11px] text-purple-600 animate-pulse">生成中 15-40s</span>
+            </template>
+            <template x-if="$store.assets.errors[$store.assets._key('image', i)]">
+              <span class="text-[10px] text-red-600 max-w-[200px] truncate" x-text="$store.assets.errors[$store.assets._key('image', i)]"></span>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <!-- ============================== 视频队列 ============================== -->
+  <template x-if="$store.assets.tab === 'video'">
+    <div class="space-y-2">
+      <div class="p-3 rounded-lg bg-ink-50/40 border border-ink-200 text-[12px] text-ink-600">
+        只列出"已生成图"的任务 —— 可选择升级为 5s 视频。单次约 ¥2.50，需 1-2 分钟。
+      </div>
+
+      <template x-if="!$store.assets.video.tasks.length">
+        <div class="rounded-lg border-2 border-dashed border-ink-200 py-12 text-center text-[13px] text-ink-400">
+          还没有图片可升级 · 先到生图 Tab 生图
+        </div>
+      </template>
+
+      <template x-for="(t, i) in $store.assets.video.tasks" :key="t.shot_id + '__' + t.inset_index">
+        <div class="rounded-lg border border-ink-200 bg-white p-3 flex items-start gap-3">
+          <div class="w-20 h-20 rounded-md overflow-hidden bg-ink-100 border border-ink-200 shrink-0 relative">
+            <template x-if="t.video_url">
+              <video :src="t.video_url" class="w-full h-full object-cover" muted autoplay loop playsinline></video>
+            </template>
+            <template x-if="!t.video_url && t.image_url">
+              <img :src="t.image_url" class="w-full h-full object-cover">
+            </template>
+            <template x-if="t.video_url">
+              <div class="absolute bottom-0.5 right-0.5 px-1 rounded bg-black/60 text-white text-[9px]">VIDEO</div>
+            </template>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-[11px] text-ink-500" x-text="t.shot_id + ' · #' + t.inset_index"></span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-brand-100 text-brand-700" x-text="t.section"></span>
+            </div>
+            <div class="mt-1 text-[13px] text-ink-800 line-clamp-2" x-text="t.intent"></div>
+          </div>
+          <div class="flex flex-col items-end gap-1 shrink-0">
+            <template x-if="t.status === 'video_ready'">
+              <span class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 text-[11px] border border-emerald-200">
+                <i data-lucide="check" class="w-3 h-3 inline"></i> ¥<span x-text="(t.cost||0).toFixed(2)"></span>
+              </span>
+            </template>
+            <template x-if="t.status === 'running'">
+              <span class="text-[11px] text-purple-600 animate-pulse">视频生成中…</span>
+            </template>
+            <template x-if="t.status === 'not_requested' && !$store.assets.busy[$store.assets._key('video', i)]">
+              <button class="btn-outline text-[11px] py-1 px-2 border-purple-300 text-purple-700"
+                      @click="$store.assets.upgradeVideo(i)">
+                <i data-lucide="video" class="w-3 h-3"></i> 升级视频
+              </button>
+            </template>
+            <template x-if="$store.assets.errors[$store.assets._key('video', i)]">
+              <span class="text-[10px] text-red-600 max-w-[200px] truncate" x-text="$store.assets.errors[$store.assets._key('video', i)]"></span>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
 
 </div>
 {% endblock %}

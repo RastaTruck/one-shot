@@ -76,10 +76,23 @@
     }
   </script>
 
-  <!-- HTMX + Alpine + Lucide -->
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script defer src="https://unpkg.com/alpinejs@3.13.10/dist/cdn.min.js"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- HTMX + Alpine + Lucide · 本地托管 + 版本戳防缓存 -->
+  <script src="/static/vendor/htmx.min.js?v=20260428a"></script>
+  <script defer src="/static/vendor/alpine.min.js?v=20260428a"></script>
+  <script src="/static/vendor/lucide.min.js?v=20260428a"></script>
+
+  <!-- 诊断横幅 · Alpine 3 秒内没起来直接弹错 -->
+  <script>
+    window.__alpineCheckTimer = setTimeout(() => {
+      if (typeof Alpine === 'undefined') {
+        const banner = document.createElement('div');
+        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 20px;background:#D93A2C;color:white;font-size:14px;font-weight:600;text-align:center;font-family:system-ui,sans-serif;';
+        banner.innerHTML = 'Alpine.js 加载失败 · 页面交互无法工作 · 请清浏览器缓存或 Cmd+Shift+R 硬刷一次<br><span style="font-size:11px;font-weight:400;opacity:.85;">如硬刷无效，按 F12 → Application → Service Workers → Unregister</span>';
+        document.body && document.body.prepend(banner);
+      }
+    }, 3000);
+    window.addEventListener('alpine:init', () => clearTimeout(window.__alpineCheckTimer));
+  </script>
 
   <link rel="stylesheet" href="/static/css/custom.css">
 
@@ -105,6 +118,18 @@
     /* Stepper 连接线 · DNA §色彩：强调色单色不渐变 */
     .stepper-line { flex: 1; height: 2px; background: #E8E6DE; border-radius: 1px; }
     .stepper-line.done { background: #F48A0C; }
+
+    /* 透明指示棋盘格 · 让用户能看见素材哪部分是真透明（PS / Sketch 标准） */
+    .transparent-bg {
+      background-color: #FAFAF7;
+      background-image:
+        linear-gradient(45deg, #CFCCC0 25%, transparent 25%),
+        linear-gradient(-45deg, #CFCCC0 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #CFCCC0 75%),
+        linear-gradient(-45deg, transparent 75%, #CFCCC0 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    }
 
     /* 骨架屏闪光 */
     .skeleton {
@@ -159,22 +184,23 @@
         <div class="text-[11px] text-brand-700 font-medium">{{ current_video.status_label or '进行中' }}</div>
         <div class="mt-0.5 text-[13px] font-semibold text-ink-900 truncate">{{ current_video.title }}</div>
       </div>
-      {% for step in steps %}
-      {% set idx = loop.index0 %}
-      {% set done = idx <= current_step_index %}
-      {% set active = active_nav == step.key %}
-      <a href="/project/{{ current_video.video_id }}/{{ step.key }}"
+      {% for sv in steps_view %}
+      {% set active = active_nav == sv.key %}
+      <a href="{{ sv.url }}"
          class="mt-0.5 flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition
                 {% if active %}bg-ink-900 text-white shadow-soft
-                {% elif done %}text-ink-700 hover:bg-ink-100
-                {% else %}text-ink-500 hover:bg-ink-100{% endif %}">
+                {% elif sv.done %}text-ink-700 hover:bg-ink-100
+                {% elif sv.is_current %}text-brand-700 hover:bg-brand-50 font-medium
+                {% else %}text-ink-500 hover:bg-ink-100{% endif %}"
+         {% if sv.blocker %}title="{{ sv.blocker }}"{% endif %}>
         <span class="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-semibold
-                     {% if done and not active %}bg-brand-500 text-white
-                     {% elif active %}bg-white/20 text-white
+                     {% if active %}bg-white/20 text-white
+                     {% elif sv.done %}bg-brand-500 text-white
+                     {% elif sv.is_current %}bg-white border-2 border-brand-500 text-brand-700
                      {% else %}bg-ink-100 text-ink-400 border border-ink-200{% endif %}">
-          {% if done and not active %}✓{% else %}{{ idx + 1 }}{% endif %}
+          {% if sv.done and not active %}✓{% else %}{{ loop.index }}{% endif %}
         </span>
-        <span>{{ step.label_short }}</span>
+        <span>{{ sv.label_short }}</span>
       </a>
       {% endfor %}
       {% endif %}
@@ -184,7 +210,7 @@
     <div class="px-4 py-3 border-t border-ink-200">
       <div class="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-ink-100/60">
         <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-        <span class="text-[11px] text-ink-600 font-medium">Mock 模式</span>
+        <span class="text-[11px] text-ink-600 font-medium">运行中</span>
         <span class="ml-auto text-[10px] text-ink-400">v0.1</span>
       </div>
     </div>

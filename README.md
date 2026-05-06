@@ -68,3 +68,65 @@ uvicorn web.app:app --reload
 
 完整设计：`/Users/Zhuanz/.claude/plans/staged-shimmying-lollipop.md`
 当前实装诊断：`/Users/Zhuanz/.claude/plans/optimized-questing-fern.md`
+
+---
+
+## 团队协作（新成员上手）
+
+### 1. 克隆 & 安装
+
+```bash
+git clone <repo-url>
+cd 视频批量生成
+bash scripts/setup.sh   # 一键装依赖 + 初始化 sqlite
+```
+
+### 2. 配置 API key
+
+```bash
+cp config/.env.example config/.env
+# 编辑 config/.env，填 DEEPSEEK_API_KEY / ARK_API_KEY 等真值
+# .env 在 .gitignore，绝不入 git
+```
+
+### 3. 同步素材（关键 · 不在 git 里）
+
+二进制素材（panda 表情 / 场景元素 / BGM mp3）**不入 git**——
+体量未来可能超 GB，git 不适合存大二进制。
+
+短期：从团队网盘 / U 盘拉一份到本地：
+- `data/assets/expressions/yierbubu/*.webp` — IP 表情库
+- `data/assets/elements/TENOR_FINANCE/*.webp` + `TENOR_GENERAL/*.webp` — 场景元素
+- `bgm/*.mp3` — 背景音乐
+
+长期：把素材搬到 OSS（阿里云 / 腾讯 COS / 七牛 / Cloudflare R2），catalog 引用 URL，免本地同步。这一步还没做。
+
+### 4. 启动开发服务器
+
+```bash
+uvicorn web.app:app --reload --port 8765
+# 浏览器开 http://localhost:8765
+```
+
+### 5. 协作工作流
+
+**代码改动**：标准 git flow，建分支 → PR → review → merge。
+
+**标签审核**（共审表情 / 元素 scene_tags）：
+- 改的是 `config/asset_catalog.json` 里某条目的 `meta.scene_tags` / `meta.character` / `meta.needs_review` 等字段
+- JSON 文本，git diff 友好 —— 改 + commit + push
+- **冲突预防**：多人同审先**按 ID 段预分工**（A 审 EXP_BUBU_SHOCK_*，B 审 EXP_BUBU_THINKING_*），减少同条目被两人改
+
+**新增素材**（抓 / 上传新表情）：
+1. `python3 scripts/harvest_yierbubu.py --queries "..."` 或 `python3 scripts/collect_tenor.py ...` 抓回本地
+2. `python3 scripts/clean_expression_bg.py` 清白底（`_orig/` 保留原图）
+3. catalog.json 自动加新条目 → commit + push catalog
+4. **二进制 webp 不入 git** —— 单独传给团队网盘，或等 OSS 接入后自动同步
+
+### 6. 不要 commit 的东西（.gitignore 已挡住）
+
+- `config/.env` — API key
+- `data/pipeline.db` — 各人本地项目状态
+- `data/assets/` — 素材二进制
+- `data/outputs/`, `data/audio/`, `data/cache/`, `**/_orig/`, `**/_trash/` — 生成产物 / 备份
+- `bgm/*.mp3` — BGM 二进制

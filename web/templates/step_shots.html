@@ -1,547 +1,712 @@
 {% extends "base.html" %}
-{% block page_title %}③ 分镜 · {{ current_video.title }}{% endblock %}
+{% from "_loading_banner.html" import loading_banner %}
+{% block page_title %}④ 分镜 · 叙事结构 · {{ current_video.title }}{% endblock %}
 
 {% block topbar_right %}
-<div class="text-[12px] text-ink-500"><b class="text-ink-900">{{ shots|length }}</b> 个镜头 · 总时长 <b class="text-ink-900">~90s</b></div>
-<div class="w-px h-4 bg-ink-200"></div>
-<button class="btn-ghost text-[12px]">
-  <i data-lucide="download" class="w-3.5 h-3.5"></i>
-  <span>导出 JSON</span>
-</button>
+<div class="hidden md:flex items-center gap-2 text-[12px]" x-data>
+  <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-brand-500"></i>
+  <span class="text-ink-500">
+    <b class="text-ink-900" x-text="$store.shots.list.length"></b> 段
+    · 总时长 <b class="text-ink-900" x-text="$store.shots.totalDuration.toFixed(1)"></b>s
+  </span>
+</div>
 {% endblock %}
 
 {% block content %}
-{# 统计 #}
-{% set hit_expr = shots | selectattr('candidates') | list | length %}
-{% set miss_expr = shots | rejectattr('candidates') | list %}
-{% set all_matched_el = [] %}
-{% set all_custom = [] %}
-{% for s in shots %}
-  {% for e in s.matched_elements %}{% set _ = all_matched_el.append(e) %}{% endfor %}
-  {% for c in s.custom_insets %}{% set _ = all_custom.append(c) %}{% endfor %}
-{% endfor %}
+<script>
+(function(){ var _fn = function() {
+  const initShots = {{ shots_view | tojson }};
+  const initHasTable = {{ has_shot_table | tojson }};
+  const initHasScript = {{ has_full_script | tojson }};
+  const initTotalDur = {{ total_duration | tojson }};
+  const sceneTagsClosed = {{ scene_tags_closed | tojson }};
 
-<div class="px-8 py-8 max-w-[1280px] mx-auto" x-data="{ configOpen: false }">
+  const FORM_LABELS = {
+    stock:    { label: '库存拼装',       desc: 'L0+L1+L2 全手工',        color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+    ai_image: { label: 'AI 生图静态',    desc: '需 Ark 生图兜底',        color: 'text-purple-700 bg-purple-50 border-purple-200' },
+    ai_video: { label: 'AI 生图 → 视频', desc: '生图后升级 5s 视频',     color: 'text-pink-700 bg-pink-50 border-pink-200' },
+  };
 
-  <!-- ========= 前置 · 本项目素材来源 ========= -->
-  {% set enabled_libs = element_libs|selectattr('id','in',asset_config.element_libs_enabled)|list %}
-  {% set total_elements = enabled_libs|sum(attribute='count') %}
-  <section class="rounded-2xl bg-white border border-ink-200 overflow-hidden mb-5 animate-fade-in-up">
-    <!-- 精简头条 -->
-    <div class="flex items-stretch">
-      <!-- 左：标题列 -->
-      <div class="px-5 py-4 bg-gradient-to-br from-ink-900 to-ink-800 text-white flex flex-col justify-center shrink-0 w-[180px]">
-        <div class="flex items-center gap-1.5 text-[10px] font-semibold text-brand-300 tracking-wider uppercase">
-          <i data-lucide="package-2" class="w-3.5 h-3.5"></i>
-          <span>本项目素材来源</span>
-        </div>
-        <div class="mt-1 text-[12px] text-white/60">决定分镜从哪里挑素材</div>
+  Alpine.store('shots', {
+    videoId: "{{ current_video.video_id }}",
+    list: initShots || [],
+    hasTable: initHasTable,
+    hasScript: initHasScript,
+    totalDuration: initTotalDur,
+    sceneTagsClosed: sceneTagsClosed,
+    loading: false,
+    elapsedSec: 0,
+    _tickHandle: null,
+    error: '',
+    statusText: initHasTable ? '已有分镜表' : (initHasScript ? '待生成分镜' : '需先到文案页生成完整文稿'),
+    editingShotId: null,
+    draft: {},
+
+    formLabel(f) { return (FORM_LABELS[f] || FORM_LABELS.stock).label; },
+    formClass(f) { return (FORM_LABELS[f] || FORM_LABELS.stock).color; },
+    formDesc(f)  { return (FORM_LABELS[f] || FORM_LABELS.stock).desc; },
+
+    async generate() {
+      if (this.loading) return;
+      if (!this.hasScript) { this.error = '先到文案页生成完整文稿'; return; }
+      this.loading = true;
+      this.error = '';
+      this.elapsedSec = 0;
+      const t0 = Date.now();
+      this._tickHandle = setInterval(() => {
+        this.elapsedSec = Math.round((Date.now() - t0) / 1000);
+      }, 500);
+      try {
+        const r = await fetch('/api/shots/generate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId}),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || '生成失败');
+        this.list = j.shots;
+        this.totalDuration = j.total_duration;
+        this.hasTable = true;
+        this.statusText = `已生成 ${j.shots.length} 段 · 总时长 ${j.total_duration}s`;
+      } catch (e) { this.error = e.message || String(e); }
+      finally {
+        if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null; }
+        this.loading = false;
+        setTimeout(() => lucide.createIcons(), 50);
+      }
+    },
+
+    async resetTable() {
+      if (!confirm('清空当前分镜表？下游已生成的素材也会失去引用。')) return;
+      try {
+        await fetch('/api/shots/reset', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId}),
+        });
+        this.list = []; this.hasTable = false;
+        this.totalDuration = 0;
+        this.statusText = '已清空 · 点生成重来';
+      } catch (e) { this.error = e.message; }
+    },
+
+    async updateShot(shotId, updates) {
+      const r = await fetch('/api/shots/update', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({video_id:this.videoId, shot_id:shotId, updates}),
+      });
+      const j = await r.json();
+      if (!r.ok) { this.error = j.detail || '更新失败'; return; }
+      const idx = this.list.findIndex(x => x.shot_id === shotId);
+      if (idx >= 0) this.list[idx] = j.shot;
+      this.totalDuration = j.total_duration;
+    },
+
+    // Picker state（一次只展开一个）
+    pickerKind: null,         // 'expressions' | 'backgrounds' | 'elements' | null
+    pickerShotId: null,
+    pickerBeatIndex: null,    // beat 槽位 picker 时记的 beat
+    pickerSide: null,         // 'left' | 'right'  (beat 槽位 picker 时)
+    pickerLoading: false,
+    pickerItems: [],
+    pickerMatchedCount: 0,
+    pickerCurrent: null,
+    pickerFilterTags: [],     // 可选筛选标签/分类列表
+    pickerActiveTag: null,    // 当前激活的筛选标签（null=全部）
+    pickerShotTags: [],       // 当前段的 scene_tags（用于高亮推荐）
+
+    get pickerFilteredItems() {
+      if (!this.pickerActiveTag) return this.pickerItems;
+      return this.pickerItems.filter(it => {
+        const tags = this.pickerKind === 'elements'
+          ? (it.categories || [])
+          : (it.scene_tags || []);
+        return tags.includes(this.pickerActiveTag);
+      });
+    },
+
+    async openPicker(shot, kind, beatIndex = null, side = null) {
+      this.pickerKind = kind;
+      this.pickerShotId = shot.shot_id;
+      this.pickerBeatIndex = beatIndex;
+      this.pickerSide = side;
+      this.pickerLoading = true;
+      this.pickerItems = [];
+      this.pickerMatchedCount = 0;
+      this.pickerFilterTags = [];
+      this.pickerActiveTag = null;
+      this.pickerShotTags = [];
+      try {
+        const u = `/api/shots/picker_options?video_id=${encodeURIComponent(this.videoId)}&shot_id=${encodeURIComponent(shot.shot_id)}&kind=${kind}`;
+        const r = await fetch(u);
+        const j = await r.json();
+        this.pickerItems = j.items || [];
+        this.pickerMatchedCount = j.ranked_count || 0;
+        this.pickerCurrent = j.current;
+        this.pickerFilterTags = j.filter_tags || [];
+        this.pickerShotTags = j.shot_tags || [];
+        // 自动预选当前段第一个 scene_tag
+        if (j.shot_tags && j.shot_tags.length > 0 && j.filter_tags && j.filter_tags.length > 0) {
+          const autoTag = j.shot_tags.find(t => j.filter_tags.includes(t));
+          if (autoTag) this.pickerActiveTag = autoTag;
+        }
+      } finally {
+        this.pickerLoading = false;
+        setTimeout(() => lucide.createIcons(), 30);
+      }
+    },
+    closePicker() {
+      this.pickerKind = null; this.pickerShotId = null;
+      this.pickerBeatIndex = null; this.pickerSide = null;
+      this.pickerItems = []; this.pickerMatchedCount = 0;
+      this.pickerFilterTags = []; this.pickerActiveTag = null;
+      this.pickerShotTags = [];
+    },
+    async pickItem(item) {
+      const shotId = this.pickerShotId;
+      const kind = this.pickerKind;
+      // 双 beat 槽位 picker
+      if (this.pickerBeatIndex !== null && this.pickerSide) {
+        const updates = {beat_slot: {beat_index: this.pickerBeatIndex, side: this.pickerSide, asset_id: item.id}};
+        this.closePicker();
+        await this.updateShot(shotId, updates);
+        setTimeout(() => lucide.createIcons(), 30);
+        return;
+      }
+      // 兼容旧 picker（整 shot 单字段）
+      const updates = kind === 'expressions'
+        ? {expression_id: item.id}
+        : (kind === 'backgrounds' ? {background_id: item.id} : {});
+      this.closePicker();
+      await this.updateShot(shotId, updates);
+      setTimeout(() => lucide.createIcons(), 30);
+    },
+
+    // 清空 beat 槽位（点 ✕）
+    async clearSlot(shot, beatIndex, side) {
+      await this.updateShot(shot.shot_id, {beat_slot: {beat_index: beatIndex, side, asset_id: ""}});
+    },
+
+    // 切换 picker kind（beat 槽 picker 顶部 tab）
+    async switchPickerKind(kind) {
+      if (!this.pickerShotId || this.pickerKind === kind) return;
+      const shotId = this.pickerShotId;
+      const beatIndex = this.pickerBeatIndex;
+      const side = this.pickerSide;
+      const shot = this.list.find(s => s.shot_id === shotId);
+      if (!shot) return;
+      this.pickerKind = kind;
+      this.pickerLoading = true;
+      this.pickerItems = [];
+      this.pickerMatchedCount = 0;
+      this.pickerFilterTags = [];
+      this.pickerActiveTag = null;
+      this.pickerShotTags = [];
+      try {
+        const u = `/api/shots/picker_options?video_id=${encodeURIComponent(this.videoId)}&shot_id=${encodeURIComponent(shotId)}&kind=${kind}`;
+        const r = await fetch(u);
+        const j = await r.json();
+        this.pickerItems = j.items || [];
+        this.pickerMatchedCount = j.ranked_count || 0;
+        this.pickerFilterTags = j.filter_tags || [];
+        this.pickerShotTags = j.shot_tags || [];
+        // 自动预选匹配标签
+        if (j.shot_tags && j.shot_tags.length > 0 && j.filter_tags && j.filter_tags.length > 0) {
+          const autoTag = j.shot_tags.find(t => j.filter_tags.includes(t));
+          if (autoTag) this.pickerActiveTag = autoTag;
+        }
+      } finally {
+        this.pickerLoading = false;
+        this.pickerBeatIndex = beatIndex;
+        this.pickerSide = side;
+        setTimeout(() => lucide.createIcons(), 30);
+      }
+    },
+
+    startEdit(shot) {
+      this.editingShotId = shot.shot_id;
+      this.draft = {
+        text: shot.text,
+        estimated_duration: shot.estimated_duration,
+        scene_tags: [...(shot.scene_tags || [])],
+      };
+    },
+    cancelEdit() { this.editingShotId = null; this.draft = {}; },
+    async saveEdit(shot) {
+      await this.updateShot(shot.shot_id, {
+        text: this.draft.text,
+        estimated_duration: parseFloat(this.draft.estimated_duration) || shot.estimated_duration,
+        scene_tags: this.draft.scene_tags,
+      });
+      this.cancelEdit();
+      setTimeout(() => lucide.createIcons(), 50);
+    },
+    toggleTag(tag) {
+      const arr = this.draft.scene_tags || [];
+      const i = arr.indexOf(tag);
+      if (i >= 0) arr.splice(i, 1);
+      else if (arr.length < 3) arr.push(tag);
+      this.draft.scene_tags = [...arr];
+    },
+    async changeForm(shot, newForm) {
+      await this.updateShot(shot.shot_id, {visual_form: newForm});
+      setTimeout(() => lucide.createIcons(), 50);
+    },
+  });
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
+</script>
+
+<div class="px-8 py-6 max-w-[1200px] mx-auto" x-data>
+
+  <!-- 顶部说明 + 操作 -->
+  <div class="rounded-xl border border-ink-200 bg-white shadow-soft p-5 mb-5">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-lg bg-brand-50 border border-brand-100 flex items-center justify-center shrink-0">
+        <i data-lucide="layout-grid" class="w-5 h-5 text-brand-600"></i>
       </div>
-
-      <!-- 中：表情 IP -->
-      <div class="flex-1 px-5 py-4 border-r border-ink-100 flex items-center gap-3 min-w-0">
-        <div class="w-11 h-11 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-2xl shrink-0">{{ asset_config.primary_ip.emoji }}</div>
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-1 text-[10px] text-ink-500 mb-0.5">
-            <i data-lucide="smile" class="w-3 h-3"></i>
-            <span>主表情 IP</span>
-          </div>
-          <div class="text-[14px] font-semibold text-ink-900 truncate">{{ asset_config.primary_ip.name }}</div>
-          <div class="text-[11px] text-ink-500">{{ asset_config.primary_ip.count }} 个预制动图</div>
-        </div>
-      </div>
-
-      <!-- 右：元素库 -->
-      <div class="flex-1 px-5 py-4 border-r border-ink-100 min-w-0">
-        <div class="flex items-center gap-1 text-[10px] text-ink-500 mb-1.5">
-          <i data-lucide="layers" class="w-3 h-3"></i>
-          <span>已启用元素库 · <b class="text-ink-900">{{ enabled_libs|length }}/{{ element_libs|length }}</b> 个 · 共 <b class="text-ink-900">{{ total_elements }}</b> 元素</span>
-        </div>
-        <div class="flex items-center gap-1.5 flex-wrap">
-          {% for lib in enabled_libs %}
-          <span class="text-[11px] px-2 py-1 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-1">
-            <span>{{ lib.emoji }}</span><span>{{ lib.name }}</span><span class="text-emerald-500 text-[9px] font-mono">{{ lib.count }}</span>
-          </span>
-          {% endfor %}
-        </div>
-      </div>
-
-      <!-- 操作 -->
-      <div class="px-4 py-4 flex items-center shrink-0">
-        <button @click="configOpen = !configOpen"
-                class="px-3 py-2 rounded-xl bg-ink-100 hover:bg-ink-200 text-ink-700 text-[12px] font-medium flex items-center gap-1.5 transition">
-          <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i>
-          <span x-text="configOpen ? '收起配置' : '修改配置'"></span>
-        </button>
-      </div>
-    </div>
-
-    <!-- 展开的配置编辑区 -->
-    <div x-show="configOpen" x-cloak x-collapse class="border-t border-ink-100 bg-ink-50/40 p-5 space-y-5">
-      <!-- IP 切换 -->
-      <div>
-        <div class="flex items-baseline gap-2 mb-2.5">
-          <div class="text-[12px] font-semibold text-ink-900 flex items-center gap-1.5">
-            <i data-lucide="users" class="w-3.5 h-3.5 text-blue-500"></i>
-            <span>主 IP 选择</span>
-          </div>
-          <div class="text-[11px] text-ink-500">本项目所有表情动图都从此 IP 挑选；未来可支持副 IP 混用</div>
-        </div>
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {% for ip in ip_options %}
-          {% set active = ip.id == asset_config.primary_ip.id %}
-          <button class="group relative rounded-xl border-2 bg-white p-3 text-left transition
-                         {% if active %}border-blue-500 shadow-medium{% else %}border-ink-200 hover:border-blue-300{% endif %}">
-            <div class="flex items-start gap-2.5">
-              <div class="w-10 h-10 rounded-lg {% if active %}bg-blue-50{% else %}bg-ink-100{% endif %} flex items-center justify-center text-2xl shrink-0">{{ ip.emoji }}</div>
-              <div class="min-w-0 flex-1">
-                <div class="text-[13px] font-semibold text-ink-900 truncate">{{ ip.name }}</div>
-                <div class="text-[10px] text-ink-500 mt-0.5">{{ ip.count }} 动图</div>
-                <div class="text-[10px] text-ink-500 mt-1 line-clamp-2 leading-snug">{{ ip.desc }}</div>
-              </div>
-            </div>
-            {% if active %}
-            <div class="absolute top-2 right-2 w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center shadow">
-              <i data-lucide="check" class="w-3 h-3 text-white"></i>
-            </div>
-            {% endif %}
-          </button>
-          {% endfor %}
-        </div>
-      </div>
-
-      <!-- 元素库启用 -->
-      <div>
-        <div class="flex items-baseline gap-2 mb-2.5">
-          <div class="text-[12px] font-semibold text-ink-900 flex items-center gap-1.5">
-            <i data-lucide="library" class="w-3.5 h-3.5 text-emerald-500"></i>
-            <span>启用元素库</span>
-          </div>
-          <div class="text-[11px] text-ink-500">从中自动挑现成动图；启用越多，画框需新生成的越少</div>
-        </div>
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-2.5">
-          {% for lib in element_libs %}
-          {% set enabled = lib.id in asset_config.element_libs_enabled %}
-          <button class="group relative rounded-xl border-2 bg-white p-3 text-left transition
-                         {% if enabled %}border-emerald-500{% else %}border-dashed border-ink-200 hover:border-emerald-300 bg-ink-50/50{% endif %}">
-            <div class="flex items-center gap-2">
-              <span class="text-xl {% if not enabled %}grayscale opacity-60{% endif %}">{{ lib.emoji }}</span>
-              <div class="flex-1 min-w-0">
-                <div class="text-[12px] font-semibold text-ink-900 truncate">{{ lib.name }}</div>
-                <div class="text-[10px] text-ink-500">{{ lib.count }} 个</div>
-              </div>
-              {% if enabled %}
-              <div class="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
-                <i data-lucide="check" class="w-2.5 h-2.5 text-white"></i>
-              </div>
-              {% else %}
-              <div class="w-4 h-4 rounded-full border-2 border-ink-300"></div>
-              {% endif %}
-            </div>
-            <div class="mt-1.5 text-[9px] text-ink-400 truncate">{{ lib.tags_sample|join(' · ') }}</div>
-          </button>
-          {% endfor %}
-        </div>
-      </div>
-
-      <!-- 画风偏好迁移提示 -->
-      <div class="rounded-xl bg-amber-50 border border-amber-200 p-3 flex items-center gap-2">
-        <i data-lucide="info" class="w-4 h-4 text-amber-600 shrink-0"></i>
-        <div class="text-[11px] text-amber-900">
-          <b>画框画风校准</b>已移到「④ 素材」步骤 —— 在那里填写规范提示词、生成示例图确认后，才会批量生成画框里的独特元素。
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========= 顶部：流水线总览 ========= -->
-  <section class="rounded-2xl bg-gradient-to-br from-ink-900 to-ink-800 text-white p-6 animate-fade-in-up">
-    <div class="flex items-start justify-between gap-6">
       <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <i data-lucide="workflow" class="w-4 h-4 text-brand-400"></i>
-          <div class="text-[11px] font-semibold text-brand-300 tracking-wider uppercase">AI 分镜流水线 · 5 步</div>
-        </div>
-        <h2 class="mt-2 font-display font-semibold text-[18px]">台词 → 场景识别 → 表情库 → 元素库 → 画框生成</h2>
-        <div class="mt-4 flex items-center gap-1.5 flex-wrap text-[11px]">
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full bg-ink-100 text-ink-800 flex items-center justify-center text-[10px] font-bold">1</span>
-            <span>拆 {{ shots|length }} 镜</span>
-          </div>
-          <i data-lucide="arrow-right" class="w-3 h-3 text-white/40"></i>
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center text-[10px] font-bold">2</span>
-            <span>场景识别</span>
-          </div>
-          <i data-lucide="arrow-right" class="w-3 h-3 text-white/40"></i>
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center text-[10px] font-bold">3</span>
-            <span>表情库 <b class="text-blue-300">{{ hit_expr }}/{{ shots|length }}</b></span>
-          </div>
-          <i data-lucide="arrow-right" class="w-3 h-3 text-white/40"></i>
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full bg-teal-500 text-white flex items-center justify-center text-[10px] font-bold">4</span>
-            <span>元素库 <b class="text-teal-300">{{ all_matched_el|length }} 命中</b></span>
-          </div>
-          <i data-lucide="arrow-right" class="w-3 h-3 text-white/40"></i>
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/10">
-            <span class="w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center text-[10px] font-bold">5</span>
-            <span>画框生成 <b class="text-rose-300">{{ all_custom|length }}</b></span>
-          </div>
-        </div>
-        <div class="mt-2 text-[11px] text-white/50">
-          💡 前 4 步已覆盖 {{ shots|length - (all_custom|length > 0) }} 个镜头的素材需求，只有 {{ all_custom|length }} 处真正需要新生成
+        <div class="text-[15px] font-display font-semibold text-ink-900">叙事拆解 · 每段标形态</div>
+        <div class="mt-1 text-[13px] text-ink-700 leading-relaxed">
+          从文案切段 · 每段 = 一条分镜 · 4 个字段（台词 / 时长 / scene_tags / 形态）· <b>素材 step 按每段的形态自动排生产任务</b>。
         </div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
-        <button class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-[12px] font-medium flex items-center gap-2 border border-white/10">
-          <i data-lucide="refresh-ccw" class="w-3.5 h-3.5"></i>
-          <span>重新分析</span>
-        </button>
-        <a href="/library" class="px-4 py-2 rounded-xl bg-white text-ink-900 text-[12px] font-semibold flex items-center gap-2">
-          <i data-lucide="folder-open" class="w-3.5 h-3.5"></i>
-          <span>素材库</span>
-        </a>
+        <template x-if="!$store.shots.hasTable">
+          <button class="btn-primary" @click="$store.shots.generate()"
+                  :disabled="$store.shots.loading || !$store.shots.hasScript">
+            <i data-lucide="sparkles" class="w-4 h-4"></i>
+            <span x-text="$store.shots.loading ? '生成中…' : '生成分镜表'"></span>
+          </button>
+        </template>
+        <template x-if="$store.shots.hasTable">
+          <div class="flex gap-2">
+            <button class="btn-outline" @click="$store.shots.generate()" :disabled="$store.shots.loading">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 重新生成
+            </button>
+            <button class="btn-outline text-red-600 border-red-200 hover:bg-red-50" @click="$store.shots.resetTable()">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> 清空
+            </button>
+            <a href="{{ next_step_url }}" class="btn-primary">
+              <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i> 进入素材
+            </a>
+          </div>
+        </template>
       </div>
     </div>
+    <template x-if="$store.shots.error">
+      <div class="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700" x-text="$store.shots.error"></div>
+    </template>
+    {{ loading_banner(
+        cond='$store.shots.loading',
+        label='正在生成分镜表',
+        elapsed='$store.shots.elapsedSec',
+        est=10,
+        note='通常 5-15 秒（启发式拆段，不调 LLM）。请勿刷新或返回。',
+    ) }}
+  </div>
 
-    <!-- 迷你时间轴 -->
-    <div class="mt-5 flex items-center gap-[2px]">
-      {% for s in shots %}
-      <div class="h-8 rounded-md flex items-center justify-center text-[10px] font-mono text-white/70 relative"
-           style="flex-grow: {{ s.duration }}; background: {{ s.section_color }}40; border: 1px solid {{ s.section_color }};">
-        <span>{{ s.id }}</span>
-        <div class="absolute left-1/2 -translate-x-1/2 -bottom-7 text-[10px] text-white/50 whitespace-nowrap">{{ s.duration }}s</div>
-      </div>
-      {% endfor %}
+  {% if is_stale %}
+  <!-- 文案已更新但分镜未重生：黄警告 -->
+  <div class="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4 flex items-start gap-3">
+    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
+    <div class="flex-1">
+      <div class="text-[13px] font-semibold text-amber-900">分镜与文案不同步</div>
+      <div class="text-[12px] text-amber-800 mt-0.5">{{ stale_reason }}。下面展示的还是旧版本分镜——点"重新生成"会用新文案重切。</div>
     </div>
-    <div class="mt-9 flex items-center gap-4 text-[10px] text-white/50">
-      {% for section, color in [('钩子','#F48A0C'),('共鸣','#1E40AF'),('知识点','#047857'),('金句','#DC2626'),('CTA','#7C3AED')] %}
-      <div class="flex items-center gap-1">
-        <div class="w-2.5 h-2.5 rounded-sm" style="background: {{ color }};"></div>
-        <span>{{ section }}</span>
-      </div>
-      {% endfor %}
+    <button class="btn-primary text-[12px]" @click="$store.shots.generate()" :disabled="$store.shots.loading">
+      <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+      <span x-text="$store.shots.loading ? '生成中…' : '用新文案重生'"></span>
+    </button>
+  </div>
+  {% endif %}
+
+  <!-- 空态 -->
+  <template x-if="!$store.shots.hasTable && !$store.shots.hasScript">
+    <div class="rounded-xl border-2 border-dashed border-amber-200 bg-amber-50/40 py-16 flex flex-col items-center justify-center">
+      <i data-lucide="file-x" class="w-10 h-10 text-amber-600 mb-3"></i>
+      <div class="text-[14px] text-ink-700 font-medium">还没有完整文稿</div>
+      <div class="text-[12px] text-ink-500 mt-1">先到文案页生成 <b>完整文稿</b>（不是初稿），再来分镜</div>
+      <a :href="`/project/${$store.shots.videoId}/script`" class="btn-outline mt-3 text-[12px]">
+        <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> 回文案
+      </a>
     </div>
+  </template>
 
-    {% if miss_expr %}
-    <div class="mt-5 rounded-xl bg-rose-500/15 border border-rose-400/30 p-3 flex items-start gap-2">
-      <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-300 shrink-0 mt-0.5"></i>
-      <div class="text-[12px] text-rose-100 flex-1">
-        <b>{{ miss_expr|length }} 个镜头的场景标签在 <span class="font-mono">{{ asset_config.primary_ip.name }}</span> 库中无表情</b> ——
-        {% for m in miss_expr %}<span class="font-mono">{{ m.id }}</span>({{ m.detected_tags[0].tag }}){% if not loop.last %}、{% endif %}{% endfor %}
-        。可切换主 IP 或补录该场景表情。
-      </div>
+  <template x-if="!$store.shots.hasTable && $store.shots.hasScript">
+    <div class="rounded-xl border-2 border-dashed border-brand-200 bg-brand-50/30 py-16 flex flex-col items-center justify-center">
+      <i data-lucide="layers-3" class="w-10 h-10 text-brand-600 mb-3"></i>
+      <div class="text-[14px] text-ink-900 font-semibold">待生成分镜</div>
+      <div class="text-[12px] text-ink-600 mt-1">点上面"生成分镜表"按钮 · 会按文案段落切段并推荐形态</div>
     </div>
-    {% endif %}
-  </section>
+  </template>
 
-  <!-- ========= 镜头卡片列表 · 5 段流水线 ========= -->
-  <section class="mt-6 space-y-5">
-    {% for s in shots %}
-    {% set selected = s.candidates | selectattr('selected') | first %}
-    <article class="rounded-2xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-medium transition overflow-hidden animate-fade-in-up"
-             style="animation-delay: {{ loop.index0 * 50 }}ms">
+  <!-- 分镜列表 -->
+  <div class="space-y-3">
+    <template x-for="shot in $store.shots.list" :key="shot.shot_id">
+      <div class="rounded-xl border border-ink-200 bg-white shadow-soft overflow-hidden">
+        <!-- 头部 -->
+        <div class="px-4 py-3 bg-ink-50/60 border-b border-ink-200 flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-ink-800 text-white flex items-center justify-center font-bold text-[13px]" x-text="shot.shot_id"></div>
+          <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-brand-100 text-brand-700" x-text="shot.section"></span>
+          <span class="text-[11px] text-ink-500" x-text="shot.estimated_duration.toFixed(1) + 's'"></span>
+          <div class="flex items-center gap-1 flex-wrap">
+            <template x-for="t in shot.scene_tags" :key="t">
+              <span class="px-1.5 py-0.5 rounded bg-ink-100 text-ink-600 text-[10px]" x-text="t"></span>
+            </template>
+          </div>
+          <div class="flex-1"></div>
+          <!-- 形态下拉 -->
+          <div class="relative" x-data="{open:false}" @click.outside="open=false">
+            <button @click="open=!open"
+                    class="text-[11px] px-2 py-1 rounded-md border flex items-center gap-1"
+                    :class="$store.shots.formClass(shot.visual_form)">
+              <span x-text="$store.shots.formLabel(shot.visual_form)"></span>
+              <i data-lucide="chevron-down" class="w-3 h-3"></i>
+            </button>
+            <div x-show="open" x-cloak
+                 class="absolute right-0 mt-1 w-56 rounded-md border border-ink-200 bg-white shadow-strong z-10 overflow-hidden">
+              <template x-for="fid in ['stock','ai_image','ai_video']" :key="fid">
+                <button @click="$store.shots.changeForm(shot, fid); open=false"
+                        class="w-full text-left px-3 py-2 text-[12px] hover:bg-ink-50 flex items-start gap-2"
+                        :class="shot.visual_form === fid ? 'bg-brand-50' : ''">
+                  <i :data-lucide="shot.visual_form === fid ? 'check' : 'circle'" class="w-3 h-3 mt-1"
+                     :class="shot.visual_form === fid ? 'text-brand-600' : 'text-ink-400'"></i>
+                  <div>
+                    <div class="font-medium text-ink-900" x-text="$store.shots.formLabel(fid)"></div>
+                    <div class="text-[10px] text-ink-500" x-text="$store.shots.formDesc(fid)"></div>
+                  </div>
+                </button>
+              </template>
+            </div>
+          </div>
+          <!-- 状态徽章 -->
+          <template x-if="shot.has_video">
+            <span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px]">视频就绪</span>
+          </template>
+          <template x-if="shot.has_image && !shot.has_video">
+            <span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px]">图就绪</span>
+          </template>
+          <template x-if="shot.has_missing && !shot.has_image && !shot.has_video">
+            <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">待生图</span>
+          </template>
 
-      <header class="px-5 py-3 border-b border-ink-100 flex items-center gap-3 bg-gradient-to-r from-ink-50 to-transparent">
-        <div class="w-9 h-9 rounded-xl flex items-center justify-center text-white font-display font-bold text-[13px]"
-             style="background: {{ s.section_color }};">{{ s.id }}</div>
-        <div class="flex items-center gap-2">
-          <span class="badge" style="background: {{ s.section_color }}20; color: {{ s.section_color }};">{{ s.section }}</span>
-          <span class="text-[11px] text-ink-500 font-mono">{{ s.time }}</span>
-          <span class="text-[11px] text-ink-400">· {{ s.duration }}s</span>
+          <button class="btn-ghost text-[11px] py-1 px-2"
+                  @click="$store.shots.editingShotId === shot.shot_id ? $store.shots.cancelEdit() : $store.shots.startEdit(shot)">
+            <i :data-lucide="$store.shots.editingShotId === shot.shot_id ? 'x' : 'pen'" class="w-3 h-3"></i>
+            <span x-text="$store.shots.editingShotId === shot.shot_id ? '取消' : '编辑'"></span>
+          </button>
         </div>
-        <div class="ml-auto flex items-center gap-2">
-          <!-- 本镜头使用统计小胶囊 -->
-          <div class="flex items-center gap-1 text-[10px]">
-            <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">表情 {{ s.candidates|length }}</span>
-            <span class="px-1.5 py-0.5 rounded bg-teal-50 text-teal-700">元素 {{ s.matched_elements|length }}</span>
-            {% if s.custom_insets %}
-            <span class="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">新生成 {{ s.custom_insets|length }}</span>
-            {% endif %}
+
+        <!-- 双 Beat 视觉编排：每个 beat 是 1 帧"画面"，画面里左半 + 右半各一素材
+             改 UI 关键：用"画面预览"形式（一个矩形框模拟视频画面比例），左右两半直接对应渲染时的位置 -->
+        <div class="px-4 py-3 bg-ink-50/40 border-b border-ink-100 space-y-3">
+          <template x-for="(beat, bi) in (shot.beats || [])" :key="bi">
+            <div class="rounded-lg border border-ink-200 bg-white overflow-hidden">
+              <!-- Beat 标题条 -->
+              <div class="flex items-center gap-2 px-3 py-1.5 bg-ink-50 border-b border-ink-100 text-[11px]">
+                <span class="px-1.5 py-0.5 rounded bg-brand-500 text-white font-semibold text-[10px]"
+                      x-text="'画面 ' + (bi + 1) + '/' + shot.beats.length"></span>
+                <span class="text-ink-700 font-medium"
+                      x-text="(beat.duration_ratio * shot.estimated_duration).toFixed(1) + ' 秒'"></span>
+                <span class="text-ink-400">·</span>
+                <span class="text-ink-500"
+                      x-text="beat.layout === 'center' ? '🎯 单素材居中' : '🪟 左右并列'"></span>
+                <div class="flex-1"></div>
+                <button class="text-ink-500 hover:text-brand-600 px-1.5 py-0.5 rounded hover:bg-brand-50 text-[11px] flex items-center gap-1"
+                        @click="$store.shots.updateShot(shot.shot_id, {beat_layout: {beat_index: bi, layout: beat.layout === 'center' ? 'left_right' : 'center'}})">
+                  <i :data-lucide="beat.layout === 'center' ? 'columns-2' : 'circle-dot'" class="w-3 h-3"></i>
+                  <span x-text="'切换为' + (beat.layout === 'center' ? '左右并列' : '居中')"></span>
+                </button>
+              </div>
+
+              <!-- 画面预览 · 9:16 比例缩略 · 左右两半直接代表视频里位置 -->
+              <div class="px-3 py-3">
+                <div class="text-[10px] text-ink-400 mb-1.5 flex items-center gap-2">
+                  <span>📺 这一画面在视频里长这样（点任一半切换素材）：</span>
+                </div>
+                <div class="rounded-md border-2 border-dashed border-ink-200 bg-ink-50/30 p-1.5"
+                     style="height: 140px;">
+                  <div class="grid h-full gap-2"
+                       :class="beat.layout === 'center' ? 'grid-cols-1' : 'grid-cols-2'">
+                    <!-- 左半（或居中时唯一一半）· 用 div role=button 避免 HTML 嵌套 button 问题 -->
+                    <div role="button" tabindex="0"
+                         class="relative group rounded border bg-white hover:border-brand-500 hover:shadow-soft transition flex flex-col items-center justify-center p-2 transparent-bg cursor-pointer"
+                         :class="beat.left.asset_id ? 'border-brand-300' : 'border-ink-200 border-dashed'"
+                         @click="$store.shots.openPicker(shot, beat.left.asset_kind === 'element' ? 'elements' : 'expressions', bi, 'left')">
+                      <template x-if="beat.left.file">
+                        <img :src="beat.left.file" class="max-w-full max-h-full object-contain pointer-events-none"
+                             style="max-height: 75%;" onerror="this.style.display='none'">
+                      </template>
+                      <template x-if="!beat.left.file">
+                        <div class="text-center text-ink-400 pointer-events-none">
+                          <i data-lucide="plus-circle" class="w-7 h-7 mx-auto mb-1"></i>
+                          <div class="text-[11px] font-medium">点击选素材</div>
+                        </div>
+                      </template>
+                      <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-ink-900/70 text-white text-[9px] font-medium pointer-events-none"
+                           x-text="beat.layout === 'center' ? '居中位' : '画面左半'"></div>
+                      <!-- ✕ 清空按钮（嵌在 div 里 — div 不是 button 所以合法）-->
+                      <template x-if="beat.left.asset_id">
+                        <button type="button" class="absolute top-1 right-1 hidden group-hover:flex w-5 h-5 rounded-full bg-white border border-ink-200 hover:bg-red-50 hover:border-red-300 items-center justify-center"
+                                @click.stop="$store.shots.clearSlot(shot, bi, 'left')" title="清空">
+                          <i data-lucide="x" class="w-3 h-3 text-ink-600"></i>
+                        </button>
+                      </template>
+                    </div>
+
+                    <!-- 右半（仅 left_right 布局显示）-->
+                    <template x-if="beat.layout !== 'center'">
+                      <div role="button" tabindex="0"
+                           class="relative group rounded border bg-white hover:border-brand-500 hover:shadow-soft transition flex flex-col items-center justify-center p-2 transparent-bg cursor-pointer"
+                           :class="beat.right.asset_id ? 'border-brand-300' : 'border-ink-200 border-dashed'"
+                           @click="$store.shots.openPicker(shot, beat.right.asset_kind === 'element' ? 'elements' : 'expressions', bi, 'right')">
+                        <template x-if="beat.right.file">
+                          <img :src="beat.right.file" class="max-w-full max-h-full object-contain pointer-events-none"
+                               style="max-height: 75%;" onerror="this.style.display='none'">
+                        </template>
+                        <template x-if="!beat.right.file">
+                          <div class="text-center text-ink-400 pointer-events-none">
+                            <i data-lucide="plus-circle" class="w-7 h-7 mx-auto mb-1"></i>
+                            <div class="text-[11px] font-medium">点击选素材</div>
+                          </div>
+                        </template>
+                        <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-ink-900/70 text-white text-[9px] font-medium pointer-events-none">画面右半</div>
+                        <template x-if="beat.right.asset_id">
+                          <button type="button" class="absolute top-1 right-1 hidden group-hover:flex w-5 h-5 rounded-full bg-white border border-ink-200 hover:bg-red-50 hover:border-red-300 items-center justify-center"
+                                  @click.stop="$store.shots.clearSlot(shot, bi, 'right')" title="清空">
+                            <i data-lucide="x" class="w-3 h-3 text-ink-600"></i>
+                          </button>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- 当前选中素材摘要（卡片下方文字注释，便于一眼看到选了啥）-->
+                <div class="mt-2 grid gap-1 text-[11px]"
+                     :class="beat.layout === 'center' ? 'grid-cols-1' : 'grid-cols-2'">
+                  <div class="text-ink-700 truncate">
+                    <span class="text-ink-400" x-text="beat.layout === 'center' ? '居中：' : '左：'"></span>
+                    <span x-text="beat.left.description || (beat.left.asset_id ? beat.left.asset_id : '空')"></span>
+                  </div>
+                  <template x-if="beat.layout !== 'center'">
+                    <div class="text-ink-700 truncate">
+                      <span class="text-ink-400">右：</span>
+                      <span x-text="beat.right.description || (beat.right.asset_id ? beat.right.asset_id : '空')"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 背景（默认沿用画风步骤所选，可点切换）+ AI 兜底状态 -->
+          <div class="grid grid-cols-2 gap-2">
+            <button type="button"
+                    class="text-left rounded-md border border-ink-200 bg-white p-1.5 hover:border-brand-400 transition flex items-center gap-2"
+                    :title="'默认 = 画风步骤的背景；点这里可单独换'"
+                    @click="$store.shots.openPicker(shot, 'backgrounds')">
+              <div class="w-10 h-10 rounded bg-ink-100 overflow-hidden shrink-0 flex items-center justify-center">
+                <template x-if="shot.background_file">
+                  <img :src="shot.background_file" class="w-full h-full object-cover" onerror="this.style.display='none'">
+                </template>
+                <template x-if="!shot.background_file">
+                  <i data-lucide="image" class="w-4 h-4 text-ink-300"></i>
+                </template>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="text-[10px] text-ink-400 uppercase tracking-wider">背景 (默认画风)</div>
+                <div class="text-[11px] font-medium text-ink-900 truncate" x-text="shot.background_desc || (shot.background_id ? shot.background_id : '点选')"></div>
+              </div>
+            </button>
+            <div class="rounded-md border border-ink-200 bg-white p-1.5 flex items-center gap-2">
+              <div class="w-10 h-10 rounded bg-ink-100 overflow-hidden shrink-0 flex items-center justify-center">
+                <i data-lucide="image-plus" class="w-4 h-4"
+                   :class="shot.has_video ? 'text-emerald-600' : (shot.has_image ? 'text-emerald-500' : (shot.has_missing ? 'text-amber-500' : 'text-ink-300'))"></i>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="text-[10px] text-ink-400 uppercase tracking-wider">AI 兜底</div>
+                <div class="text-[11px] font-medium text-ink-900 truncate">
+                  <span x-show="shot.has_video">视频就绪</span>
+                  <span x-show="shot.has_image && !shot.has_video">图就绪</span>
+                  <span x-show="shot.has_missing && !shot.has_image && !shot.has_video">待生图</span>
+                  <span x-show="!shot.has_missing && !shot.has_image">无</span>
+                </div>
+              </div>
+            </div>
           </div>
-          {% if s.ready %}
-          <span class="badge badge-green">✓ 就绪</span>
-          {% else %}
-          <span class="badge badge-brand">⏳ 待补齐</span>
-          {% endif %}
         </div>
-      </header>
 
-      <div class="p-5 space-y-5">
+        <!-- Picker 弹层（同段内展开）-->
+        <template x-if="$store.shots.pickerShotId === shot.shot_id">
+          <div class="px-4 pt-3 pb-2 bg-brand-50/30 border-b border-brand-100">
 
-        <!-- ① 台词 -->
-        <section class="flex gap-3">
-          <div class="shrink-0 w-6 h-6 rounded-full bg-ink-100 text-ink-600 flex items-center justify-center text-[11px] font-bold">1</div>
-          <div class="flex-1 min-w-0">
-            <div class="text-[10px] font-semibold text-ink-500 tracking-wider uppercase mb-1.5">台词</div>
-            <blockquote class="border-l-2 border-ink-300 pl-3 text-[14px] text-ink-900 leading-relaxed">{{ s.text }}</blockquote>
-          </div>
-        </section>
-
-        <!-- ② 场景识别 -->
-        <section class="flex gap-3">
-          <div class="shrink-0 w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[11px] font-bold">2</div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline gap-2 mb-2">
-              <div class="text-[10px] font-semibold text-ink-500 tracking-wider uppercase">AI 场景识别</div>
-              <div class="text-[10px] text-ink-400">从 15 个场景标签闭集中挑选</div>
-            </div>
-            <div class="flex items-start gap-2 flex-wrap">
-              {% for t in s.detected_tags %}
-              <div class="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 min-w-[200px]">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[13px] font-semibold text-amber-900">#{{ t.tag }}</span>
-                  <div class="flex items-center gap-0.5">
-                    {% for i in range(3) %}
-                    <div class="w-1.5 h-3 rounded-sm {% if i < t.intensity %}bg-amber-500{% else %}bg-amber-200{% endif %}"></div>
-                    {% endfor %}
-                  </div>
-                  <span class="text-[10px] text-amber-700 font-mono">强度 {{ t.intensity }}</span>
-                </div>
-                <div class="text-[11px] text-amber-800/80 mt-1">{{ t.reason }}</div>
+            <!-- 顶部：标题 + kind tabs + 计数 + 关闭 -->
+            <div class="flex items-center mb-2 gap-2">
+              <div class="text-[12px] font-semibold text-brand-700 shrink-0">
+                <template x-if="$store.shots.pickerSide">
+                  <span x-text="'画面 ' + ($store.shots.pickerBeatIndex + 1) + ' · ' + ($store.shots.pickerSide === 'left' ? '左半' : '右半')"></span>
+                </template>
+                <template x-if="!$store.shots.pickerSide && $store.shots.pickerKind === 'backgrounds'">
+                  <span>换背景</span>
+                </template>
               </div>
-              {% endfor %}
-            </div>
-          </div>
-        </section>
-
-        <!-- ③ 表情库匹配 -->
-        <section class="flex gap-3">
-          <div class="shrink-0 w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[11px] font-bold">3</div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline gap-2 mb-2 flex-wrap">
-              <div class="text-[10px] font-semibold text-ink-500 tracking-wider uppercase">表情库匹配</div>
-              <div class="text-[10px] text-ink-400">
-                来源: <span class="font-mono text-ink-700">{{ asset_config.primary_ip.emoji }} {{ asset_config.primary_ip.name }}</span>
-                {% if s.candidates %}
-                · 命中 <b class="text-blue-600">{{ s.candidates|length }}</b> 个 · 已选
-                <span class="font-mono text-ink-700">{{ selected.id }}</span>
-                {% else %}
-                · <span class="text-rose-600 font-medium">⚠️ 无匹配</span>
-                {% endif %}
-              </div>
-            </div>
-
-            {% if s.candidates %}
-            <div class="flex items-stretch gap-2 flex-wrap">
-              {% for c in s.candidates %}
-              <div class="group/c rounded-xl border-2 overflow-hidden transition cursor-pointer w-[140px]
-                          {% if c.selected %}border-blue-500 shadow-medium ring-4 ring-blue-100{% else %}border-ink-200 hover:border-blue-300{% endif %}">
-                <div class="aspect-video flex items-center justify-center text-[44px] relative"
-                     style="background: {% if c.selected %}linear-gradient(135deg,#DBEAFE,#93C5FD){% else %}linear-gradient(135deg,#F5F5F4,#E8E6DE){% endif %};">
-                  <span class="opacity-90">{{ c.emoji }}</span>
-                  {% if c.selected %}
-                  <div class="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center shadow">
-                    <i data-lucide="check" class="w-3 h-3 text-white"></i>
-                  </div>
-                  {% endif %}
-                  <div class="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[9px] font-mono">{{ c.duration }}s</div>
+              <!-- kind 切换 tabs（仅 beat 槽 picker 显示）-->
+              <template x-if="$store.shots.pickerSide">
+                <div class="flex gap-1 bg-white rounded-md border border-ink-200 p-0.5">
+                  <button class="px-2 py-0.5 rounded text-[11px] transition"
+                          :class="$store.shots.pickerKind === 'expressions' ? 'bg-brand-500 text-white' : 'text-ink-600 hover:bg-ink-50'"
+                          @click="$store.shots.switchPickerKind('expressions')">表情 IP</button>
+                  <button class="px-2 py-0.5 rounded text-[11px] transition"
+                          :class="$store.shots.pickerKind === 'elements' ? 'bg-brand-500 text-white' : 'text-ink-600 hover:bg-ink-50'"
+                          @click="$store.shots.switchPickerKind('elements')">场景元素</button>
                 </div>
-                <div class="p-2">
-                  <div class="text-[10px] font-mono text-ink-500 truncate">{{ c.id }}</div>
-                  <div class="text-[11px] text-ink-800 font-medium truncate mt-0.5">{{ c.desc }}</div>
-                  <div class="mt-1 flex items-center gap-1 flex-wrap">
-                    {% for t in c.scene_tags %}
-                    <span class="text-[9px] px-1 py-0.5 rounded bg-amber-50 text-amber-700">#{{ t }}</span>
-                    {% endfor %}
-                    <span class="text-[9px] text-ink-400 ml-auto">强度{{ c.intensity }}</span>
-                  </div>
-                </div>
-              </div>
-              {% endfor %}
-              <button class="w-[80px] rounded-xl border-2 border-dashed border-ink-200 hover:border-blue-300 hover:bg-blue-50/30 flex flex-col items-center justify-center text-ink-400 hover:text-blue-600 transition">
-                <i data-lucide="shuffle" class="w-5 h-5"></i>
-                <span class="text-[10px] mt-1">换一批</span>
+              </template>
+              <!-- 推荐命中提示 -->
+              <span class="text-emerald-600 text-[11px] font-medium"
+                    x-show="$store.shots.pickerMatchedCount > 0">
+                ✦ 推荐 <b x-text="$store.shots.pickerMatchedCount"></b> 个
+              </span>
+              <span class="text-ink-400 text-[11px]"
+                    x-show="$store.shots.pickerFilteredItems.length"
+                    x-text="'共 ' + $store.shots.pickerFilteredItems.length + ' 项'"></span>
+              <div class="flex-1"></div>
+              <button class="btn-ghost text-[11px] py-0.5 px-1.5" @click="$store.shots.closePicker()">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
               </button>
             </div>
-            {% else %}
-            <div class="rounded-xl border-2 border-dashed border-rose-200 bg-rose-50/50 p-4 flex items-center gap-3">
-              <div class="w-10 h-10 rounded-lg bg-rose-100 flex items-center justify-center">
-                <i data-lucide="frown" class="w-5 h-5 text-rose-600"></i>
-              </div>
-              <div class="flex-1">
-                <div class="text-[12px] font-semibold text-rose-800">{{ asset_config.primary_ip.name }} 里没有「#{{ s.detected_tags[0].tag }}」表情</div>
-                <div class="text-[11px] text-rose-600 mt-0.5">可切换主 IP，或给此 IP 补录一个该场景的表情动图</div>
-              </div>
-              <a href="/library" class="shrink-0 px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[11px] font-medium flex items-center gap-1 hover:bg-rose-700">
-                <i data-lucide="upload-cloud" class="w-3 h-3"></i>
-                <span>去补录</span>
-              </a>
+
+            <!-- 标签筛选栏（表情 & 元素都有）-->
+            <div class="flex flex-wrap gap-1 mb-2"
+                 x-show="!$store.shots.pickerLoading && $store.shots.pickerFilterTags.length">
+              <!-- 「全部」按钮 -->
+              <button class="px-2 py-0.5 rounded-full text-[11px] border transition"
+                      :class="$store.shots.pickerActiveTag === null
+                        ? 'bg-ink-700 border-ink-700 text-white'
+                        : 'bg-white border-ink-200 text-ink-500 hover:border-ink-400'"
+                      @click="$store.shots.pickerActiveTag = null">全部</button>
+              <template x-for="tag in $store.shots.pickerFilterTags" :key="tag">
+                <button class="px-2 py-0.5 rounded-full text-[11px] border transition"
+                        :class="[
+                          $store.shots.pickerActiveTag === tag
+                            ? 'bg-brand-500 border-brand-500 text-white'
+                            : ($store.shots.pickerShotTags.includes(tag)
+                                ? 'bg-brand-50 border-brand-300 text-brand-700 font-semibold'
+                                : 'bg-white border-ink-200 text-ink-500 hover:border-ink-400')
+                        ]"
+                        @click="$store.shots.pickerActiveTag = ($store.shots.pickerActiveTag === tag ? null : tag)"
+                        x-text="tag"></button>
+              </template>
             </div>
-            {% endif %}
+
+            <template x-if="$store.shots.pickerLoading">
+              <div class="text-[12px] text-ink-500 py-2">加载候选…</div>
+            </template>
+
+            <!-- 素材网格 -->
+            <div class="grid grid-cols-8 gap-2 max-h-[260px] overflow-y-auto"
+                 x-show="!$store.shots.pickerLoading && $store.shots.pickerFilteredItems.length">
+              <template x-for="(it, ii) in $store.shots.pickerFilteredItems" :key="it.id">
+                <button @click="$store.shots.pickItem(it)"
+                        class="text-left rounded-md border bg-white p-1 hover:border-brand-500 transition relative"
+                        :class="[
+                          $store.shots.pickerCurrent === it.id ? 'border-brand-500 ring-2 ring-brand-200' : 'border-ink-200',
+                          (it.matched ? '' : 'opacity-75')
+                        ]">
+                  <div class="aspect-square rounded overflow-hidden mb-1 transparent-bg">
+                    <img :src="it.file" class="w-full h-full object-contain" onerror="this.style.display='none'">
+                  </div>
+                  <div class="text-[10px] font-medium text-ink-900 truncate leading-tight" x-text="it.description || it.id"></div>
+                  <!-- 表情标签 -->
+                  <div class="text-[9px] text-ink-400 truncate mt-0.5"
+                       x-show="$store.shots.pickerKind === 'expressions' && (it.scene_tags||[]).length"
+                       x-text="(it.scene_tags || []).slice(0,3).join(' · ')"></div>
+                  <!-- 元素分类 -->
+                  <div class="text-[9px] text-ink-400 truncate mt-0.5"
+                       x-show="$store.shots.pickerKind === 'elements' && (it.categories||[]).length"
+                       x-text="(it.categories || []).slice(0,2).join(' · ')"></div>
+                  <!-- 推荐徽标（命中文案信号）-->
+                  <template x-if="it.matched">
+                    <div class="absolute top-0.5 right-0.5 px-1 rounded-sm bg-emerald-500 text-white text-[8px] leading-4">推荐</div>
+                  </template>
+                  <template x-if="$store.shots.pickerCurrent === it.id">
+                    <div class="absolute top-0.5 left-0.5 px-1 rounded-sm bg-brand-500 text-white text-[8px] leading-4">当前</div>
+                  </template>
+                </button>
+              </template>
+            </div>
+
+            <!-- 空状态 -->
+            <div class="py-4 text-center text-[12px] text-ink-400"
+                 x-show="!$store.shots.pickerLoading && !$store.shots.pickerFilteredItems.length">
+              该标签下暂无素材
+            </div>
           </div>
-        </section>
+        </template>
 
-        <!-- ④ 元素库匹配 -->
-        <section class="flex gap-3">
-          <div class="shrink-0 w-6 h-6 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[11px] font-bold">4</div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline gap-2 mb-2 flex-wrap">
-              <div class="text-[10px] font-semibold text-ink-500 tracking-wider uppercase">元素库匹配</div>
-              <div class="text-[10px] text-ink-400">
-                {% if s.matched_elements %}
-                从台词识别出 <b class="text-teal-700">{{ s.matched_elements|length }}</b> 个可复用元素 · 免生成
-                {% else %}
-                本镜头无可复用元素
-                {% endif %}
+        <!-- 正文 -->
+        <div class="px-4 py-3">
+          <template x-if="$store.shots.editingShotId !== shot.shot_id">
+            <div class="text-[13px] text-ink-800 leading-relaxed" x-text="shot.text"></div>
+          </template>
+          <template x-if="$store.shots.editingShotId === shot.shot_id">
+            <div class="space-y-3">
+              <!-- 台词 -->
+              <div>
+                <label class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em]">台词</label>
+                <textarea rows="3" x-model="$store.shots.draft.text"
+                          class="mt-1 w-full px-2 py-1.5 rounded-md border border-ink-200 text-[13px] focus:outline-none focus:ring-2 focus:ring-brand-200"></textarea>
               </div>
-            </div>
-
-            {% if s.matched_elements %}
-            <div class="space-y-2">
-              {% for m in s.matched_elements %}
-              {% set picked = m.styles | selectattr('picked') | first %}
-              <div class="rounded-xl border border-teal-200 bg-teal-50/40 overflow-hidden">
-                <!-- 头部：关键词 + 来源 + 时间 -->
-                <div class="px-3 py-2 bg-white border-b border-teal-100 flex items-center gap-2 flex-wrap">
-                  <span class="text-[12px] font-semibold text-ink-900">🔍 {{ m.keyword }}</span>
-                  <span class="text-[10px] text-ink-500">来自台词 "<span class="italic text-ink-700">{{ m.source_phrase }}</span>"</span>
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700">{{ m.lib }}</span>
-                  <span class="ml-auto text-[10px] text-ink-500 font-mono">
-                    画框 <b>{{ m.frame }}</b> · {{ m.pos }} · +{{ m.at }}s · {{ m.duration }}s
-                  </span>
-                </div>
-                <!-- 同元素多画风卡组 -->
-                <div class="p-3">
-                  <div class="text-[10px] text-ink-500 mb-1.5">
-                    库里有 <b class="text-teal-700">{{ m.styles|length }}</b> 种画风 · AI 按画风偏好 <b>{{ asset_config.style_preference }}</b> 自动挑选
-                    {% if m.styles|length > 1 %}· 可手动换{% endif %}
-                  </div>
-                  <div class="flex items-stretch gap-2 flex-wrap">
-                    {% for st in m.styles %}
-                    <div class="rounded-lg border-2 overflow-hidden cursor-pointer w-[110px] transition
-                                {% if st.picked %}border-teal-500 ring-2 ring-teal-100{% else %}border-ink-200 hover:border-teal-300 opacity-80 hover:opacity-100{% endif %}">
-                      <div class="aspect-square flex items-center justify-center text-[36px] relative"
-                           style="background: {% if st.picked %}linear-gradient(135deg,#CCFBF1,#5EEAD4){% else %}linear-gradient(135deg,#F5F5F4,#E8E6DE){% endif %};">
-                        {{ st.emoji }}
-                        {% if st.picked %}
-                        <div class="absolute top-1 right-1 w-4 h-4 rounded-full bg-teal-600 flex items-center justify-center shadow">
-                          <i data-lucide="check" class="w-2.5 h-2.5 text-white"></i>
-                        </div>
-                        {% endif %}
-                      </div>
-                      <div class="px-1.5 py-1">
-                        <div class="text-[10px] text-ink-700 font-medium truncate">{{ st.style }}</div>
-                        <div class="text-[9px] font-mono text-ink-400 truncate">{{ st.id }}</div>
-                      </div>
-                    </div>
-                    {% endfor %}
-                  </div>
+              <!-- 时长 -->
+              <div>
+                <label class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em]">预估时长（秒）</label>
+                <input type="number" step="0.1" min="0.5"
+                       x-model="$store.shots.draft.estimated_duration"
+                       class="mt-1 w-32 px-2 py-1 rounded-md border border-ink-200 text-[13px] focus:outline-none focus:ring-2 focus:ring-brand-200">
+              </div>
+              <!-- scene_tags -->
+              <div>
+                <label class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em]">Scene Tags（最多 3 个）</label>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  <template x-for="t in $store.shots.sceneTagsClosed" :key="t">
+                    <button class="px-1.5 py-0.5 rounded text-[11px] border"
+                            :class="($store.shots.draft.scene_tags || []).includes(t)
+                                     ? 'bg-brand-500 border-brand-500 text-white'
+                                     : 'bg-white border-ink-200 text-ink-600 hover:border-brand-300'"
+                            @click="$store.shots.toggleTag(t)"
+                            x-text="t"></button>
+                  </template>
                 </div>
               </div>
-              {% endfor %}
-            </div>
-            {% else %}
-            <div class="text-[12px] text-ink-400 italic flex items-center gap-2">
-              <i data-lucide="check-circle-2" class="w-4 h-4 text-ink-300"></i>
-              <span>表情充分 · 无需叠加元素</span>
-            </div>
-            {% endif %}
-          </div>
-        </section>
-
-        <!-- ⑤ 画框生成（兜底） -->
-        <section class="flex gap-3">
-          <div class="shrink-0 w-6 h-6 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-[11px] font-bold">5</div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-baseline gap-2 mb-2 flex-wrap">
-              <div class="text-[10px] font-semibold text-ink-500 tracking-wider uppercase">画框内新生成</div>
-              <div class="text-[10px] text-ink-400">
-                {% if s.custom_insets %}
-                元素库找不到，<b class="text-rose-700">{{ s.custom_insets|length }}</b> 个针对性素材需 AI 生成
-                {% else %}
-                前 4 步已满足 · <span class="text-emerald-600">跳过生成</span>
-                {% endif %}
+              <div class="flex gap-2">
+                <button class="btn-primary text-[12px]" @click="$store.shots.saveEdit(shot)">
+                  <i data-lucide="check" class="w-3.5 h-3.5"></i> 保存
+                </button>
+                <button class="btn-outline text-[12px]" @click="$store.shots.cancelEdit()">取消</button>
               </div>
             </div>
-
-            {% if s.custom_insets %}
-            <div class="space-y-2">
-              {% for el in s.custom_insets %}
-              <div class="rounded-xl border border-rose-200 bg-rose-50/40 overflow-hidden flex">
-                <div class="w-28 shrink-0 aspect-[4/3] flex items-center justify-center text-[38px] relative
-                            {% if el.status == 'generating' %}bg-gradient-to-br from-amber-50 to-amber-100{% else %}bg-gradient-to-br from-rose-100 to-rose-200{% endif %}">
-                  {% if el.status == 'generating' %}
-                  <div class="absolute inset-0 bg-black/30 flex items-center justify-center">
-                    <div class="w-6 h-6 rounded-full border-2 border-white/60 border-t-white animate-spin"></div>
-                  </div>
-                  {% endif %}
-                  <span class="opacity-90">{{ el.emoji }}</span>
-                  <div class="absolute bottom-1 left-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] font-mono">{{ el.frame }}</div>
-                </div>
-                <div class="flex-1 min-w-0 p-3">
-                  <div class="flex items-center gap-2">
-                    <div class="text-[13px] font-semibold text-ink-900">{{ el.label }}</div>
-                    {% if el.status == 'generating' %}
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">⏳ 生成中</span>
-                    {% elif el.status == 'done' %}
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">✓ 已生成</span>
-                    {% else %}
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-ink-100 text-ink-600 border border-ink-200">待生成</span>
-                    {% endif %}
-                  </div>
-                  <div class="text-[11px] text-ink-600 mt-1 italic">"{{ el.source_phrase }}"</div>
-                  <div class="text-[11px] text-rose-700 mt-1">💡 {{ el.reason }}</div>
-                  <div class="mt-2 flex items-center gap-3 text-[10px] text-ink-500 font-mono">
-                    <span>画框: {{ el.frame }}</span>
-                    <span>位置: {{ el.pos }}</span>
-                    <span>+{{ el.at }}s · {{ el.duration }}s</span>
-                  </div>
-                </div>
-              </div>
-              {% endfor %}
-            </div>
-            {% else %}
-            <div class="text-[12px] text-emerald-600 flex items-center gap-1.5">
-              <i data-lucide="check-circle-2" class="w-4 h-4"></i>
-              <span>库内素材已覆盖本镜，无需 AI 生成</span>
-            </div>
-            {% endif %}
-          </div>
-        </section>
-
+          </template>
+        </div>
       </div>
-
-      <footer class="px-5 py-2.5 border-t border-ink-100 bg-ink-50/50 flex items-center gap-1">
-        <button class="btn-ghost text-[11px]">
-          <i data-lucide="pencil" class="w-3 h-3"></i>
-          <span>编辑台词</span>
-        </button>
-        <button class="btn-ghost text-[11px]">
-          <i data-lucide="refresh-ccw" class="w-3 h-3"></i>
-          <span>重新分析</span>
-        </button>
-        <button class="btn-ghost text-[11px]">
-          <i data-lucide="tag" class="w-3 h-3"></i>
-          <span>改标签</span>
-        </button>
-        <button class="btn-ghost text-[11px] ml-auto">
-          <i data-lucide="trash-2" class="w-3 h-3 text-rose-500"></i>
-          <span class="text-rose-600">删除</span>
-        </button>
-      </footer>
-    </article>
-    {% endfor %}
-  </section>
-
-  <!-- 底栏 -->
-  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink-900 text-white rounded-2xl shadow-strong px-6 py-3 flex items-center gap-4 z-20" style="max-width:820px">
-    <div class="w-8 h-8 rounded-lg bg-brand-500/20 text-brand-300 flex items-center justify-center">
-      <i data-lucide="workflow" class="w-4 h-4"></i>
-    </div>
-    <div class="flex-1 min-w-0">
-      <div class="text-[10px] text-ink-300">5 段流水线 · {{ shots|length }} 镜头</div>
-      <div class="text-[13px] font-medium truncate">
-        表情 {{ hit_expr }}/{{ shots|length }}{% if miss_expr %}（{{ miss_expr|length }} 需补录）{% endif %} · 元素库命中 {{ all_matched_el|length }} · 仅 {{ all_custom|length }} 需 AI 生成
-      </div>
-    </div>
-    <a href="/project/{{ current_video.video_id }}/assets"
-       class="shrink-0 px-5 py-2 rounded-xl bg-gradient-to-r from-brand-400 to-brand-600 font-semibold text-[13px] hover:opacity-90 transition flex items-center gap-2">
-      <span>确认分镜 · 生产素材</span>
-      <i data-lucide="arrow-right" class="w-4 h-4"></i>
-    </a>
+    </template>
   </div>
+
+  <!-- 底部合计 -->
+  <template x-if="$store.shots.list.length">
+    <div class="mt-4 p-3 rounded-lg bg-ink-50/60 border border-ink-200 flex items-center text-[12px] text-ink-700">
+      <span>共 <b x-text="$store.shots.list.length"></b> 段 · 总时长 <b x-text="$store.shots.totalDuration.toFixed(1) + 's'"></b></span>
+      <span class="ml-4 text-ink-400">
+        形态分布：
+        <span x-text="$store.shots.list.filter(s => s.visual_form === 'stock').length"></span> 库存 ·
+        <span x-text="$store.shots.list.filter(s => s.visual_form === 'ai_image').length"></span> 生图 ·
+        <span x-text="$store.shots.list.filter(s => s.visual_form === 'ai_video').length"></span> 生视频
+      </span>
+      <div class="flex-1"></div>
+      <a href="{{ next_step_url }}" class="btn-primary text-[12px]">
+        进入素材 <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+      </a>
+    </div>
+  </template>
 
 </div>
 {% endblock %}

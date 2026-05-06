@@ -27,7 +27,7 @@
       <div class="flex-1 max-w-xl">
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur text-[11px] font-medium text-brand-100 border border-white/10">
           <span class="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse"></span>
-          AI 管线 · v0.1 · Mock 模式
+          AI 管线 · v0.1
         </div>
         <h1 class="mt-4 font-display text-[38px] leading-[1.15] font-semibold tracking-tight">
           做更好的<br>金融科普视频。
@@ -36,11 +36,10 @@
           从灵感到成片，一条流水线走完。选题、文案、分镜、配音、剪辑 — 每一步都可视化参与。
         </p>
         <div class="mt-6 flex items-center gap-3">
-          <button class="px-5 py-2.5 rounded-full bg-white text-ink-900 font-semibold text-sm hover:bg-brand-50 transition shadow-soft flex items-center gap-2"
-                  hx-get="/project/new" hx-target="body" hx-swap="innerHTML">
+          <a href="/project/new" class="px-5 py-2.5 rounded-full bg-white text-ink-900 font-semibold text-sm hover:bg-brand-50 transition shadow-soft flex items-center gap-2">
             <i data-lucide="plus" class="w-4 h-4"></i>
             <span>新建项目</span>
-          </button>
+          </a>
           <button class="px-5 py-2.5 rounded-full border border-white/20 text-white font-medium text-sm hover:bg-white/10 transition flex items-center gap-2">
             <i data-lucide="play" class="w-4 h-4"></i>
             <span>看看 Demo</span>
@@ -100,9 +99,9 @@
 
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
       {% for p in projects %}
+      <div class="group relative" x-data style="animation-delay: {{ loop.index0 * 50 }}ms">
       <a href="/project/{{ p.video_id }}/{{ p.next_step }}"
-         class="group relative overflow-hidden rounded-2xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-medium transition animate-fade-in-up"
-         style="animation-delay: {{ loop.index0 * 50 }}ms">
+         class="block overflow-hidden rounded-2xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-medium transition animate-fade-in-up">
         <!-- 封面 -->
         <div class="h-[140px] relative overflow-hidden"
              style="background: {{ p.cover_bg }};">
@@ -110,8 +109,11 @@
             <div class="text-white font-display font-bold text-[34px] opacity-90 tracking-tight">{{ p.cover_emoji }}</div>
           </div>
           <!-- 状态徽章 -->
-          <div class="absolute top-3 left-3">
+          <div class="absolute top-3 left-3 flex items-center gap-1">
             <span class="badge {{ p.status_badge_class }}">{{ p.status_label }}</span>
+            {% if p.is_demo %}
+            <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-semibold border border-amber-200">DEMO</span>
+            {% endif %}
           </div>
           <!-- 时长 -->
           <div class="absolute top-3 right-3 px-2 py-0.5 rounded-md bg-black/40 backdrop-blur text-white text-[11px] font-medium">
@@ -147,11 +149,20 @@
           </div>
         </div>
       </a>
+      <!-- 删除按钮（仅 DB 项目）-->
+      {% if p.from_db %}
+      <button @click.stop.prevent="if (confirm('删除项目 {{ p.video_id }}？数据库 + 音频 + mp4 全部清掉。')) { fetch('/api/project/{{ p.video_id }}', {method:'DELETE'}).then(() => location.reload()); }"
+              class="absolute top-3 right-12 w-7 h-7 rounded-md bg-white/85 hover:bg-red-50 backdrop-blur flex items-center justify-center opacity-0 group-hover:opacity-100 transition border border-ink-200 hover:border-red-300"
+              title="删除项目">
+        <i data-lucide="trash-2" class="w-3.5 h-3.5 text-ink-500 hover:text-red-600"></i>
+      </button>
+      {% endif %}
+      </div>
       {% endfor %}
 
       <!-- 新建卡片 -->
-      <button hx-get="/project/new" hx-target="body" hx-swap="innerHTML"
-              class="group flex flex-col items-center justify-center min-h-[272px] rounded-2xl border-2 border-dashed border-ink-200 hover:border-brand-400 hover:bg-brand-50/30 transition animate-fade-in-up">
+      <a href="/project/new"
+              class="group flex flex-col items-center justify-center min-h-[272px] rounded-2xl border-2 border-dashed border-ink-200 hover:border-brand-400 hover:bg-brand-50/30 transition animate-fade-in-up no-underline">
         <div class="w-14 h-14 rounded-2xl bg-white border border-ink-200 group-hover:border-brand-300 group-hover:bg-brand-50 flex items-center justify-center transition">
           <i data-lucide="plus" class="w-6 h-6 text-ink-400 group-hover:text-brand-500 transition"></i>
         </div>
@@ -159,7 +170,7 @@
           新建项目
         </div>
         <div class="mt-1 text-[12px] text-ink-400">从一个选题灵感开始</div>
-      </button>
+      </a>
     </div>
   </section>
 

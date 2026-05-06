@@ -1,247 +1,397 @@
 {% extends "base.html" %}
-{% block page_title %}⑥ 剪辑 · {{ current_video.title }}{% endblock %}
+{% from "_loading_banner.html" import loading_banner %}
+{% block page_title %}⑥ 剪辑 · 合成成片 · {{ current_video.title }}{% endblock %}
+
+{% block topbar_right %}
+<div class="hidden md:flex items-center gap-2 text-[12px]" x-data>
+  <i data-lucide="film" class="w-3.5 h-3.5 text-brand-500"></i>
+  <span class="text-ink-500" x-text="$store.edit ? $store.edit.statusText : ''"></span>
+</div>
+{% endblock %}
 
 {% block content %}
-<div class="px-8 py-8 max-w-[1440px] mx-auto">
+<script>
+(function(){ var _fn = function() {
+  const initQueue = {{ queue | tojson }};
+  const initStatus = {{ status | tojson }};
 
-  <!-- 视频播放器 + 右侧信息 -->
-  <section class="grid grid-cols-1 lg:grid-cols-3 gap-5 animate-fade-in-up">
-    <!-- 左：大视频播放器 -->
-    <div class="lg:col-span-2">
-      <div class="relative rounded-2xl overflow-hidden bg-ink-900 shadow-strong aspect-video">
-        <!-- 占位画面 -->
-        <div class="absolute inset-0 bg-gradient-to-br from-ink-800 via-ink-900 to-brand-900 flex items-center justify-center">
-          <!-- 演示：把当前镜头作为封面 -->
-          <div class="text-center text-white px-8">
-            <div class="text-[96px] mb-4">📉</div>
-            <div class="font-display font-semibold text-[32px] leading-tight">做空是什么？</div>
-            <div class="mt-2 text-[14px] text-white/60">3 分钟看懂熊市赚钱逻辑</div>
-          </div>
+  const initPub = {{ publish_meta | tojson }};
+
+  Alpine.store('edit', {
+    videoId: "{{ current_video.video_id }}",
+    shotsCount: {{ shots_count | tojson }},
+    queue: initQueue,
+    hasMp4: initStatus.has_mp4,
+    mp4Url: initStatus.mp4_url,
+    mp4Bytes: initStatus.mp4_bytes || 0,
+    progressLog: [],
+    running: false,
+    elapsedSec: 0,
+    _tickHandle: null,
+    error: '',
+    statusText: initStatus.has_mp4 ? '已有成片 · 可播放或重合成' : '待合成',
+
+    // 发布信息（标题/简介/话题）
+    pubCurrent: initPub.current,
+    pubPoolSize: initPub.pool_size || 0,
+    pubIndex: initPub.index || 0,
+    pubGenerating: false,
+    pubError: '',
+    pubCopiedField: '',  // 'title' / 'description' / 'tags' 用于显示"已复制"瞬态
+
+    async pubGenerate() {
+      if (this.pubGenerating) return;
+      this.pubGenerating = true; this.pubError = '';
+      try {
+        const r = await fetch('/api/edit/publish_meta/regenerate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId, n: 3}),
+        });
+        const j = await r.json();
+        if (!j.ok) { this.pubError = j.error || '生成失败'; return; }
+        this.pubCurrent = j.current;
+        this.pubPoolSize = j.pool_size;
+        this.pubIndex = j.index;
+      } catch(e) { this.pubError = '网络错误：' + e.message; }
+      finally { this.pubGenerating = false; setTimeout(() => lucide.createIcons(), 50); }
+    },
+
+    async pubCycle() {
+      if (this.pubGenerating || this.pubPoolSize === 0) return;
+      this.pubError = '';
+      try {
+        const r = await fetch('/api/edit/publish_meta/cycle', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId}),
+        });
+        const j = await r.json();
+        if (!j.ok) { this.pubError = j.error || '切换失败'; return; }
+        this.pubCurrent = j.current;
+        this.pubIndex = j.index;
+      } catch(e) { this.pubError = '网络错误：' + e.message; }
+    },
+
+    async pubCopy(field, text) {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        this.pubCopiedField = field;
+        setTimeout(() => { if (this.pubCopiedField === field) this.pubCopiedField = ''; }, 1500);
+      } catch(e) { this.pubError = '复制失败 · 请手动选择'; }
+    },
+
+    get pubTagsText() {
+      return (this.pubCurrent?.tags || []).join(' ');
+    },
+
+    // 前置检查：只看配音和段数。L3 未完成的段自动用 L0 背景 fallback。
+    get audioReady() { return this.queue.audio.ready === this.queue.audio.total && this.queue.audio.total > 0; },
+    get imagesSettled() {
+      return (this.queue.image.tasks || []).every(t => t.status === 'image_ready' || t.status === 'video_ready')
+              || this.queue.image.total === 0;
+    },
+    get ready() { return this.audioReady && this.shotsCount > 0; },
+
+    async compose() {
+      if (this.running) return;
+      if (!this.audioReady) {
+        this.error = '配音还没全部就绪 · 回素材页一键生成';
+        return;
+      }
+      this.running = true;
+      this.error = '';
+      this.progressLog = [];
+      this.elapsedSec = 0;
+      this.statusText = '合成中 · 通常 30-120 秒';
+      const t0 = Date.now();
+      this._tickHandle = setInterval(() => {
+        this.elapsedSec = Math.round((Date.now() - t0) / 1000);
+      }, 500);
+      try {
+        const r = await fetch('/api/edit/compose', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({video_id: this.videoId}),
+        });
+        const j = await r.json();
+        this.progressLog = j.log || [];
+        if (!j.ok) {
+          this.error = j.error || '合成失败';
+          this.statusText = '失败 · ' + ((Date.now()-t0)/1000).toFixed(1) + 's';
+          return;
+        }
+        this.hasMp4 = true;
+        this.mp4Url = j.mp4_url + '?t=' + Date.now();  // 绕缓存
+        this.mp4Bytes = j.bytes;
+        this.statusText = `合成完成 · ${((Date.now()-t0)/1000).toFixed(1)}s · ${(j.bytes/1024/1024).toFixed(1)} MB · 时长 ${j.duration}s`;
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null; }
+        this.running = false;
+        setTimeout(() => lucide.createIcons(), 50);
+      }
+    },
+  });
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
+</script>
+
+<div class="px-8 py-6 max-w-[1200px] mx-auto" x-data>
+
+  <!-- 顶部说明 -->
+  <div class="rounded-xl border border-ink-200 bg-white shadow-soft p-5 mb-5">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-lg bg-brand-50 border border-brand-100 flex items-center justify-center shrink-0">
+        <i data-lucide="film" class="w-5 h-5 text-brand-600"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[15px] font-display font-semibold text-ink-900">一键合成 · 导出最终 mp4</div>
+        <div class="mt-1 text-[13px] text-ink-700 leading-relaxed">
+          从 shot_table 读每段配音 · 按分镜时序拼接 · 烧录字幕（白字黑描边，底部居中）· H.264/AAC · 9:16 / 1080x1920 / 30fps。
         </div>
-
-        <!-- 播放按钮中央 -->
-        <button class="absolute inset-0 flex items-center justify-center group">
-          <div class="w-20 h-20 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-strong group-hover:scale-110 transition">
-            <i data-lucide="play" class="w-8 h-8 text-ink-900 ml-1"></i>
-          </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button class="btn-primary" @click="$store.edit.compose()"
+                :disabled="$store.edit.running || !$store.edit.ready">
+          <i data-lucide="zap" class="w-4 h-4"></i>
+          <span x-text="$store.edit.running ? '合成中…' : ($store.edit.hasMp4 ? '重新合成' : '一键合成')"></span>
         </button>
+      </div>
+    </div>
+    <template x-if="$store.edit.error">
+      <div class="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700" x-text="$store.edit.error"></div>
+    </template>
+    {{ loading_banner(
+        cond='$store.edit.running',
+        label='ffmpeg 正在合成最终 mp4',
+        elapsed='$store.edit.elapsedSec',
+        est=90,
+        note='通常 30-120 秒，时长越长越久。请勿刷新或返回。',
+    ) }}
+  </div>
 
-        <!-- 底部控件 -->
-        <div class="absolute left-0 right-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
-          <!-- 进度 -->
-          <div class="flex items-center gap-2 text-white text-[11px] font-mono mb-2">
-            <span>00:18</span>
-            <div class="flex-1 h-1 bg-white/20 rounded-full relative">
-              <div class="absolute left-0 top-0 h-full w-[20%] bg-brand-500 rounded-full"></div>
-              <div class="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white" style="left: calc(20% - 6px);"></div>
-            </div>
-            <span>01:30</span>
-          </div>
-          <!-- 控件 -->
-          <div class="flex items-center gap-3 text-white">
-            <button class="hover:text-brand-400 transition"><i data-lucide="play" class="w-5 h-5"></i></button>
-            <button class="hover:text-brand-400 transition"><i data-lucide="volume-2" class="w-5 h-5"></i></button>
-            <div class="ml-auto flex items-center gap-3">
-              <span class="text-[11px] px-2 py-0.5 rounded bg-white/10">1080p</span>
-              <button class="hover:text-brand-400 transition"><i data-lucide="settings" class="w-4 h-4"></i></button>
-              <button class="hover:text-brand-400 transition"><i data-lucide="maximize" class="w-4 h-4"></i></button>
-            </div>
-          </div>
-        </div>
+  <!-- 前置就绪检查卡片 -->
+  <div class="grid grid-cols-3 gap-3 mb-5">
+    <div class="rounded-lg border p-3"
+         :class="$store.edit.shotsCount > 0 ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'">
+      <div class="flex items-center gap-2">
+        <i :data-lucide="$store.edit.shotsCount > 0 ? 'check-circle-2' : 'alert-triangle'" class="w-4 h-4"
+           :class="$store.edit.shotsCount > 0 ? 'text-emerald-600' : 'text-amber-600'"></i>
+        <div class="text-[12px] font-semibold text-ink-800">分镜段数</div>
+      </div>
+      <div class="mt-1 text-[22px] font-display font-bold text-ink-900" x-text="$store.edit.shotsCount"></div>
+      <div class="text-[11px] text-ink-500">段</div>
+    </div>
 
-        <!-- 左上角：状态 -->
-        <div class="absolute top-4 left-4 flex items-center gap-2">
-          <span class="px-2.5 py-1 rounded-md bg-black/50 backdrop-blur text-white text-[11px] font-medium flex items-center gap-1.5">
-            <div class="w-1.5 h-1.5 rounded-full bg-brand-400"></div>
-            初剪 · v1
-          </span>
+    <div class="rounded-lg border p-3"
+         :class="$store.edit.audioReady ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'">
+      <div class="flex items-center gap-2">
+        <i :data-lucide="$store.edit.audioReady ? 'check-circle-2' : 'alert-triangle'" class="w-4 h-4"
+           :class="$store.edit.audioReady ? 'text-emerald-600' : 'text-amber-600'"></i>
+        <div class="text-[12px] font-semibold text-ink-800">配音就绪</div>
+      </div>
+      <div class="mt-1 text-[22px] font-display font-bold text-ink-900">
+        <span x-text="$store.edit.queue.audio.ready"></span>/<span x-text="$store.edit.queue.audio.total"></span>
+      </div>
+      <div class="text-[11px] text-ink-500" x-show="!$store.edit.audioReady">
+        <a :href="`/project/${$store.edit.videoId}/assets`" class="text-brand-600 hover:underline">回素材页生成 →</a>
+      </div>
+    </div>
+
+    <div class="rounded-lg border p-3"
+         :class="$store.edit.imagesSettled ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'">
+      <div class="flex items-center gap-2">
+        <i :data-lucide="$store.edit.imagesSettled ? 'check-circle-2' : 'alert-triangle'" class="w-4 h-4"
+           :class="$store.edit.imagesSettled ? 'text-emerald-600' : 'text-amber-600'"></i>
+        <div class="text-[12px] font-semibold text-ink-800">AI 生图任务</div>
+      </div>
+      <div class="mt-1 text-[22px] font-display font-bold text-ink-900">
+        <span x-text="$store.edit.queue.image.ready"></span>/<span x-text="$store.edit.queue.image.total"></span>
+      </div>
+      <div class="text-[11px] text-ink-500" x-show="!$store.edit.imagesSettled">
+        <a :href="`/project/${$store.edit.videoId}/assets`" class="text-brand-600 hover:underline">回素材页生图 →</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-12 gap-5">
+    <!-- 左：最终成片 -->
+    <div class="col-span-7">
+      <div class="text-[13px] font-semibold text-ink-800 mb-2">成片预览</div>
+      <div class="rounded-xl overflow-hidden border border-ink-200 bg-ink-900 aspect-[9/16] max-h-[640px] flex items-center justify-center relative">
+        <template x-if="$store.edit.hasMp4 && $store.edit.mp4Url">
+          <video :src="$store.edit.mp4Url" controls class="w-full h-full object-contain" preload="metadata"></video>
+        </template>
+        <template x-if="!$store.edit.hasMp4 && !$store.edit.running">
+          <div class="flex flex-col items-center text-ink-400">
+            <i data-lucide="video" class="w-12 h-12 mb-2"></i>
+            <div class="text-[13px]">还没有成片</div>
+            <div class="text-[11px] mt-1">点右上"一键合成"</div>
+          </div>
+        </template>
+        <template x-if="$store.edit.running">
+          <div class="flex flex-col items-center text-ink-300 gap-3">
+            <i data-lucide="loader" class="w-10 h-10 animate-spin"></i>
+            <div class="text-[13px] text-white">合成中…</div>
+            <div class="text-[11px] text-ink-400">下载素材 + ffmpeg 拼接 + 烧字幕</div>
+          </div>
+        </template>
+      </div>
+      <template x-if="$store.edit.hasMp4">
+        <div class="mt-2 flex items-center gap-2 text-[11px] text-ink-500">
+          <a :href="$store.edit.mp4Url" download class="btn-outline text-[11px] py-1 px-2">
+            <i data-lucide="download" class="w-3 h-3"></i> 下载 mp4
+          </a>
+          <span x-text="`${($store.edit.mp4Bytes/1024/1024).toFixed(1)} MB`"></span>
         </div>
-        <!-- 右上角 -->
-        <div class="absolute top-4 right-4">
-          <button class="px-2.5 py-1 rounded-md bg-black/50 backdrop-blur text-white text-[11px] font-medium hover:bg-black/70 transition flex items-center gap-1.5">
-            <i data-lucide="download" class="w-3 h-3"></i>
-            <span>下载 MP4</span>
+      </template>
+    </div>
+
+    <!-- 右：合成日志 -->
+    <div class="col-span-5">
+      <div class="text-[13px] font-semibold text-ink-800 mb-2">合成日志</div>
+      <div class="rounded-xl border border-ink-200 bg-white shadow-soft p-2 h-[640px] overflow-y-auto font-mono text-[11px]">
+        <template x-if="!$store.edit.progressLog.length && !$store.edit.running">
+          <div class="text-ink-400 p-3 text-center">开始合成后这里显示进度</div>
+        </template>
+        <template x-for="(entry, i) in $store.edit.progressLog" :key="i">
+          <div class="px-2 py-1 rounded flex items-start gap-1.5"
+               :class="entry.status === 'fail' ? 'bg-red-50 text-red-700'
+                        : (entry.status === 'warn' ? 'bg-amber-50 text-amber-700'
+                        : 'text-ink-700 hover:bg-ink-50')">
+            <span class="text-ink-400 shrink-0 w-10" x-text="'#' + String(i+1).padStart(2,'0')"></span>
+            <span class="shrink-0 w-16 font-semibold" x-text="entry.phase"></span>
+            <span class="shrink-0 w-10 text-ink-500" x-text="entry.shot_id || ''"></span>
+            <span class="flex-1 break-all">
+              <template x-if="entry.status === 'ok'"><span class="text-emerald-600">✓</span></template>
+              <template x-if="entry.status === 'fail'"><span class="text-red-600">✗</span></template>
+              <template x-if="entry.status === 'warn'"><span class="text-amber-600">!</span></template>
+              <template x-if="entry.src"><span x-text="' ' + entry.src"></span></template>
+              <template x-if="entry.duration"><span x-text="' ' + entry.duration + 's'"></span></template>
+              <template x-if="entry.stderr"><div class="mt-0.5 text-red-600 text-[10px]" x-text="entry.stderr"></div></template>
+              <template x-if="entry.msg"><span x-text="' ' + entry.msg"></span></template>
+            </span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================== 发布信息（标题 / 简介 / 话题）============================== -->
+  <div class="mt-6 rounded-xl border border-ink-200 bg-white shadow-soft" x-data>
+    <div class="flex items-center px-5 py-3 border-b border-ink-100 bg-ink-50/40">
+      <div class="w-8 h-8 rounded-lg bg-brand-50 border border-brand-100 flex items-center justify-center mr-3">
+        <i data-lucide="send" class="w-4 h-4 text-brand-600"></i>
+      </div>
+      <div class="flex-1">
+        <div class="text-[14px] font-display font-semibold text-ink-900">发布信息</div>
+        <div class="text-[11px] text-ink-500">复制到抖音 / B 站 / 小红书 · AI 生成 3 套备选可循环切换</div>
+      </div>
+      <template x-if="$store.edit.pubPoolSize > 0">
+        <div class="flex items-center gap-2">
+          <span class="text-[11px] text-ink-500">第 <b x-text="$store.edit.pubIndex + 1"></b> / <span x-text="$store.edit.pubPoolSize"></span> 套</span>
+          <button class="btn-outline text-[12px]" @click="$store.edit.pubCycle()" :disabled="$store.edit.pubGenerating">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 换一组
+          </button>
+          <button class="btn-ghost text-[12px]" @click="$store.edit.pubGenerate()" :disabled="$store.edit.pubGenerating" title="重新调 LLM 生新一批 3 套">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span x-text="$store.edit.pubGenerating ? '生成中…' : '重新生成'"></span>
           </button>
         </div>
-      </div>
-
-      <!-- 视频元信息 -->
-      <div class="mt-4 grid grid-cols-4 gap-3">
-        <div class="p-3 rounded-xl bg-white border border-ink-200">
-          <div class="text-[10px] text-ink-500">时长</div>
-          <div class="mt-0.5 font-display font-semibold text-[18px] tabular-nums text-ink-900">01:30</div>
-        </div>
-        <div class="p-3 rounded-xl bg-white border border-ink-200">
-          <div class="text-[10px] text-ink-500">分辨率</div>
-          <div class="mt-0.5 font-display font-semibold text-[18px] text-ink-900">1080p</div>
-        </div>
-        <div class="p-3 rounded-xl bg-white border border-ink-200">
-          <div class="text-[10px] text-ink-500">文件大小</div>
-          <div class="mt-0.5 font-display font-semibold text-[18px] tabular-nums text-ink-900">24.7 MB</div>
-        </div>
-        <div class="p-3 rounded-xl bg-white border border-ink-200">
-          <div class="text-[10px] text-ink-500">本条成本</div>
-          <div class="mt-0.5 font-display font-semibold text-[18px] tabular-nums text-brand-700">¥ 18.40</div>
-        </div>
-      </div>
+      </template>
+      <template x-if="$store.edit.pubPoolSize === 0">
+        <button class="btn-primary text-[12px]" @click="$store.edit.pubGenerate()" :disabled="$store.edit.pubGenerating || !$store.edit.shotsCount">
+          <template x-if="!$store.edit.pubGenerating"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i></template>
+          <template x-if="$store.edit.pubGenerating"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i></template>
+          <span x-text="$store.edit.pubGenerating ? 'AI 生成中…' : 'AI 生成发布信息'"></span>
+        </button>
+      </template>
     </div>
 
-    <!-- 右：封面 + 标题 + 发布包 -->
-    <div class="space-y-4">
-      <!-- 封面候选 -->
-      <div class="rounded-2xl bg-white border border-ink-200 p-5">
-        <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center gap-2">
-            <i data-lucide="image" class="w-4 h-4 text-brand-500"></i>
-            <div class="font-display font-semibold text-[14px] text-ink-900">AI 封面</div>
+    <template x-if="$store.edit.pubError">
+      <div class="mx-5 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700" x-text="$store.edit.pubError"></div>
+    </template>
+
+    <template x-if="$store.edit.pubGenerating && !$store.edit.pubCurrent">
+      <div class="px-5 py-8 text-center text-[13px] text-ink-500">
+        <i data-lucide="loader-2" class="w-5 h-5 animate-spin inline-block mr-1"></i>
+        DeepSeek 正在生成 3 套发布信息备选，通常 25-40 秒…
+      </div>
+    </template>
+
+    <template x-if="!$store.edit.pubCurrent && !$store.edit.pubGenerating">
+      <div class="px-5 py-8 text-center text-[13px] text-ink-500">
+        视频合成后，点上方"AI 生成发布信息"获得可粘贴到抖音 / B 站 / 小红书的标题 + 简介 + 话题
+      </div>
+    </template>
+
+    <template x-if="$store.edit.pubCurrent">
+      <div class="p-5 space-y-4">
+        <!-- 标题 -->
+        <div>
+          <div class="flex items-center mb-1.5">
+            <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em]">标题</div>
+            <span class="ml-2 text-[10px] text-ink-400" x-text="(($store.edit.pubCurrent.title||'').length) + ' 字'"></span>
+            <button class="ml-auto btn-ghost text-[11px] py-0.5 px-1.5"
+                    @click="$store.edit.pubCopy('title', $store.edit.pubCurrent.title)">
+              <template x-if="$store.edit.pubCopiedField !== 'title'">
+                <span class="flex items-center gap-1"><i data-lucide="copy" class="w-3 h-3"></i>复制</span>
+              </template>
+              <template x-if="$store.edit.pubCopiedField === 'title'">
+                <span class="text-emerald-600 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i>已复制</span>
+              </template>
+            </button>
           </div>
-          <button class="btn-ghost text-[11px]"><i data-lucide="refresh-ccw" class="w-3 h-3"></i>重生</button>
+          <div class="px-3 py-2.5 rounded-lg border border-ink-200 bg-ink-50/40 text-[14px] font-display font-semibold text-ink-900 select-all"
+               x-text="$store.edit.pubCurrent.title"></div>
         </div>
-        <div class="aspect-[9/16] rounded-xl overflow-hidden relative shadow-medium"
-             style="background: linear-gradient(135deg, #F48A0C 0%, #D06E05 50%, #2E2C27 100%);">
-          <div class="absolute inset-0 p-4 flex flex-col justify-between text-white">
-            <div>
-              <div class="text-[11px] font-semibold opacity-80">金融概念 · 3 分钟</div>
-              <div class="mt-2 font-display font-bold text-[28px] leading-tight">做空<br>是什么？</div>
-            </div>
-            <div class="text-[10px] opacity-70">跌了也能赚 · 一次讲透</div>
+
+        <!-- 简介 -->
+        <div>
+          <div class="flex items-center mb-1.5">
+            <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em]">简介</div>
+            <span class="ml-2 text-[10px] text-ink-400" x-text="(($store.edit.pubCurrent.description||'').length) + ' 字'"></span>
+            <button class="ml-auto btn-ghost text-[11px] py-0.5 px-1.5"
+                    @click="$store.edit.pubCopy('description', $store.edit.pubCurrent.description)">
+              <template x-if="$store.edit.pubCopiedField !== 'description'">
+                <span class="flex items-center gap-1"><i data-lucide="copy" class="w-3 h-3"></i>复制</span>
+              </template>
+              <template x-if="$store.edit.pubCopiedField === 'description'">
+                <span class="text-emerald-600 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i>已复制</span>
+              </template>
+            </button>
           </div>
-          <div class="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 flex items-center justify-center">
-            <i data-lucide="check" class="w-3.5 h-3.5 text-ink-900"></i>
-          </div>
+          <div class="px-3 py-2.5 rounded-lg border border-ink-200 bg-ink-50/40 text-[13px] text-ink-800 leading-relaxed whitespace-pre-wrap select-all"
+               x-text="$store.edit.pubCurrent.description"></div>
         </div>
-        <div class="mt-3 flex items-center gap-2">
-          <div class="feature-soon text-[10px]">🖼️ 多封面 AB</div>
+
+        <!-- 话题标签 -->
+        <div>
+          <div class="flex items-center mb-1.5">
+            <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em]">话题标签</div>
+            <span class="ml-2 text-[10px] text-ink-400"><span x-text="($store.edit.pubCurrent.tags||[]).length"></span> 个</span>
+            <button class="ml-auto btn-ghost text-[11px] py-0.5 px-1.5"
+                    @click="$store.edit.pubCopy('tags', $store.edit.pubTagsText)">
+              <template x-if="$store.edit.pubCopiedField !== 'tags'">
+                <span class="flex items-center gap-1"><i data-lucide="copy" class="w-3 h-3"></i>复制全部</span>
+              </template>
+              <template x-if="$store.edit.pubCopiedField === 'tags'">
+                <span class="text-emerald-600 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i>已复制</span>
+              </template>
+            </button>
+          </div>
+          <div class="px-3 py-2.5 rounded-lg border border-ink-200 bg-ink-50/40 flex flex-wrap gap-1.5">
+            <template x-for="t in ($store.edit.pubCurrent.tags || [])" :key="t">
+              <span class="px-2 py-0.5 rounded-md bg-brand-50 text-brand-700 text-[12px] border border-brand-100" x-text="t"></span>
+            </template>
+            <template x-if="!($store.edit.pubCurrent.tags || []).length">
+              <span class="text-[12px] text-ink-400">（无）</span>
+            </template>
+          </div>
         </div>
       </div>
-
-      <!-- 发布文案 -->
-      <div class="rounded-2xl bg-white border border-ink-200 p-5">
-        <div class="flex items-center gap-2 mb-3">
-          <i data-lucide="megaphone" class="w-4 h-4 text-blue-500"></i>
-          <div class="font-display font-semibold text-[14px] text-ink-900">AI 发布包</div>
-        </div>
-        <div class="space-y-3">
-          <div>
-            <div class="text-[10px] text-ink-500 mb-1">标题</div>
-            <div class="p-2.5 rounded-lg bg-ink-50 border border-ink-100 text-[13px] text-ink-900 font-medium">
-              做空是什么？3 分钟看懂熊市赚钱逻辑｜一二布布
-            </div>
-          </div>
-          <div>
-            <div class="text-[10px] text-ink-500 mb-1">简介</div>
-            <div class="p-2.5 rounded-lg bg-ink-50 border border-ink-100 text-[12px] text-ink-700 leading-relaxed">
-              股票跌了也能赚钱？这个操作叫"做空"。迈克尔·贝瑞靠它赚了 1 亿美金。一条视频讲透原理、风险和普通人如何参与。
-            </div>
-          </div>
-          <div>
-            <div class="text-[10px] text-ink-500 mb-1">标签</div>
-            <div class="flex items-center gap-1.5 flex-wrap">
-              {% for tag in ['做空','金融科普','熊市','投资入门','一二布布'] %}
-              <span class="badge badge-brand">#{{ tag }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- 时间轴 -->
-  <section class="mt-8 rounded-2xl bg-white border border-ink-200 p-6 animate-fade-in-up">
-    <div class="flex items-center justify-between mb-5">
-      <div>
-        <div class="flex items-center gap-2">
-          <i data-lucide="film" class="w-4 h-4 text-brand-500"></i>
-          <div class="text-[11px] font-semibold text-ink-500 tracking-wider uppercase">时间轴预览</div>
-        </div>
-        <h3 class="mt-1 font-display font-semibold text-[16px] text-ink-900">7 个镜头 · 按分镜表装配</h3>
-      </div>
-      <div class="flex items-center gap-2">
-        <div class="feature-soon">🎵 智能卡点</div>
-        <div class="feature-soon">📤 多平台导出</div>
-      </div>
-    </div>
-
-    <!-- 轨道 1：视频 -->
-    <div class="space-y-3">
-      <div>
-        <div class="text-[10px] text-ink-500 mb-1 flex items-center gap-1">
-          <i data-lucide="film" class="w-3 h-3"></i> 视频轨
-        </div>
-        <div class="flex items-center gap-[2px] h-14">
-          {% for s in shots %}
-          <div class="h-full rounded-md overflow-hidden relative group cursor-pointer hover:ring-2 hover:ring-brand-400 transition"
-               style="flex-grow: {{ s.duration }}; background: {{ s.section_color }}30; border: 1px solid {{ s.section_color }};">
-            <div class="absolute inset-0 p-2 flex flex-col justify-between">
-              <div class="flex items-center gap-1">
-                <span class="text-[9px] font-mono font-semibold" style="color: {{ s.section_color }};">{{ s.id }}</span>
-              </div>
-              <div class="text-[9px] truncate" style="color: {{ s.section_color }};">{{ s.char.emoji }} {{ s.bg.emoji }}</div>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-
-      <!-- 轨道 2：字幕 -->
-      <div>
-        <div class="text-[10px] text-ink-500 mb-1 flex items-center gap-1">
-          <i data-lucide="caption" class="w-3 h-3"></i> 字幕轨
-        </div>
-        <div class="flex items-center gap-[2px] h-7">
-          {% for s in shots %}
-          <div class="h-full rounded-md bg-ink-900/80 flex items-center px-2 text-white text-[10px] truncate"
-               style="flex-grow: {{ s.duration }};">
-            {{ s.text[:14] }}...
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-
-      <!-- 轨道 3：音频 -->
-      <div>
-        <div class="text-[10px] text-ink-500 mb-1 flex items-center gap-1">
-          <i data-lucide="audio-waveform" class="w-3 h-3"></i> 音频轨
-        </div>
-        <div class="h-10 rounded-md bg-emerald-50 border border-emerald-200 flex items-center px-2 gap-[2px]">
-          {% for i in range(80) %}
-          <div class="flex-1 rounded-sm bg-emerald-500/60"
-               style="height: {{ [8,14,20,11,25,18,9,22,15,28,12,19,26,10,21,16,24,13,27,17,23,11,25,14,20,8,18,12,22,9,26,15,19,13,24,11,28,16,20,8,14,22,18,25,12,19,15,26,9,23,17,21,14,28,11,18,24,13,20,16,25,9,22,15,28,12,19,17,11,26,14,20,18,24,13,22,16,9,25,28][i] }}px;"></div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-
-    <!-- 时间刻度 -->
-    <div class="mt-3 flex items-center justify-between text-[10px] font-mono text-ink-400">
-      <span>0s</span>
-      <span>15s</span>
-      <span>30s</span>
-      <span>45s</span>
-      <span>60s</span>
-      <span>75s</span>
-      <span>90s</span>
-    </div>
-  </section>
-
-  <!-- 底栏：终审 -->
-  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink-900 text-white rounded-2xl shadow-strong px-6 py-3 flex items-center gap-4 z-20" style="max-width:820px">
-    <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center">
-      <i data-lucide="check-circle-2" class="w-4 h-4"></i>
-    </div>
-    <div class="flex-1 min-w-0">
-      <div class="text-[10px] text-ink-300">成片终审 · 最后一步</div>
-      <div class="text-[13px] font-medium truncate">确认通过后进入发布队列 · 通过也可选择打回修改某一步</div>
-    </div>
-    <button class="shrink-0 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-[13px] font-medium flex items-center gap-2 border border-white/10">
-      <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
-      <span>打回修改</span>
-    </button>
-    <button class="shrink-0 px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-400 to-emerald-600 font-semibold text-[13px] hover:opacity-90 transition flex items-center gap-2">
-      <i data-lucide="check" class="w-4 h-4"></i>
-      <span>终审通过</span>
-    </button>
+    </template>
   </div>
 
 </div>

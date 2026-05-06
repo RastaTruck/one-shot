@@ -19,6 +19,15 @@ data/audio/
 data/cache/
 data/outputs/
 data/voice_samples/
+data/shot_tables/
+data/audit_snapshots/
+
+# BGM 二进制（mp3，按 user 决定走外置 OSS，不入 git）
+bgm/*.mp3
+
+# 各处素材备份目录（floodfill / trash 工具产出，本地 only）
+**/_orig/
+**/_trash/
 
 # OS / editor
 .DS_Store
@@ -27,3 +36,9 @@ data/voice_samples/
 
 # Claude / scheduler local state
 .claude/scheduled_tasks.lock
+
+# 背景图原始素材（二进制大图，按需手动同步）
+背景图/
+
+# 日报/交接文档（本地 only）
+data/handoff/

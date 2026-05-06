@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_loading_banner.html" import loading_banner %}
 {% block page_title %}② 文案 · 要素提炼 · {{ current_video.title }}{% endblock %}
 
 {% block topbar_right %}
@@ -10,7 +11,7 @@
 
 {% block content %}
 <script>
-document.addEventListener('alpine:init', () => {
+(function(){ var _fn = function() {
   Alpine.store('script', {
     videoId: "{{ current_video.video_id }}",
     topic: {{ topic_title | tojson }},
@@ -21,6 +22,8 @@ document.addEventListener('alpine:init', () => {
     pace: 5.5,        // 字/秒：4.5 严肃 / 5.5 标准 / 6 高密度（小林风）
     loading: false,
     fullLoading: false,
+    elapsedSec: 0,
+    _tickHandle: null,
     provider: '',
     cost: 0,
     statusText: '就绪',
@@ -33,6 +36,11 @@ document.addEventListener('alpine:init', () => {
     async generate(force = false) {
       if (!force && this.drafts && this.drafts.length === 3) return;
       this.loading = true;
+      this.elapsedSec = 0;
+      const t0 = Date.now();
+      this._tickHandle = setInterval(() => {
+        this.elapsedSec = Math.round((Date.now() - t0) / 1000);
+      }, 500);
       this.statusText = '生成 3 套要素提炼中 · 约 30 秒';
       try {
         const r = await fetch('/api/script/generate', {
@@ -45,7 +53,10 @@ document.addEventListener('alpine:init', () => {
         this.statusText = `要素提炼完成 · ${this.provider} · ¥${(this.cost||0).toFixed(4)}`;
       } catch(e) {
         this.statusText = '生成失败：' + e.message;
-      } finally { this.loading = false; }
+      } finally {
+        if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null; }
+        this.loading = false;
+      }
     },
 
     pickOutline(draft) {
@@ -79,6 +90,11 @@ document.addEventListener('alpine:init', () => {
       const outline = this.drafts.find(d => d.draft_id === this.pickedOutlineId);
       if (!outline) { alert('请先在左边选一篇大纲'); return; }
       this.fullLoading = true;
+      this.elapsedSec = 0;
+      const t0 = Date.now();
+      this._tickHandle = setInterval(() => {
+        this.elapsedSec = Math.round((Date.now() - t0) / 1000);
+      }, 500);
       const targetChars = Math.round(this.duration * this.pace);
       const estSec = this.duration <= 60 ? '30-60 秒' : this.duration <= 120 ? '60-120 秒' : '90-180 秒';
       this.statusText = `按 ${this.duration}s × ${this.pace} 字/秒 ≈ ${targetChars} 字扩写中 · 约 ${estSec}`;
@@ -95,18 +111,40 @@ document.addEventListener('alpine:init', () => {
         window.location.href = `/project/${this.videoId}/script/full?duration=${this.duration}`;
       } catch(e) {
         alert('网络错误：' + e.message);
-      } finally { this.fullLoading = false; }
+      } finally {
+        if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null; }
+        this.fullLoading = false;
+      }
     },
 
     snippetsByKind(kind) { return this.snippets.filter(s => s.kind === kind); },
     pickedOutline() { return this.drafts.find(d => d.draft_id === this.pickedOutlineId); },
   });
-});
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
 </script>
 
 <div x-data="{ get S() { return this.$store.script; },
   init() { this.S.init(); if (!this.S.drafts || this.S.drafts.length !== 3) this.S.generate(); }
 }" class="px-6 py-6 max-w-[1800px] mx-auto">
+
+  <!-- ========== 子 tab：要素提炼 ↔ 完整文稿 ========== -->
+  <div class="mb-4 flex gap-1 border-b border-ink-200">
+    <a href="/project/{{ current_video.video_id }}/script"
+       class="px-4 py-2 text-[13px] font-medium border-b-2 -mb-px flex items-center gap-1.5
+              border-brand-500 text-ink-900">
+      <i data-lucide="list" class="w-4 h-4"></i> 要素提炼（3 套大纲）
+    </a>
+    <a href="/project/{{ current_video.video_id }}/script/full"
+       class="px-4 py-2 text-[13px] font-medium border-b-2 -mb-px flex items-center gap-1.5
+              border-transparent text-ink-500 hover:text-ink-800">
+      <i data-lucide="file-text" class="w-4 h-4"></i> 完整文稿
+      {% if full_summary %}
+      <span class="ml-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px]">已生成</span>
+      {% endif %}
+    </a>
+  </div>
 
   <!-- ========== 顶条 ========== -->
   <div class="rounded-2xl bg-white border border-ink-200 shadow-soft p-4 mb-5">
@@ -139,6 +177,31 @@ document.addEventListener('alpine:init', () => {
       </div>
     </div>
   </div>
+
+  {% if full_summary %}
+  <!-- ========== 完整文稿状态卡（已生成）========== -->
+  <div class="rounded-2xl border border-emerald-200 bg-emerald-50/50 shadow-soft p-4 mb-5">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0">
+        <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[13px] font-display font-semibold text-ink-900">已生成完整文稿</div>
+        <div class="text-[12px] text-ink-700 mt-0.5">
+          {{ full_summary.paragraphs_count }} 段 · {{ full_summary.char_total }} 字 · 时长 {{ full_summary.duration_sec }} 秒
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <a href="/project/{{ current_video.video_id }}/script/full" class="btn-primary text-[12px]">
+          <i data-lucide="file-text" class="w-3.5 h-3.5"></i> 查看 / 编辑全文
+        </a>
+        <a href="{{ next_step_url }}" class="btn-outline text-[12px]">
+          <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i> 进入{{ next_step_label }}
+        </a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- ========== 主体：3 个大纲 + 右侧选定+灵感库 ========== -->
   <div class="grid grid-cols-1 lg:grid-cols-[1fr_1fr_1fr_400px] gap-4">
@@ -332,6 +395,20 @@ document.addEventListener('alpine:init', () => {
           <template x-if="S.fullLoading"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i></template>
           <span x-text="S.fullLoading ? 'AI 写文稿中…' : '生成完整文稿 → 编辑'"></span>
         </button>
+        {{ loading_banner(
+            cond='S.fullLoading',
+            label='DeepSeek 正在扩写完整文稿',
+            elapsed='S.elapsedSec',
+            est=90,
+            note='通常 60-180 秒（按时长扩写）。完成后会自动跳转编辑页。',
+        ) }}
+        {{ loading_banner(
+            cond='S.loading',
+            label='DeepSeek 正在生成 3 套要素大纲',
+            elapsed='S.elapsedSec',
+            est=30,
+            note='通常 25-40 秒。请勿刷新或返回。',
+        ) }}
         <div class="text-[10px] text-ink-400 text-center leading-relaxed">
           AI 会先设计逻辑次第（认知阶梯）+ 框架，再扩写文稿；<br>
           每段都带 purpose（在认知阶梯里做什么）

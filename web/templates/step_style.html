@@ -1,0 +1,780 @@
+{% extends "base.html" %}
+{% from "_loading_banner.html" import loading_banner %}
+{% block page_title %}③ 风格确认 · {{ current_video.title }}{% endblock %}
+
+{% block topbar_right %}
+<div class="hidden md:flex items-center gap-2 text-[12px]" x-data>
+  <i data-lucide="scan-line" class="w-3.5 h-3.5 text-brand-500"></i>
+  <span class="text-ink-500">
+    <span x-text="$store.style ? $store.style.confirmedCount : 0"></span>/5 已确认
+  </span>
+</div>
+{% endblock %}
+
+{% block content %}
+<script>
+(function(){ var _fn = function() {
+  const initBible    = {{ bible | tojson }};
+  const initAnchors  = {{ anchors | tojson }};
+  const initTest     = {{ test_image | tojson }};
+  const initIpLibs   = {{ ip_libraries | tojson }};
+  const initElLibs   = {{ element_libraries | tojson }};
+  const initVoicePs  = {{ voice_presets | tojson }};
+  const initSubPs    = {{ subtitle_presets | tojson }};
+  const initBgmPs    = {{ bgm_presets | tojson }};
+
+  Alpine.store('style', {
+    videoId: "{{ current_video.video_id }}",
+    bible: initBible,
+    anchors: initAnchors || [],
+    testImage: initTest || null,
+    ipLibs: initIpLibs || [],
+    elLibs: initElLibs || [],
+    voicePresets: initVoicePs || [],
+    subtitlePresets: initSubPs || [],
+    bgmPresets: initBgmPs || [],
+    error: '',
+
+    // ------- Block D 状态：背景库 + AI 标题合成 -------
+    bgs: [],
+    bgsLoaded: false,
+    titlesPool: [],         // LLM 给的候选标题数组
+    titlesIndex: 0,         // 当前合成用的下标
+    titlePicked: initBible.bg_title_text || '',         // 从 bible 恢复
+    titlePreviewUrl: initBible.bg_title_url ? (initBible.bg_title_url + '?t=' + Date.now()) : null,
+    titleLoading: false,
+    titleError: '',
+
+    // 计算属性
+    _confirmKeys: ['ip_library', 'element_library', 'background', 'voice_subtitle', 'bgm'],
+    get confirmed() { return (this.bible.confirmed || {}); },
+    get confirmedCount() { return this._confirmKeys.filter(k => this.confirmed[k]).length; },
+    get allConfirmed() { return this.confirmedCount >= 5; },
+
+    // ------- 通用保存 -------
+    _saveTimer: null,
+    saveBibleDebounced() {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = setTimeout(() => this.saveBible(), 400);
+    },
+    async saveBible() {
+      try {
+        await fetch('/api/style/bible/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video_id: this.videoId, bible: this.bible }),
+        });
+      } catch (e) {}
+    },
+
+    // ------- 区块确认 -------
+    async confirmBlock(block) {
+      if (!this.bible.confirmed) this.bible.confirmed = {};
+      this.bible.confirmed[block] = !this.bible.confirmed[block];
+      await this.saveBible();
+      setTimeout(() => lucide.createIcons(), 50);
+    },
+
+    // ------- Block B: IP library -------
+    selectIpLib(id) {
+      this.bible.ip_library_id = id;
+      // 切换 IP 后需重新确认
+      if (this.bible.confirmed) this.bible.confirmed.ip_library = false;
+      this.saveBibleDebounced();
+    },
+
+    // ------- Block C: element libraries -------
+    toggleElLib(id) {
+      if (!this.bible.element_library_ids) this.bible.element_library_ids = [];
+      const arr = this.bible.element_library_ids;
+      const idx = arr.indexOf(id);
+      if (idx >= 0) arr.splice(idx, 1);
+      else arr.push(id);
+      if (this.bible.confirmed) this.bible.confirmed.element_library = false;
+      this.saveBibleDebounced();
+    },
+
+    // ------- Block D: 背景库 + AI 标题 -------
+    get selectedBg() {
+      const id = this.bible.bg_id;
+      return id ? (this.bgs.find(b => b.id === id) || null) : null;
+    },
+    async loadBgs() {
+      try {
+        const r = await fetch('/api/style/bg/list');
+        const j = await r.json();
+        this.bgs = j.backgrounds || [];
+        this.bgsLoaded = true;
+        setTimeout(() => lucide.createIcons(), 50);
+      } catch (e) {
+        this.titleError = '加载背景库失败：' + (e.message || e);
+      }
+    },
+    selectBg(id) {
+      this.bible.bg_id = id;
+      this._resetTitleState();
+      const bg = this.bgs.find(b => b.id === id);
+      if (bg && bg.kind !== 'frame') this.bible.bg_title_overlay = false;
+      if (this.bible.confirmed) this.bible.confirmed.background = false;
+      this.saveBibleDebounced();
+    },
+    toggleTitleOverlay() {
+      this.bible.bg_title_overlay = !this.bible.bg_title_overlay;
+      this._resetTitleState();
+      if (this.bible.confirmed) this.bible.confirmed.background = false;
+      this.saveBibleDebounced();
+    },
+    _resetTitleState() {
+      this.titlesPool = [];
+      this.titlesIndex = 0;
+      this.titlePicked = '';
+      this.titlePreviewUrl = null;
+      this.titleError = '';
+      // 切背景 / 关 overlay 时也清掉 bible 里的旧标题
+      this.bible.bg_title_text = '';
+      this.bible.bg_title_url = '';
+    },
+    async runAutoRender(pickIndex) {
+      const id = this.bible.bg_id;
+      if (!id) { this.titleError = '请先选一张背景'; return; }
+      this.titleLoading = true;
+      this.titleError = '';
+      try {
+        const r = await fetch('/api/style/bg/auto-render', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            video_id: this.videoId,
+            frame_id: id,
+            n: 5,
+            pick_index: pickIndex || 0,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || 'AI 合成失败');
+        this.titlesPool = j.titles || [];
+        this.titlesIndex = j.pick_index || 0;
+        this.titlePicked = j.picked || '';
+        this.titlePreviewUrl = j.url + '?t=' + Date.now();
+        // 持久化到 bible —— 分镜/剪辑用此 url 作为整期视频背景
+        this.bible.bg_title_text = this.titlePicked;
+        this.bible.bg_title_url = j.url;
+        this.saveBibleDebounced();
+      } catch (e) {
+        this.titleError = e.message || String(e);
+      } finally {
+        this.titleLoading = false;
+      }
+    },
+    async pickNextTitle() {
+      // 已有 pool 时切下一个并重渲（命中缓存就秒出）
+      if (!this.titlesPool.length) {
+        return this.runAutoRender(0);
+      }
+      const next = (this.titlesIndex + 1) % this.titlesPool.length;
+      this.titleLoading = true;
+      this.titleError = '';
+      try {
+        const r = await fetch('/api/style/bg/preview-title', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ frame_id: this.bible.bg_id, text: this.titlesPool[next] }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || '合成失败');
+        this.titlesIndex = next;
+        this.titlePicked = this.titlesPool[next];
+        this.titlePreviewUrl = j.url + '?t=' + Date.now();
+        // 同步到 bible —— 分镜/剪辑都按此渲染
+        this.bible.bg_title_text = this.titlePicked;
+        this.bible.bg_title_url = j.url;
+        this.saveBibleDebounced();
+      } catch (e) {
+        this.titleError = e.message || String(e);
+      } finally {
+        this.titleLoading = false;
+      }
+    },
+
+    // ------- Block E: voice + subtitle -------
+    _previewAudio: null,
+    previewingId: null,
+    previewLoadingId: null,
+
+    async previewVoice(v) {
+      // 正在播放同一个 → 停止
+      if (this._previewAudio && this.previewingId === v.id) {
+        this._previewAudio.pause();
+        this._previewAudio = null;
+        this.previewingId = null;
+        return;
+      }
+      // 停掉上一个
+      if (this._previewAudio) { this._previewAudio.pause(); this._previewAudio = null; }
+      this.previewingId = null;
+      this.previewLoadingId = v.id;
+
+      const res = await fetch('/api/tts/preview', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({voice_id: v.id, provider: v.provider || 'edge_tts'}),
+      }).then(r => r.json()).catch(() => ({ok: false, error: 'network error'}));
+
+      this.previewLoadingId = null;
+      if (!res.ok) { alert('试听失败：' + res.error); return; }
+
+      const audio = new Audio(res.url);
+      this._previewAudio = audio;
+      this.previewingId = v.id;
+      audio.onended = () => {
+        this.previewingId = null;
+        this._previewAudio = null;
+        setTimeout(() => lucide.createIcons(), 50);
+      };
+      audio.play();
+      setTimeout(() => lucide.createIcons(), 50);
+    },
+
+    selectVoice(id) {
+      this.bible.voice_id = id;
+      if (this.bible.confirmed) this.bible.confirmed.voice_subtitle = false;
+      this.saveBibleDebounced();
+      setTimeout(() => lucide.createIcons(), 50);
+    },
+    selectSubtitle(id) {
+      this.bible.subtitle_style = id;
+      if (this.bible.confirmed) this.bible.confirmed.voice_subtitle = false;
+      this.saveBibleDebounced();
+    },
+
+    // ------- Block F: BGM -------
+    selectBgm(id) {
+      this.bible.bgm_id = id;
+      if (this.bible.confirmed) this.bible.confirmed.bgm = false;
+      this.saveBibleDebounced();
+    },
+  });
+
+  // 进入画风页就加载背景库（Block 4 永远要展示）
+  const _s = Alpine.store('style');
+  if (_s) _s.loadBgs();
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
+</script>
+
+<div class="px-8 py-6 max-w-[1200px] mx-auto" x-data>
+
+  <!-- 顶部说明条 + 进度 -->
+  <div class="rounded-xl border border-ink-200 bg-white shadow-soft p-5 mb-6">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-lg bg-brand-50 border border-brand-100 flex items-center justify-center shrink-0">
+        <i data-lucide="scan-line" class="w-5 h-5 text-brand-600"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[15px] font-display font-semibold text-ink-900">整期视频的"身份"在这里一次性锁定</div>
+        <div class="mt-1 text-[13px] text-ink-700 leading-relaxed">
+          5 个区块：<b>① IP 表情库</b> · <b>② 场景元素库</b> · <b>③ 背景源</b> · <b>④ 配音 + 字幕</b> · <b>⑤ 背景音乐</b>。
+          每块单独确认，全部确认后进入分镜。分镜段和素材生产直接继承这里的身份，不用再选一次。
+        </div>
+      </div>
+      <div class="shrink-0 text-right">
+        <div class="text-[22px] font-display font-bold text-ink-900">
+          <span x-text="$store.style.confirmedCount"></span>/5
+        </div>
+        <div class="text-[11px] text-ink-500">已确认</div>
+      </div>
+    </div>
+
+    <!-- 进度条 + 进入分镜 按钮 -->
+    <div class="mt-4 flex items-center gap-3">
+      <div class="flex-1 h-2 rounded-full bg-ink-100 overflow-hidden">
+        <div class="h-full bg-gradient-to-r from-brand-400 to-brand-600 transition-all"
+             :style="`width: ${($store.style.confirmedCount / 5) * 100}%`"></div>
+      </div>
+      <template x-if="$store.style.allConfirmed">
+        <a href="{{ next_step_url }}"
+           class="btn-primary">
+          <i data-lucide="arrow-right" class="w-4 h-4"></i> 进入{{ next_step_label }}
+        </a>
+      </template>
+      <template x-if="!$store.style.allConfirmed">
+        <button class="btn-outline opacity-50 cursor-not-allowed" disabled
+                title="{{ current_blocker }}">
+          <i data-lucide="lock" class="w-4 h-4"></i>
+          还剩 <span x-text="5 - $store.style.confirmedCount"></span> 块未确认
+        </button>
+      </template>
+    </div>
+    <template x-if="$store.style.error">
+      <div class="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700" x-text="$store.style.error"></div>
+    </template>
+  </div>
+
+  <!-- ============================== -->
+  <!-- ① IP 表情库                    -->
+  <!-- ============================== -->
+  <section class="rounded-xl border shadow-soft mb-5 overflow-hidden"
+           :class="$store.style.confirmed.ip_library ? 'border-emerald-200' : 'border-ink-200'">
+    <div class="flex items-center px-5 py-3 border-b"
+         :class="$store.style.confirmed.ip_library ? 'bg-emerald-50/50 border-emerald-200' : 'bg-ink-50/60 border-ink-200'">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-[13px] mr-3"
+           :class="$store.style.confirmed.ip_library ? 'bg-emerald-500' : 'bg-ink-700'">①</div>
+      <div class="flex-1">
+        <div class="text-[14px] font-display font-semibold text-ink-900">IP 表情库（单选）</div>
+        <div class="text-[11px] text-ink-500">一期视频只用一个 IP · 分镜里 L1 表情从这里查</div>
+      </div>
+      <template x-if="$store.style.confirmed.ip_library">
+        <span class="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200 mr-2">
+          <i data-lucide="check" class="w-3 h-3 inline"></i> 已确认
+        </span>
+      </template>
+      <button class="btn-outline text-[11px] py-1 px-2"
+              @click="$store.style.confirmBlock('ip_library')"
+              :disabled="!$store.style.bible.ip_library_id">
+        <span x-text="$store.style.confirmed.ip_library ? '取消确认' : '确认此块'"></span>
+      </button>
+    </div>
+
+    <div class="px-5 py-4 grid grid-cols-3 gap-3">
+      <template x-for="lib in $store.style.ipLibs" :key="lib.id">
+        <button @click="$store.style.selectIpLib(lib.id)"
+                class="text-left rounded-lg border p-3 transition"
+                :class="$store.style.bible.ip_library_id === lib.id
+                         ? 'border-brand-400 bg-brand-50/40 shadow-soft'
+                         : 'border-ink-200 bg-white hover:border-ink-300'">
+          <div class="flex items-start gap-3">
+            <div class="w-14 h-14 rounded-md overflow-hidden bg-ink-100 shrink-0">
+              <img :src="lib.cover_file" class="w-full h-full object-cover" onerror="this.style.display='none'">
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-1">
+                <div class="text-[13px] font-semibold text-ink-900 truncate" x-text="lib.name"></div>
+                <template x-if="$store.style.bible.ip_library_id === lib.id">
+                  <i data-lucide="check-circle-2" class="w-4 h-4 text-brand-600 shrink-0"></i>
+                </template>
+              </div>
+              <div class="text-[11px] text-ink-500" x-text="lib.expression_count + ' 表情'"></div>
+              <div class="text-[11px] text-ink-400 mt-0.5 truncate" x-text="lib.desc"></div>
+            </div>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-1">
+            <template x-for="tag in (lib.scene_tags || []).slice(0, 5)" :key="tag">
+              <span class="px-1 py-0.5 rounded bg-ink-100 text-ink-600 text-[10px]" x-text="tag"></span>
+            </template>
+          </div>
+        </button>
+      </template>
+    </div>
+  </section>
+
+  <!-- ============================== -->
+  <!-- ② 场景元素库                   -->
+  <!-- ============================== -->
+  <section class="rounded-xl border shadow-soft mb-5 overflow-hidden"
+           :class="$store.style.confirmed.element_library ? 'border-emerald-200' : 'border-ink-200'">
+    <div class="flex items-center px-5 py-3 border-b"
+         :class="$store.style.confirmed.element_library ? 'bg-emerald-50/50 border-emerald-200' : 'bg-ink-50/60 border-ink-200'">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-[13px] mr-3"
+           :class="$store.style.confirmed.element_library ? 'bg-emerald-500' : 'bg-ink-700'">②</div>
+      <div class="flex-1">
+        <div class="text-[14px] font-display font-semibold text-ink-900">场景元素库（多选）</div>
+        <div class="text-[11px] text-ink-500">每个库是一套画风 · 多选可混用 · 库的 style_tags 会并入 AI 生图约束</div>
+      </div>
+      <template x-if="$store.style.confirmed.element_library">
+        <span class="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200 mr-2">
+          <i data-lucide="check" class="w-3 h-3 inline"></i> 已确认
+        </span>
+      </template>
+      <button class="btn-outline text-[11px] py-1 px-2"
+              @click="$store.style.confirmBlock('element_library')"
+              :disabled="($store.style.bible.element_library_ids || []).length === 0">
+        <span x-text="$store.style.confirmed.element_library ? '取消确认' : '确认此块'"></span>
+      </button>
+    </div>
+
+    <div class="px-5 py-4 grid grid-cols-2 gap-3">
+      <template x-for="lib in $store.style.elLibs" :key="lib.id">
+        <button @click="$store.style.toggleElLib(lib.id)"
+                class="text-left rounded-lg border p-3 transition"
+                :class="($store.style.bible.element_library_ids || []).includes(lib.id)
+                         ? 'border-brand-400 bg-brand-50/40 shadow-soft'
+                         : 'border-ink-200 bg-white hover:border-ink-300'">
+          <div class="flex items-center gap-2 mb-2">
+            <template x-if="($store.style.bible.element_library_ids || []).includes(lib.id)">
+              <i data-lucide="check-square" class="w-4 h-4 text-brand-600"></i>
+            </template>
+            <template x-if="!($store.style.bible.element_library_ids || []).includes(lib.id)">
+              <i data-lucide="square" class="w-4 h-4 text-ink-400"></i>
+            </template>
+            <div class="text-[13px] font-semibold text-ink-900" x-text="lib.name"></div>
+            <span class="text-[10px] text-ink-400" x-text="lib.count + ' 元素'"></span>
+          </div>
+          <div class="text-[11px] text-ink-500" x-text="lib.desc"></div>
+          <div class="mt-2 grid grid-cols-4 gap-1.5">
+            <template x-for="s in (lib.samples || []).slice(0, 4)" :key="s.id">
+              <div class="aspect-square rounded bg-ink-100 overflow-hidden">
+                <img :src="s.file" class="w-full h-full object-cover" onerror="this.style.display='none'">
+              </div>
+            </template>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-1">
+            <template x-for="t in (lib.style_tags || [])" :key="t">
+              <span class="px-1 py-0.5 rounded bg-ink-100 text-ink-600 text-[10px]" x-text="t"></span>
+            </template>
+          </div>
+        </button>
+      </template>
+    </div>
+  </section>
+
+  <!-- ============================== -->
+  <!-- ③ 背景源                       -->
+  <!-- ============================== -->
+  <section class="rounded-xl border shadow-soft mb-5 overflow-hidden"
+           :class="$store.style.confirmed.background ? 'border-emerald-200' : 'border-ink-200'">
+    <div class="flex items-center px-5 py-3 border-b"
+         :class="$store.style.confirmed.background ? 'bg-emerald-50/50 border-emerald-200' : 'bg-ink-50/60 border-ink-200'">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-[13px] mr-3"
+           :class="$store.style.confirmed.background ? 'bg-emerald-500' : 'bg-ink-700'">③</div>
+      <div class="flex-1">
+        <div class="text-[14px] font-display font-semibold text-ink-900">背景</div>
+        <div class="text-[11px] text-ink-500">先从背景库选 1 张作为整期视频基底；带留白的"框架"可以再叠 AI 标题</div>
+      </div>
+      <template x-if="$store.style.confirmed.background">
+        <span class="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200 mr-2">
+          <i data-lucide="check" class="w-3 h-3 inline"></i> 已确认
+        </span>
+      </template>
+      <button class="btn-outline text-[11px] py-1 px-2"
+              @click="$store.style.confirmBlock('background')"
+              :disabled="!$store.style.bible.bg_id">
+        <span x-text="$store.style.confirmed.background ? '取消确认' : '确认此块'"></span>
+      </button>
+    </div>
+
+    <!-- 第一步：选背景 -->
+    <div class="px-5 py-4">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="w-5 h-5 rounded-full bg-brand-500 text-white text-[11px] font-bold flex items-center justify-center">1</span>
+        <div class="text-[13px] font-semibold text-ink-900">选背景</div>
+        <div class="text-[11px] text-ink-500">框架（可叠文字）排前；完整背景排后</div>
+      </div>
+
+      <template x-if="!$store.style.bgsLoaded">
+        <div class="text-[12px] text-ink-500 py-3">加载背景库中…</div>
+      </template>
+
+      <template x-if="$store.style.bgsLoaded && $store.style.bgs.length === 0">
+        <div class="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-[12px] text-amber-800">
+          背景库为空。把图存到 <code class="bg-amber-100/60 px-1 rounded">data/assets/backgrounds/</code> 然后到 <code class="bg-amber-100/60 px-1 rounded">config/asset_catalog.json</code> 加 entry。
+        </div>
+      </template>
+
+      <template x-if="$store.style.bgsLoaded && $store.style.bgs.length > 0">
+        <div class="flex flex-wrap gap-2">
+          <template x-for="bg in $store.style.bgs" :key="bg.id">
+            <button @click="$store.style.selectBg(bg.id)"
+                    :title="bg.id + ' · ' + bg.description"
+                    class="relative rounded-md overflow-hidden border-2 transition bg-white shrink-0"
+                    style="width: 72px;"
+                    :class="$store.style.bible.bg_id === bg.id
+                            ? 'border-brand-500 shadow-soft'
+                            : 'border-ink-200 hover:border-ink-300'">
+              <div class="aspect-[9/16] bg-ink-100 relative">
+                <img :src="bg.url" :alt="bg.id" class="w-full h-full object-cover">
+                <template x-if="!bg.file_exists">
+                  <div class="absolute inset-0 bg-rose-500/50 flex items-center justify-center text-white text-[9px] font-bold text-center px-1">缺失</div>
+                </template>
+                <template x-if="$store.style.bible.bg_id === bg.id">
+                  <div class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-brand-500 text-white flex items-center justify-center">
+                    <i data-lucide="check" class="w-3 h-3"></i>
+                  </div>
+                </template>
+                <div class="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] font-semibold text-white text-center"
+                     :class="bg.kind === 'frame' ? 'bg-brand-500/85' : 'bg-ink-700/70'"
+                     x-text="bg.kind === 'frame' ? '框架' : '完整'"></div>
+              </div>
+            </button>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- 第二步：是否在选中背景上 P 文字 -->
+    <template x-if="$store.style.bible.bg_id">
+      <div class="px-5 pb-5 border-t border-ink-100 bg-ink-50/30">
+        <div class="pt-4 mb-3 flex items-center gap-2">
+          <span class="w-5 h-5 rounded-full bg-brand-500 text-white text-[11px] font-bold flex items-center justify-center">2</span>
+          <div class="text-[13px] font-semibold text-ink-900">AI 标题信息</div>
+          <div class="text-[11px] text-ink-500">每段分镜按文案 AI 自动生成短标题 P 到背景中央</div>
+        </div>
+
+        <!-- 仅 frame 类才允许 P 文字 -->
+        <template x-if="$store.style.selectedBg && $store.style.selectedBg.kind === 'frame'">
+          <div>
+            <button @click="$store.style.toggleTitleOverlay()"
+                    class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border transition text-[13px]"
+                    :class="$store.style.bible.bg_title_overlay
+                            ? 'border-brand-500 bg-brand-50 text-brand-700'
+                            : 'border-ink-200 bg-white text-ink-700 hover:border-ink-300'">
+              <i :data-lucide="$store.style.bible.bg_title_overlay ? 'check-square' : 'square'" class="w-4 h-4"></i>
+              <span x-text="$store.style.bible.bg_title_overlay ? '已开启 AI 自动 P 标题' : '开启 AI 自动 P 标题'"></span>
+            </button>
+
+            <template x-if="$store.style.bible.bg_title_overlay">
+              <div class="mt-4 rounded-lg border border-ink-200 bg-white p-3">
+                <div class="flex items-center gap-2 mb-3">
+                  <i data-lucide="sparkles" class="w-4 h-4 text-brand-600"></i>
+                  <div class="text-[12px] font-semibold text-ink-900">AI 一键合成</div>
+                  <div class="text-[10px] text-ink-500">按当前文案 LLM 给短标题 → 自动 P 到选中框架</div>
+                </div>
+
+                <!-- 没有候选 -> 一键生成按钮 -->
+                <template x-if="!$store.style.titlePreviewUrl && !$store.style.titleLoading">
+                  <button @click="$store.style.runAutoRender(0)"
+                          class="btn-primary text-[12px] px-3 inline-flex items-center gap-1.5">
+                    <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
+                    AI 生成标题 + 合成
+                  </button>
+                </template>
+
+                <!-- 加载中 -->
+                <template x-if="$store.style.titleLoading">
+                  <div class="text-[12px] text-ink-500 inline-flex items-center gap-2">
+                    <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i>
+                    <span x-text="$store.style.titlesPool.length ? '换标题中…' : 'LLM 生成标题中…'"></span>
+                  </div>
+                </template>
+
+                <!-- 有结果 -->
+                <template x-if="$store.style.titlePreviewUrl && !$store.style.titleLoading">
+                  <div>
+                    <div class="flex items-center gap-3 mb-2 flex-wrap">
+                      <div class="text-[11px] text-ink-500">当前标题</div>
+                      <div class="text-[15px] font-display font-bold text-brand-700"
+                           x-text="$store.style.titlePicked"></div>
+                      <button @click="$store.style.pickNextTitle()"
+                              class="btn-outline text-[11px] py-1 px-2 inline-flex items-center gap-1">
+                        <i data-lucide="shuffle" class="w-3 h-3"></i>换一个
+                      </button>
+                      <button @click="$store.style.runAutoRender(0)"
+                              class="btn-outline text-[11px] py-1 px-2 inline-flex items-center gap-1">
+                        <i data-lucide="refresh-cw" class="w-3 h-3"></i>重新让 LLM 生
+                      </button>
+                      <div class="text-[10px] text-ink-400"
+                           x-text="`(候选 ${$store.style.titlesIndex + 1}/${$store.style.titlesPool.length})`"></div>
+                    </div>
+                    <div class="mb-2 flex flex-wrap gap-1">
+                      <template x-for="(t, i) in $store.style.titlesPool" :key="i">
+                        <span class="px-2 py-0.5 rounded text-[11px] border"
+                              :class="i === $store.style.titlesIndex
+                                      ? 'border-brand-500 bg-brand-50 text-brand-700 font-semibold'
+                                      : 'border-ink-200 text-ink-500'"
+                              x-text="t"></span>
+                      </template>
+                    </div>
+                    <div class="text-[11px] text-ink-500 mb-1">合成结果（点击查看大图）</div>
+                    <a :href="$store.style.titlePreviewUrl" target="_blank"
+                       class="block rounded-md overflow-hidden border border-ink-200 bg-white"
+                       style="max-width: 220px;">
+                      <img :src="$store.style.titlePreviewUrl" class="w-full h-auto">
+                    </a>
+                  </div>
+                </template>
+
+                <template x-if="$store.style.titleError">
+                  <div class="mt-2 text-[12px] text-rose-600" x-text="$store.style.titleError"></div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <template x-if="$store.style.selectedBg && $store.style.selectedBg.kind !== 'frame'">
+          <div class="text-[12px] text-ink-500 italic">
+            这张是「完整背景图」（无留白），不支持 P 文字标题。如需 P 文字请选「框架」类背景。
+          </div>
+        </template>
+      </div>
+    </template>
+  </section>
+
+  <!-- ============================== -->
+  <!-- ④ 配音 + 字幕                 -->
+  <!-- ============================== -->
+  <section class="rounded-xl border shadow-soft mb-5 overflow-hidden"
+           :class="$store.style.confirmed.voice_subtitle ? 'border-emerald-200' : 'border-ink-200'">
+    <div class="flex items-center px-5 py-3 border-b"
+         :class="$store.style.confirmed.voice_subtitle ? 'bg-emerald-50/50 border-emerald-200' : 'bg-ink-50/60 border-ink-200'">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-[13px] mr-3"
+           :class="$store.style.confirmed.voice_subtitle ? 'bg-emerald-500' : 'bg-ink-700'">④</div>
+      <div class="flex-1">
+        <div class="text-[14px] font-display font-semibold text-ink-900">配音 + 字幕</div>
+        <div class="text-[11px] text-ink-500">声线 / 字幕样式（MVP 演示 · TTS 真实接入在下一批）</div>
+      </div>
+      <template x-if="$store.style.confirmed.voice_subtitle">
+        <span class="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200 mr-2">
+          <i data-lucide="check" class="w-3 h-3 inline"></i> 已确认
+        </span>
+      </template>
+      <button class="btn-outline text-[11px] py-1 px-2"
+              @click="$store.style.confirmBlock('voice_subtitle')"
+              :disabled="!$store.style.bible.voice_id || !$store.style.bible.subtitle_style">
+        <span x-text="$store.style.confirmed.voice_subtitle ? '取消确认' : '确认此块'"></span>
+      </button>
+    </div>
+
+    <div class="px-5 py-4 grid grid-cols-2 gap-5">
+      <!-- 配音声线 -->
+      <div>
+        <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em] mb-2">配音声线</div>
+        <div class="space-y-1.5">
+          <template x-for="v in $store.style.voicePresets" :key="v.id">
+            <div @click="$store.style.selectVoice(v.id)"
+                 class="w-full text-left rounded-lg border p-2 transition flex items-center gap-2 cursor-pointer"
+                 :class="$store.style.bible.voice_id === v.id
+                          ? 'border-brand-400 bg-brand-50/40'
+                          : 'border-ink-200 bg-white hover:border-ink-300'">
+              <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                   :class="$store.style.bible.voice_id === v.id ? 'bg-brand-500 text-white' : 'bg-ink-100 text-ink-500'">
+                <i data-lucide="mic" class="w-4 h-4"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[12px] font-semibold text-ink-900" x-text="v.name"></span>
+                  <template x-if="v.own">
+                    <span class="text-[9px] font-bold px-1 py-0.5 rounded bg-brand-100 text-brand-600 leading-none">专属</span>
+                  </template>
+                  <template x-if="v.provider === 'fish_audio' && !v.own">
+                    <span class="text-[9px] font-bold px-1 py-0.5 rounded bg-violet-100 text-violet-600 leading-none">Fish</span>
+                  </template>
+                </div>
+                <div class="text-[10px] text-ink-500" x-text="v.desc"></div>
+              </div>
+              <!-- 试听按钮 -->
+              <button @click.stop="$store.style.previewVoice(v)"
+                      class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition"
+                      :class="$store.style.previewingId === v.id
+                               ? 'bg-brand-500 text-white'
+                               : 'bg-ink-100 text-ink-400 hover:bg-ink-200'"
+                      :title="$store.style.previewingId === v.id ? '停止' : '试听'">
+                <!-- 加载中转圈 -->
+                <template x-if="$store.style.previewLoadingId === v.id">
+                  <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="31.4" stroke-dashoffset="10"/>
+                  </svg>
+                </template>
+                <!-- 播放中 → 停止图标 -->
+                <template x-if="$store.style.previewingId === v.id && $store.style.previewLoadingId !== v.id">
+                  <i data-lucide="square" class="w-3 h-3"></i>
+                </template>
+                <!-- 默认播放图标 -->
+                <template x-if="$store.style.previewingId !== v.id && $store.style.previewLoadingId !== v.id">
+                  <i data-lucide="play" class="w-3.5 h-3.5"></i>
+                </template>
+              </button>
+              <!-- 选中对勾 -->
+              <template x-if="$store.style.bible.voice_id === v.id">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-brand-600 flex-shrink-0"></i>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- 字幕样式 -->
+      <div>
+        <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em] mb-2">字幕样式</div>
+        <div class="space-y-1.5">
+          <template x-for="s in $store.style.subtitlePresets" :key="s.id">
+            <button @click="$store.style.selectSubtitle(s.id)"
+                    class="w-full text-left rounded-lg border p-2 transition flex items-center gap-2"
+                    :class="$store.style.bible.subtitle_style === s.id
+                             ? 'border-brand-400 bg-brand-50/40'
+                             : 'border-ink-200 bg-white hover:border-ink-300'">
+              <div class="w-14 h-8 rounded flex items-center justify-center text-[11px] font-bold"
+                   :style="`background: ${s.bg}; color: ${s.color};`" x-text="s.sample"></div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[12px] font-semibold text-ink-900" x-text="s.name"></div>
+                <div class="text-[10px] text-ink-500" x-text="s.desc"></div>
+              </div>
+              <template x-if="$store.style.bible.subtitle_style === s.id">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-brand-600"></i>
+              </template>
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== -->
+  <!-- ⑤ 背景音乐（BGM）              -->
+  <!-- ============================== -->
+  <section class="rounded-xl border shadow-soft mb-5 overflow-hidden"
+           :class="$store.style.confirmed.bgm ? 'border-emerald-200' : 'border-ink-200'">
+    <div class="flex items-center px-5 py-3 border-b"
+         :class="$store.style.confirmed.bgm ? 'bg-emerald-50/50 border-emerald-200' : 'bg-ink-50/60 border-ink-200'">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-[13px] mr-3"
+           :class="$store.style.confirmed.bgm ? 'bg-emerald-500' : 'bg-ink-700'">⑤</div>
+      <div class="flex-1">
+        <div class="text-[14px] font-display font-semibold text-ink-900">背景音乐（BGM）</div>
+        <div class="text-[11px] text-ink-500">整期视频的统一背景音 · 从素材库选取（暂未上传 · 先选"无 BGM"过审）</div>
+      </div>
+      <template x-if="$store.style.confirmed.bgm">
+        <span class="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200 mr-2">
+          <i data-lucide="check" class="w-3 h-3 inline"></i> 已确认
+        </span>
+      </template>
+      <button class="btn-outline text-[11px] py-1 px-2"
+              @click="$store.style.confirmBlock('bgm')"
+              :disabled="!$store.style.bible.bgm_id">
+        <span x-text="$store.style.confirmed.bgm ? '取消确认' : '确认此块'"></span>
+      </button>
+    </div>
+
+    <div class="px-5 py-4">
+      <div class="flex items-center mb-2">
+        <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-[0.08em]">BGM 库</div>
+        <span class="ml-2 text-[10px] text-ink-400" x-text="'共 ' + $store.style.bgmPresets.length + ' 项'"></span>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <template x-for="b in $store.style.bgmPresets" :key="b.id">
+          <div role="button" tabindex="0"
+               class="rounded-lg border transition cursor-pointer flex flex-col gap-2 p-3"
+               :class="$store.style.bible.bgm_id === b.id
+                        ? 'border-brand-400 bg-brand-50/40 shadow-soft'
+                        : 'border-ink-200 bg-white hover:border-ink-300'"
+               @click="$store.style.selectBgm(b.id)">
+            <div class="flex items-center gap-2">
+              <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 pointer-events-none"
+                   :class="$store.style.bible.bgm_id === b.id ? 'bg-brand-500 text-white' : 'bg-ink-100 text-ink-500'">
+                <i :data-lucide="b.id === 'none' ? 'volume-x' : 'music'" class="w-4 h-4"></i>
+              </div>
+              <div class="flex-1 min-w-0 pointer-events-none">
+                <div class="text-[13px] font-semibold text-ink-900" x-text="b.name"></div>
+                <div class="text-[10px] text-ink-500 mt-0.5 truncate" x-text="b.desc"></div>
+              </div>
+              <template x-if="$store.style.bible.bgm_id === b.id">
+                <i data-lucide="check-circle-2" class="w-5 h-5 text-brand-600 shrink-0"></i>
+              </template>
+            </div>
+            <!-- 试听控件 · 仅有 url 的项显示 -->
+            <template x-if="b.url">
+              <audio :src="b.url" controls preload="none"
+                     class="w-full h-8"
+                     @click.stop @play.stop @pause.stop></audio>
+            </template>
+          </div>
+        </template>
+      </div>
+      <div class="mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+        <i data-lucide="info" class="w-3.5 h-3.5 inline mr-1"></i>
+        BGM 文件位于项目根 <code class="text-[10px] bg-white px-1 rounded">bgm/*.mp3</code>，新增 / 删除 mp3 后刷新本页自动同步。
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

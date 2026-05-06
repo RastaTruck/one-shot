@@ -13,6 +13,17 @@ python-multipart>=0.0.9
 pydantic>=2.6.0
 python-dotenv>=1.0.0
 
+# LLM
+openai>=1.40.0                  # DeepSeek/OpenAI 兼容协议
+
+# 媒体处理
+pillow>=10.0.0                  # webp / png 处理（floodfill / 转码）
+edge-tts>=6.1.0                 # 免费 TTS
+httpx>=0.27.0                   # Fish Audio TTS HTTP 客户端
+
+# 素材云存储
+qiniu>=7.13.0                   # 七牛云 OSS
+
 # ============================================================
 # 以下依赖等阶段 E（接真 API）再安装，当前注释掉减轻安装负担
 # ============================================================

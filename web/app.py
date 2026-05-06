@@ -18,8 +18,23 @@ if str(_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ROOT))
 
 from pipeline import state as _state  # noqa: E402
+from pipeline import shot_table as _shot_table  # noqa: E402
+from pipeline import flow as _flow  # noqa: E402
+from pipeline.asset_library import AssetLibrary as _AssetLibrary  # noqa: E402
+from pipeline.agents import material_agent as _material_agent  # noqa: E402
 from pipeline.agents import script_writer as _script_writer  # noqa: E402
+from pipeline.agents import segmenter as _segmenter  # noqa: E402
+from pipeline.agents import shot_table_agent as _shot_table_agent  # noqa: E402
+from pipeline.agents import style_agent as _style_agent  # noqa: E402
 from pipeline.agents import topic_generator as _topic_generator  # noqa: E402
+from pipeline.agents import video_editor_agent as _video_editor  # noqa: E402
+from pipeline.agents import publish_meta_agent as _publish_meta  # noqa: E402
+from pipeline.tools import ark_client as _ark_client  # noqa: E402
+from pipeline.tools import edge_tts_client as _edge_tts  # noqa: E402
+from pipeline.tools import fish_audio_client as _fish_audio  # noqa: E402
+
+# 全局素材库（启动时加载一次；catalog 写改动用 library.save()）
+_ASSET_LIB = _AssetLibrary()
 
 _state.init_db()
 
@@ -29,31 +44,40 @@ TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app = FastAPI(title="一二布布 · AI 视频工作台", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
+# BGM 文件夹 mount —— 让浏览器能直接试听 /bgm/1.mp3
+_BGM_DIR = Path(__file__).resolve().parent.parent / "bgm"
+_BGM_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/bgm", StaticFiles(directory=str(_BGM_DIR)), name="bgm")
+
+
+# 禁缓存 HTML —— 否则 user 浏览器会卡在旧 base.html（旧 CDN 链接 / 旧字段）
+@app.middleware("http")
+async def _no_cache_html(request, call_next):
+    response = await call_next(request)
+    ct = response.headers.get("content-type", "")
+    if "text/html" in ct:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
+# 域内路由（按域拆分逐步从 app.py 迁出 — 灵感库是起点）
+from web.routes.inspiration import router as _inspiration_router  # noqa: E402
+app.include_router(_inspiration_router)
+from web.routes.style_api import router as _style_api_router  # noqa: E402
+app.include_router(_style_api_router)
+
+# /data 暴露项目 data/ 目录（audio / outputs 给浏览器直接读）
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+(_DATA_DIR / "audio").mkdir(exist_ok=True)
+app.mount("/data", StaticFiles(directory=str(_DATA_DIR)), name="data")
+
 
 # ==================== 步骤元数据 ====================
-STEPS = [
-    {"key": "topic",  "label_short": "选题", "icon": "lightbulb"},
-    {"key": "script", "label_short": "文案", "icon": "file-text"},
-    {"key": "shots",  "label_short": "分镜", "icon": "layout-grid"},
-    {"key": "assets", "label_short": "素材", "icon": "image"},
-    {"key": "audio",  "label_short": "配音", "icon": "mic"},
-    {"key": "edit",   "label_short": "剪辑", "icon": "film"},
-]
-STEP_KEYS = [s["key"] for s in STEPS]
-
-
-def step_index_of(key: str) -> int:
-    try:
-        return STEP_KEYS.index(key)
-    except ValueError:
-        return -1
-
-
-def next_step_of(key: str) -> str:
-    i = step_index_of(key)
-    if i < 0 or i >= len(STEP_KEYS) - 1:
-        return "edit"
-    return STEP_KEYS[i + 1]
+# 单一真相源在 pipeline/flow.py。这里不再重复定义 STEPS / 顺序 / 完成判定。
+# 模板渲染时通过 build_ctx 注入 steps_view（已包含 done / blocker / url / current）。
 
 
 # ==================== Mock 项目数据 ====================
@@ -65,8 +89,8 @@ MOCK_HERO_STATS = [
 ]
 
 MOCK_QUICK_ACTIONS = [
-    {"title": "开始新选题", "desc": "输入关键词或粘贴灵感，AI 生成 20 个候选选题",
-     "icon": "lightbulb", "bg": "#FFF8EC", "fg": "#D06E05", "href": "/project/V0001/topic"},
+    {"title": "开始新选题", "desc": "从已收藏的灵感片段（钩子/金句/案例/CTA）里挑选，作为新选题的起点",
+     "icon": "sparkles", "bg": "#FFF8EC", "fg": "#D06E05", "href": "/inspiration"},
     {"title": "逛素材库", "desc": "查看背景 / 立绘 / 元素 / 表情视频四大仓库",
      "icon": "images", "bg": "#EEF4FF", "fg": "#1E40AF", "href": "/library"},
     {"title": "复盘数据", "desc": "从已发布作品的播放完播率里找下一条爆款",
@@ -78,14 +102,14 @@ MOCK_PROJECTS = [
      "hook": "你知道股票跌了也能赚钱吗？", "category": "金融概念",
      "cover_emoji": "📉", "cover_bg": "linear-gradient(135deg, #F48A0C 0%, #D06E05 60%, #2E2C27 100%)",
      "duration": "01:30", "status_label": "分镜中", "status_badge_class": "badge-brand",
-     "step_done": 2, "current_step_icon": "layout-grid",
+     "step_done": 3, "current_step_icon": "layout-grid",
      "current_step_label": "正在分镜 · 已拆 5 个镜头", "updated_ago": "12 分钟前",
      "next_step": "shots"},
     {"video_id": "V0002", "title": "通货膨胀：为什么你的钱越来越不值钱",
      "hook": "十年前一碗面 5 块，现在 20 块。", "category": "宏观经济",
      "cover_emoji": "🪙", "cover_bg": "linear-gradient(135deg, #1E40AF 0%, #1E3A8A 60%, #0D0D0B 100%)",
      "duration": "02:10", "status_label": "素材生产中", "status_badge_class": "badge-blue",
-     "step_done": 3, "current_step_icon": "image",
+     "step_done": 4, "current_step_icon": "image",
      "current_step_label": "正在生图 · 2/6 完成", "updated_ago": "1 小时前",
      "next_step": "assets"},
     {"video_id": "V0003", "title": "复利的力量：爱因斯坦称它为世界第八大奇迹",
@@ -632,58 +656,237 @@ MOCK_LIBRARY = {
 
 
 # ==================== 通用上下文 ====================
-def get_project(video_id: str) -> dict | None:
-    """先取 mock 项目骨架，再用 DB 里最新的 title / topic 覆盖；用户在选题页 pick 后下游全部页面自动跟上。"""
-    proj = next((p for p in MOCK_PROJECTS if p["video_id"] == video_id), None)
-    if proj is None:
-        return None
-    proj = dict(proj)  # 拷一份避免改 mock
+
+import time as _time
+import shutil as _shutil
+
+def _status_for(progress: "_flow.Progress") -> tuple[str, str, str]:
+    """从 progress 派生 (status_label, badge_class, current_step_label)。"""
+    all_done = all(sv.done for sv in progress.steps_view)
+    if all_done:
+        return ("已合成", "badge-green", "成片完成")
+    cur = progress.current
+    cur_short = cur.step.label_short
+    if progress.can_advance and progress.next_step is not None:
+        nxt_short = progress.next_step.label_short
+        return (f"{cur_short}就绪", "badge-brand", f"{cur_short}完成 · 待{nxt_short}")
+    blocker = cur.blocker or f"进行中：{cur_short}"
+    return (f"{cur_short}中", "badge-brand", blocker)
+
+
+def _humanize_ago(ts: float | None) -> str:
+    if not ts:
+        return "—"
+    sec = max(0, _time.time() - ts)
+    if sec < 60: return "刚刚"
+    if sec < 3600: return f"{int(sec/60)} 分钟前"
+    if sec < 86400: return f"{int(sec/3600)} 小时前"
+    return f"{int(sec/86400)} 天前"
+
+
+def _build_project_view(video_id: str) -> dict | None:
+    """从 DB 实体 + flow.compute_progress 构造项目视图字典。不命中返回 None。"""
     db_video = _state.get_video(video_id)
-    if db_video and db_video.title:
-        proj["title"] = db_video.title
-    picked = _state.load_project_topic(video_id)
+    if db_video is None:
+        return None
+    progress = _flow.compute_progress(video_id, _DATA_DIR / "outputs")
+    label, badge, current_label = _status_for(progress)
+    done_count = sum(1 for sv in progress.steps_view if sv.done)
+
+    duration_str = "—"
+    if progress.state.shot_table:
+        total = progress.state.shot_table.get("total_duration_estimated") or 0
+        if total:
+            m, s = int(total // 60), int(total % 60)
+            duration_str = f"{m:02d}:{s:02d}"
+
+    title = db_video.title or video_id
+    picked = progress.state.topic
     if picked and picked.get("title"):
-        proj["title"] = picked["title"]
-        proj["topic_id"] = picked.get("id")
-        proj["topic_score"] = picked.get("score")
-        proj["topic_category"] = picked.get("category")
-    style = _state.load_project_style(video_id)
-    if style:
-        proj["style_preset"] = style
-    return proj
+        title = picked["title"]
+    hook = (picked.get("hook") if picked else None) or (db_video.topic or "")
+    hook = str(hook) if hook is not None else ""
+    category = (picked.get("category") if picked else None) or "新项目"
+    category = str(category) if category is not None else "新项目"
+
+    next_step_key = progress.next_step.key if progress.next_step else progress.current.step.key
+    return {
+        "video_id": video_id,
+        "title": title,
+        "hook": hook[:60],
+        "category": category,
+        "cover_emoji": "📹",
+        "cover_bg": "linear-gradient(135deg, #F48A0C 0%, #D06E05 60%, #2E2C27 100%)",
+        "duration": duration_str,
+        "status_label": label,
+        "status_badge_class": badge,
+        "step_done": done_count,
+        "current_step_icon": progress.current.step.icon,
+        "current_step_label": current_label,
+        "updated_ago": _humanize_ago(db_video.updated_at),
+        "next_step": next_step_key,
+        "from_db": True,
+        "is_demo": False,
+        "topic_id": picked.get("id") if picked else None,
+        "topic_score": picked.get("score") if picked else None,
+        "topic_category": picked.get("category") if picked else None,
+        "_progress": progress,
+    }
+
+
+def get_project(video_id: str) -> dict | None:
+    """优先 DB 视图；如同时有 MOCK 美化字段则借用 cover/category。"""
+    db_view = _build_project_view(video_id)
+    mock_view = next((p for p in MOCK_PROJECTS if p["video_id"] == video_id), None)
+    if db_view:
+        if mock_view:  # 借 MOCK 的 cover_emoji / cover_bg / category
+            for k in ("cover_emoji", "cover_bg"):
+                db_view[k] = mock_view.get(k, db_view[k])
+            if db_view["category"] in ("新项目", ""):
+                db_view["category"] = mock_view.get("category", db_view["category"])
+        style = _state.load_project_style(video_id)
+        if style:
+            db_view["style_preset"] = style
+        return db_view
+    if mock_view:
+        proj = dict(mock_view)
+        proj["from_db"] = False
+        proj["is_demo"] = True
+        return proj
+    return None
+
+
+def _steps_view_for_template(progress: "_flow.Progress | None", video_id: str | None) -> list[dict]:
+    """把 flow.Progress.steps_view 转成 Jinja 友好的 dict 列表。
+
+    progress=None 时（mock 项目 / 无 video_id）退化为静态列表（全 not done）。
+    script step 会被 override 到 /script/full 子页（如果已生成完整文稿）。
+    """
+    overrides: dict[str, str] = {}
+    if video_id and _state.load_script_full(video_id):
+        overrides["script"] = f"/project/{video_id}/script/full"
+
+    if progress is None:
+        return [
+            {
+                "key": s.key, "label": s.label, "label_short": s.label_short, "icon": s.icon,
+                "url": overrides.get(s.key) or (s.url_for(video_id) if video_id else "#"),
+                "done": False, "is_current": False, "blocker": "",
+            }
+            for s in _flow.STEPS
+        ]
+    return [
+        {
+            "key": sv.step.key, "label": sv.step.label, "label_short": sv.step.label_short,
+            "icon": sv.step.icon,
+            "url": overrides.get(sv.step.key) or sv.url,
+            "done": sv.done, "is_current": sv.is_current, "blocker": sv.blocker,
+        }
+        for sv in progress.steps_view
+    ]
 
 
 def build_ctx(request: Request, active_nav: str, video_id: str | None = None, **extra) -> dict[str, Any]:
-    ctx = {
+    """注入：
+    - steps_view: 整体步骤渲染数据（stepper / 侧边栏用）
+    - next_step_url / next_step_label: **当前 active_nav 这一步的下一步**（不是 progress 全局 current 的下一步）
+    - can_advance: 当前页面对应的步骤是否已 done（决定下一步按钮是否可点）
+    - current_blocker: 当前步未完成的原因（disabled 状态下当 tooltip）
+    """
+    ctx: dict[str, Any] = {
         "request": request,
         "active_nav": active_nav,
-        "steps": STEPS,
         "current_video": None,
-        "current_step_index": -1,
+        "progress": None,
+        "steps_view": _steps_view_for_template(None, video_id),
+        "next_step_url": None,
+        "next_step_label": None,
+        "can_advance": False,
+        "current_blocker": "",
     }
     if video_id:
         proj = get_project(video_id)
         if proj:
             ctx["current_video"] = proj
-            ctx["current_step_index"] = proj["step_done"] - 1
+            progress = proj.get("_progress")
+            if progress is not None:
+                ctx["progress"] = progress
+                ctx["steps_view"] = _steps_view_for_template(progress, video_id)
+
+                # 当前页面对应步骤的"下一步"（按流水线顺序）
+                if active_nav in _flow.STEP_KEYS:
+                    cur_idx = _flow.STEP_KEYS.index(active_nav)
+                    sv = progress.steps_view[cur_idx]
+                    ctx["can_advance"] = sv.done
+                    ctx["current_blocker"] = sv.blocker
+                    if cur_idx + 1 < len(_flow.STEPS):
+                        nxt = _flow.STEPS[cur_idx + 1]
+                        ctx["next_step_url"] = nxt.url_for(video_id)
+                        ctx["next_step_label"] = nxt.label_short
     ctx.update(extra)
     return ctx
 
 
 # ==================== 路由 ====================
+def _next_video_id() -> str:
+    """找下一个可用 V_xxxx ID（避开 DB + MOCK 已占用的）。"""
+    used = {v.video_id for v in _state.list_videos()}
+    used |= {p["video_id"] for p in MOCK_PROJECTS}
+    n = 10  # 0001-0009 留给 mock + 既有
+    while f"V{n:04d}" in used:
+        n += 1
+    return f"V{n:04d}"
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
+    # 真实项目（DB 视图，按更新时间倒序）
+    db_views = [get_project(v.video_id) for v in _state.list_videos()]
+    db_views = [v for v in db_views if v]  # 过滤空
+    db_ids = {v["video_id"] for v in db_views}
+    # MOCK demo（仅展示未在 DB 出现的占位项目，标 is_demo）
+    demo_views = [
+        dict(p, is_demo=True, from_db=False)
+        for p in MOCK_PROJECTS if p["video_id"] not in db_ids
+    ]
     return TEMPLATES.TemplateResponse("projects.html", build_ctx(
         request, "projects",
         hero_stats=MOCK_HERO_STATS,
         quick_actions=MOCK_QUICK_ACTIONS,
-        projects=MOCK_PROJECTS,
+        projects=db_views + demo_views,
     ))
 
 
 @app.get("/project/new")
 async def project_new():
-    return RedirectResponse(url="/project/V0001/topic", status_code=303)
+    new_id = _next_video_id()
+    _state.create_video(new_id, title=f"未命名项目 {new_id}", topic=None)
+    return RedirectResponse(url=f"/project/{new_id}/topic", status_code=303)
+
+
+@app.delete("/api/project/{video_id}")
+async def api_project_delete(video_id: str):
+    """删除项目：清 DB 表 + 清 audio/outputs 文件。MOCK 项目不允许删（前端会过滤）。"""
+    if _state.get_video(video_id) is None:
+        raise HTTPException(404, "project not found in DB (mock projects can't be deleted)")
+    tables = ["project_topic", "project_topic_pool", "project_sources",
+              "project_style", "project_style_bible", "project_shot_table",
+              "script_drafts", "script_working", "script_archives",
+              "script_full", "snippet_library", "tasks", "videos"]
+    with _state.get_conn() as conn:
+        for t in tables:
+            try:
+                conn.execute(f"DELETE FROM {t} WHERE video_id = ?", (video_id,))
+            except Exception:
+                pass
+    # 清文件
+    for d in (_DATA_DIR / "audio" / video_id,
+              _DATA_DIR / "outputs" / "_clips" / video_id):
+        _shutil.rmtree(d, ignore_errors=True)
+    mp4 = _DATA_DIR / "outputs" / f"{video_id}.mp4"
+    if mp4.exists():
+        mp4.unlink()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/project/{video_id}", response_class=HTMLResponse)
@@ -890,13 +1093,6 @@ SOURCE_TYPES = [
     {"kind": "prompt",    "icon": "sliders",    "label": "指令",    "desc": "附加 Prompt 约束",  "color": "#6B7280"},
 ]
 
-# 创作模式切换（顶层）
-CREATION_MODES = [
-    {"key": "single",   "label": "单集创作",    "desc": "出一条视频",          "icon": "film",   "episodes": 1},
-    {"key": "mini",     "label": "3 集系列",    "desc": "短系列·探索",         "icon": "layers-2", "episodes": 3},
-    {"key": "series",   "label": "10 集系列",   "desc": "完整系列·课程感",     "icon": "layers-3", "episodes": 10},
-]
-
 # AI Fusion 的"识别与融合"可视化 (阶段 A：题材探索，还未锁风格)
 MOCK_FUSION_INSIGHTS = {
     "recognized_intents": [
@@ -1065,10 +1261,9 @@ MOCK_PROMPT = {
 
 # ==================== ① 选题 ====================
 # phase: explore(阶段A·题材探索)  |  direct(阶段B·风格定向)
-# mode:  single / mini / series
 @app.get("/project/{video_id}/topic", response_class=HTMLResponse)
 async def page_topic(request: Request, video_id: str,
-                     phase: str = "explore", mode: str = "single"):
+                     phase: str = "explore"):
     # 真实数据：从 DB 读出之前保存的 sources / 候选池 / 已选题
     real_sources = _state.load_project_sources(video_id) or DEFAULT_SOURCES.copy()
     real_pool = _state.load_project_topic_pool(video_id) or []
@@ -1090,10 +1285,8 @@ async def page_topic(request: Request, video_id: str,
         source_types=SOURCE_TYPES,
         fusion=MOCK_FUSION_INSIGHTS,
         fused_topics=MOCK_FUSED_TOPICS,
-        # 新增：两阶段 + 创作模式
+        # 选题阶段（A 探索 / B 定向）
         phase=phase,
-        creation_modes=CREATION_MODES,
-        active_mode=mode,
         style_preview=MOCK_STYLE_PREVIEW,
         series_canvas=MOCK_SERIES_CANVAS,
         # 真实持久化数据（覆盖 mock）
@@ -1134,7 +1327,6 @@ async def api_topic_generate(payload: dict):
     video_id = payload.get("video_id")
     keywords = (payload.get("keywords") or "").strip()
     extra = (payload.get("extra") or "").strip()
-    mode = payload.get("mode") or "single"
     n_topics = int(payload.get("n_topics") or 6)
     if not video_id or not keywords:
         raise HTTPException(400, "video_id and keywords required")
@@ -1147,7 +1339,7 @@ async def api_topic_generate(payload: dict):
     full_extra = extra
     if notes:
         full_extra = (extra + "\n参考笔记: " + notes).strip()
-    result = _topic_generator.generate_fused_topics(video_id, keywords, full_extra, mode, n_topics)
+    result = _topic_generator.generate_fused_topics(video_id, keywords, full_extra, n_topics)
     if result.get("topics"):
         _state.save_project_topic_pool(video_id, result["topics"])
     return JSONResponse(result)
@@ -1233,6 +1425,19 @@ async def page_script(request: Request, video_id: str):
     drafts = _state.load_script_drafts(video_id) or []
     working = _state.load_script_working(video_id)
     archives = _state.list_script_archives(video_id)
+    # 完整文稿状态卡：检测 script_full 是否已生成
+    full = _state.load_script_full(video_id)
+    full_summary = None
+    if full:
+        paragraphs = full.get("paragraphs") or []
+        char_total = sum(len((p.get("text") or "")) for p in paragraphs)
+        full_summary = {
+            "duration_sec": full.get("duration_sec"),
+            "paragraphs_count": len(paragraphs),
+            "char_total": char_total,
+            "title": full.get("title") or full.get("framework", {}).get("one_liner", ""),
+            "updated_at": full.get("updated_at"),
+        }
     return TEMPLATES.TemplateResponse("step_script.html", build_ctx(
         request, "script", video_id,
         style_preset=style,
@@ -1240,6 +1445,7 @@ async def page_script(request: Request, video_id: str):
         initial_working=working,
         archives=archives,
         topic_title=_script_topic_for(video_id),
+        full_summary=full_summary,
     ))
 
 
@@ -1360,6 +1566,74 @@ async def api_script_full_refine(payload: dict):
     return JSONResponse(result)
 
 
+# ---------- 断句审核 ----------
+
+@app.post("/api/segments/generate")
+async def api_segments_generate(payload: dict):
+    """LLM 语义切分 full_script.paragraphs → 写回 units 字段。"""
+    video_id = payload.get("video_id")
+    duration_sec = payload.get("duration_sec")
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    result = _segmenter.run(video_id, duration_sec=duration_sec)
+    return JSONResponse(result)
+
+
+@app.post("/api/segments/save")
+async def api_segments_save(payload: dict):
+    """用户在 UI 编辑 units 后落盘，同时把 subtitle_units 同步回分镜表。"""
+    video_id = payload.get("video_id")
+    paragraphs = payload.get("paragraphs")   # list[{id, units, text, ...}]
+    if not video_id or not paragraphs:
+        raise HTTPException(400, "video_id and paragraphs required")
+    ok = _segmenter.persist(video_id, paragraphs)
+
+    # 保存后自动把最新 units → 重新打包 → 更新分镜表 subtitle_units
+    # 不重新生成分镜（表情/背景/元素不变），只刷新字幕切分信息
+    try:
+        _sync_subtitle_units_to_shot_table(video_id, paragraphs)
+    except Exception:
+        pass   # 非致命，失败静默；下次重生成分镜时自然修复
+
+    return JSONResponse({"ok": ok})
+
+
+def _sync_subtitle_units_to_shot_table(video_id: str, paragraphs: list[dict]) -> None:
+    """把 script_full 里保存好的 units 重新打包，写回现有分镜表的 subtitle_units。
+    不触动任何其他字段（表情、背景、元素、audio_path 全部保留）。
+    """
+    table_dict = _state.load_project_shot_table(video_id)
+    if not table_dict:
+        return
+
+    shots = table_dict.get("shots") or []
+    if not shots:
+        return
+
+    # 对每个段落重新打包，得到 (packed_text, [units]) 列表
+    all_packed: list[list[str]] = []   # 每个元素是 [unit1, unit2, ...]
+    for para in paragraphs:
+        para_text = (para.get("text") or "").strip()
+        llm_units = [u.strip() for u in (para.get("units") or []) if str(u).strip()]
+        if llm_units:
+            packed = _shot_table_agent._pack_units_with_tracking(llm_units)
+        elif para_text:
+            sents = _shot_table_agent._split_sentences(para_text)
+            packed = _shot_table_agent._pack_units_with_tracking(sents)
+        else:
+            continue
+        for _, unit_list in packed:
+            all_packed.append(unit_list)
+
+    # 按索引对应写回（打包数量和 shot 数量不一致时只更新能对应的）
+    for i, unit_list in enumerate(all_packed):
+        if i < len(shots):
+            shots[i]["subtitle_units"] = unit_list
+
+    table_dict["shots"] = shots
+    _state.save_project_shot_table(video_id, table_dict)
+
+
 # ---------- 灵感片段库 ----------
 
 @app.post("/api/snippet/save")
@@ -1416,52 +1690,1509 @@ async def page_script_full(request: Request, video_id: str, duration: int = 60):
     ))
 
 
-# ==================== ③ 分镜 ====================
+# ==================== ③ 画风锁定 ====================
+def _ensure_video_row(video_id: str) -> None:
+    if _state.get_video(video_id) is None:
+        picked = _state.load_project_topic(video_id)
+        title = (picked or {}).get("title") or video_id
+        _state.create_video(video_id, title=title, topic=title)
+
+
+def _collect_anchors(bible: dict) -> list[dict]:
+    """从 asset_library 按 bible.style_anchors 取锚点素材。"""
+    out = []
+    for aid in (bible.get("style_anchors") or []):
+        a = _ASSET_LIB.get(aid)
+        if a is not None:
+            out.append({
+                "id": a.id, "file": a.file, "description": a.description,
+                "tags": a.tags, "kind": a.kind,
+            })
+    return out
+
+
+# 配音 / 字幕 预设
+# Edge-TTS（免费）+ Fish Audio 热门中文音色
+_EDGE_VOICE_PRESETS: list[dict] = [
+    {"id": v["id"], "name": v["name"], "desc": v["desc"], "provider": "edge_tts"}
+    for v in _edge_tts.list_voices()
+]
+_FISH_VOICE_PRESETS: list[dict] = _fish_audio.list_voices_sync()   # 启动时拉取，失败静默
+VOICE_PRESETS: list[dict] = _EDGE_VOICE_PRESETS + _FISH_VOICE_PRESETS
+
+SUBTITLE_PRESETS = [
+    {"id": "classic_white", "name": "经典白描", "desc": "白字黑描边 · 通用",
+     "sample": "AaBb",  "bg": "#1C1B18", "color": "#FAFAF7"},
+    {"id": "bold_orange",   "name": "金句大字", "desc": "粗金橙填充 · 冲击",
+     "sample": "AaBb",  "bg": "#F48A0C", "color": "#1C1B18"},
+    {"id": "popup_red",     "name": "综艺弹窗", "desc": "红底白字 · 夸张",
+     "sample": "AaBb",  "bg": "#D93A2C", "color": "#FFFFFF"},
+]
+
+def _scan_bgm_presets() -> list[dict]:
+    """扫 /bgm/ 目录下所有 mp3，第一个永远是"无 BGM"占位。
+    每次画风页加载都重扫，user 增删 mp3 立即生效。"""
+    presets: list[dict] = [
+        {"id": "none", "name": "无 BGM", "desc": "干声不加背景音乐 · 适合严肃科普", "url": ""},
+    ]
+    if _BGM_DIR.exists():
+        for f in sorted(_BGM_DIR.glob("*.mp3")):
+            stem = f.stem  # "1" / "2" 等
+            presets.append({
+                "id": f"bgm_{stem}",
+                "name": f"BGM {stem}",
+                "desc": f"{f.name} · {f.stat().st_size // 1024} KB",
+                "url": f"/bgm/{f.name}",
+                "filename": f.name,
+            })
+    return presets
+
+
+VOICE_ID_MIGRATION = {
+    "female_warm":   "zh-CN-XiaoxiaoNeural",
+    "male_steady":   "zh-CN-YunjianNeural",
+    "neutral_light": "zh-CN-YunxiNeural",
+}
+
+
+def _merge_default_bible(saved_bible: dict | None) -> dict:
+    """旧 bible（第二批之前存的）缺少 identity 字段时，用默认值补齐。"""
+    default = _style_agent.load_style_bible()
+    if saved_bible is None:
+        return default
+    # 补齐缺字段
+    for k in ("ip_library_id", "element_library_ids", "background_source",
+              "bg_id", "bg_title_overlay", "bg_title_text", "bg_title_url",
+              "voice_id", "subtitle_style", "bgm_id", "test_intent",
+              "visual_style_tags", "palette", "composition",
+              "negative_prompt_global", "aspect_ratio", "size"):
+        saved_bible.setdefault(k, default.get(k))
+    # 旧 voice_id（批 3a 的占位）迁移到 Edge-TTS id
+    if saved_bible.get("voice_id") in VOICE_ID_MIGRATION:
+        saved_bible["voice_id"] = VOICE_ID_MIGRATION[saved_bible["voice_id"]]
+    if "confirmed" not in saved_bible or not isinstance(saved_bible["confirmed"], dict):
+        saved_bible["confirmed"] = default.get("confirmed", {}).copy()
+    for key in ("ip_library", "element_library", "background", "voice_subtitle", "bgm"):
+        saved_bible["confirmed"].setdefault(key, False)
+    return saved_bible
+
+
+@app.get("/project/{video_id}/style", response_class=HTMLResponse)
+async def page_style(request: Request, video_id: str):
+    saved = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible(saved["bible"] if saved else None)
+
+    anchors = _collect_anchors(bible)
+    # 从 saved.images 里拿最近一次 L3 测试图（第一张）
+    test_image = None
+    if saved and saved.get("images"):
+        first = saved["images"][0]
+        test_image = {
+            "ok": first.get("ok", False),
+            "url": first.get("url"),
+            "intent": first.get("intent", ""),
+            "prompt": first.get("prompt", ""),
+            "cost": first.get("cost", 0.0),
+            "provider": first.get("provider", ""),
+            "error": first.get("error"),
+        }
+    return TEMPLATES.TemplateResponse("step_style.html", build_ctx(
+        request, "style", video_id,
+        bible=bible,
+        anchors=anchors,
+        test_image=test_image,
+        ip_libraries=_ASSET_LIB.list_ip_libraries(),
+        element_libraries=_ASSET_LIB.list_element_libraries(),
+        voice_presets=VOICE_PRESETS,
+        subtitle_presets=SUBTITLE_PRESETS,
+        bgm_presets=_scan_bgm_presets(),
+    ))
+
+
+@app.post("/api/style/bible/save")
+async def api_style_bible_save(payload: dict):
+    """保存 bible（visual_style_tags / test_intent 编辑后落盘到 project_style_bible）。"""
+    video_id = payload.get("video_id")
+    bible = payload.get("bible")
+    if not video_id or not bible:
+        raise HTTPException(400, "video_id and bible required")
+    _ensure_video_row(video_id)
+    prev = _state.load_project_style_bible(video_id) or {"images": [], "total_cost_cny": 0.0, "locked": False}
+    _state.save_project_style_bible(
+        video_id, bible, prev.get("images", []),
+        total_cost_cny=prev.get("total_cost_cny", 0.0),
+        locked=prev.get("locked", False),
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/style/test_element")
+async def api_style_test_element(payload: dict):
+    """生一张 L3 测试图，检验画风约束是否到位。"""
+    video_id = payload.get("video_id")
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    _ensure_video_row(video_id)
+    bible = payload.get("bible") or _style_agent.load_style_bible()
+    override_intent = (payload.get("intent") or "").strip() or None
+    result = _style_agent.generate_test_element(
+        video_id, bible=bible, override_intent=override_intent, library=_ASSET_LIB,
+    )
+    # 把 test image 写进 project_style_bible.images[0]，方便下次加载
+    prev = _state.load_project_style_bible(video_id) or {}
+    img_record = {
+        "slot": "test",
+        "intent": result["intent"],
+        "prompt": result["prompt"],
+        "url": result.get("url"),
+        "cost": result["cost"],
+        "provider": result["provider"],
+        "ok": result["ok"],
+        "error": result.get("error"),
+    }
+    _state.save_project_style_bible(
+        video_id, bible, [img_record],
+        total_cost_cny=result["cost"],
+        locked=prev.get("locked", False),
+    )
+    return JSONResponse(result)
+
+
+@app.post("/api/style/bible/lock")
+async def api_style_bible_lock(payload: dict):
+    video_id = payload.get("video_id")
+    locked = bool(payload.get("locked", True))
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    ok = _state.set_project_style_bible_locked(video_id, locked)
+    if not ok:
+        raise HTTPException(404, "style bible not found; test first")
+    return JSONResponse({"ok": True, "locked": locked})
+
+
+# ==================== ④ 分镜 ====================
+def _slot_to_view(slot: _shot_table.BeatSlot) -> dict:
+    a = _ASSET_LIB.get(slot.asset_id) if slot.asset_id and not slot.asset_id.startswith("MISSING:") else None
+    raw_file = (a.file if a else None) or slot.image_url
+    return {
+        "asset_id": slot.asset_id,
+        "asset_kind": slot.asset_kind,
+        "file": _absolute_asset_url(raw_file) if raw_file else None,
+        "description": (a.description if a else None) or "",
+        "character": (a.meta.get("character") if a else None) or "",
+        "missing": slot.asset_id.startswith("MISSING:") if slot.asset_id else False,
+        "image_url": slot.image_url,
+    }
+
+
+def _shot_to_view(s: _shot_table.Shot, *, bible: dict | None = None) -> dict:
+    """Shot 序列化为前端视图字典（含缩略 URL + beats 解析）。
+
+    若 bible 传入且 bg_title_url 存在 + shot.background_id 等于 bible.bg_id，
+    背景缩略用"已 P 标题"的版本（与最终视频渲染保持一致）。
+    """
+    bg_a = _ASSET_LIB.get(s.background_id) if s.background_id else None
+    expr_a = _ASSET_LIB.get(s.expression_id) if s.expression_id else None
+    bg_url = bg_a.file if bg_a else None
+    if bible and (bible.get("bg_title_url") or "").strip() and \
+       s.background_id and s.background_id == (bible.get("bg_id") or "").strip():
+        bg_url = bible["bg_title_url"]
+    # 自动 ensure beats（旧 shot 没 beats 字段时兜底成 1 center beat）
+    s = _shot_table.ensure_beats(s)
+    beats_view = [{
+        "duration_ratio": b.duration_ratio,
+        "layout": b.layout,
+        "left": _slot_to_view(b.left),
+        "right": _slot_to_view(b.right),
+    } for b in s.beats]
+    return {
+        "shot_id": s.shot_id,
+        "section": s.section,
+        "text": s.text,
+        "estimated_duration": s.estimated_duration,
+        "scene_tags": list(s.scene_tags),
+        # 背景（整 shot 共用，画风锁定）
+        "background_id": s.background_id,
+        "background_file": bg_url,
+        "background_desc": bg_a.description if bg_a else None,
+        # 双 beat 视觉（新主路径）
+        "beats": beats_view,
+        # 兼容字段（旧 picker / 老 UI 引用，可逐步删）
+        "expression_id": s.expression_id,
+        "expression_file": expr_a.file if expr_a else None,
+        "expression_desc": expr_a.description if expr_a else None,
+        "expression_character": expr_a.meta.get("character") if expr_a else None,
+        "visual_form": getattr(s, "visual_form", "stock"),
+        "insets_count": len(s.element_insets),
+        "has_missing": any(x.id.startswith("MISSING:") for x in s.element_insets),
+        "has_image": any(bool(x.image_url) for x in s.element_insets),
+        "has_video": any(bool(x.video_url) for x in s.element_insets),
+    }
+
+
+def _backfill_default_bg(video_id: str, table: _shot_table.ShotTable, bible: dict) -> None:
+    """老 shot table 留下的 BG_OFFICE_01 / BG_HOME_01 等乱跳值 → 兜底回写为
+    bible.bg_id。仅当 shot.background_id 不在当前素材库或为空时才改；用户
+    手动切到合法的另一张 bg 不会被覆盖。"""
+    locked = (bible.get("bg_id") or "").strip()
+    if not locked:
+        return
+    valid_ids = {a.id for a in _ASSET_LIB.all("backgrounds")}
+    changed = False
+    for s in table.shots:
+        bid = (s.background_id or "").strip()
+        if not bid or bid not in valid_ids:
+            s.background_id = locked
+            changed = True
+    if changed:
+        _state.save_project_shot_table(video_id, table.to_dict())
+
+
 @app.get("/project/{video_id}/shots", response_class=HTMLResponse)
 async def page_shots(request: Request, video_id: str):
+    raw = _state.load_project_shot_table(video_id)
+    table = _shot_table.ShotTable.from_dict(raw) if raw else None
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    if table is not None:
+        _backfill_default_bg(video_id, table, bible)
+    full_script = _state.load_script_full(video_id)
+    has_full_script = bool(full_script)
+
+    # Stale 检测：分镜的 source_full_id 与当前最新 full_script.full_id 比对
+    is_stale = False
+    stale_reason = ""
+    if table and full_script:
+        current_full_id = full_script.get("full_id")
+        bound_full_id = getattr(table, "source_full_id", None)
+        if current_full_id is not None:
+            if bound_full_id is None:
+                is_stale = True
+                stale_reason = "分镜表创建时未绑定文案版本（建议重新生成以同步）"
+            elif bound_full_id != current_full_id:
+                is_stale = True
+                stale_reason = f"文案已更新（当前 #{current_full_id}，分镜基于旧版 #{bound_full_id}）"
+
+    shots_view = [_shot_to_view(s, bible=bible) for s in (table.shots if table else [])]
     return TEMPLATES.TemplateResponse("step_shots.html", build_ctx(
         request, "shots", video_id,
-        shots=MOCK_SHOT_TABLE,
-        asset_config=MOCK_ASSET_CONFIG,
-        ip_options=MOCK_IP_OPTIONS,
-        element_libs=MOCK_ELEMENT_LIBS,
+        shots_view=shots_view,
+        has_shot_table=table is not None,
+        has_full_script=has_full_script,
+        total_duration=(table.total_duration_estimated if table else 0.0),
+        scene_tags_closed=sorted(list(_shot_table.SCENE_TAGS)),
+        is_stale=is_stale,
+        stale_reason=stale_reason,
     ))
 
 
-# ==================== ④ 素材 ====================
+@app.post("/api/shots/generate")
+async def api_shots_generate(payload: dict):
+    """从 full_script 生成 shot_table。"""
+    video_id = payload.get("video_id")
+    duration_sec = payload.get("duration_sec")  # 可选
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    _ensure_video_row(video_id)
+    full = _state.load_script_full(video_id, duration_sec=duration_sec)
+    if not full:
+        raise HTTPException(400, "找不到 full_script，请先到文案页生成完整文稿")
+
+    proj = get_project(video_id) or {}
+    title = proj.get("title") or video_id
+    topic = (_state.load_project_topic(video_id) or {}).get("title") or title
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+
+    table = _shot_table_agent.generate_shot_table(
+        video_id=video_id, title=title, topic=topic,
+        full_script=full, bible=bible, library=_ASSET_LIB,
+    )
+    _state.save_project_shot_table(video_id, table.to_dict())
+    return JSONResponse({
+        "ok": True,
+        "shots": [_shot_to_view(s, bible=bible) for s in table.shots],
+        "total_duration": table.total_duration_estimated,
+    })
+
+
+@app.post("/api/shots/update")
+async def api_shots_update(payload: dict):
+    """局部更新一条 shot（text / scene_tags / visual_form / estimated_duration）."""
+    video_id = payload.get("video_id")
+    shot_id = payload.get("shot_id")
+    updates = payload.get("updates") or {}
+    if not video_id or not shot_id:
+        raise HTTPException(400, "video_id and shot_id required")
+    raw = _state.load_project_shot_table(video_id)
+    if not raw:
+        raise HTTPException(404, "shot_table 不存在")
+    table = _shot_table.ShotTable.from_dict(raw)
+    target = next((s for s in table.shots if s.shot_id == shot_id), None)
+    if target is None:
+        raise HTTPException(404, f"shot {shot_id} not found")
+
+    if "text" in updates:
+        target.text = str(updates["text"]).strip()
+    if "estimated_duration" in updates:
+        target.estimated_duration = float(updates["estimated_duration"])
+    if "scene_tags" in updates:
+        tags = [t for t in (updates["scene_tags"] or []) if t in _shot_table.SCENE_TAGS]
+        target.scene_tags = tags[:3]
+    if "visual_form" in updates:
+        _shot_table_agent.apply_visual_form(target, updates["visual_form"])
+    if "expression_id" in updates:
+        new_id = (updates["expression_id"] or "").strip()
+        # 校验存在
+        if new_id and _ASSET_LIB.get(new_id) is None:
+            raise HTTPException(400, f"expression {new_id} not in library")
+        target.expression_id = new_id
+    if "background_id" in updates:
+        new_id = (updates["background_id"] or "").strip()
+        if new_id and _ASSET_LIB.get(new_id) is None:
+            raise HTTPException(400, f"background {new_id} not in library")
+        target.background_id = new_id
+
+    # ---- 双 beat 更新 ----
+    # updates 形如：{"beat_slot": {"beat_index": 0, "side": "left"|"right",
+    #                              "asset_id": "EXPR_xxx" | "EL_xxx" | "" }}
+    # asset_kind 由 asset_library 自动推断（expression / element）
+    if "beat_slot" in updates:
+        bs = updates["beat_slot"] or {}
+        bi = int(bs.get("beat_index", 0))
+        side = bs.get("side") or "left"
+        new_aid = (bs.get("asset_id") or "").strip()
+        target = _shot_table.ensure_beats(target)
+        if not (0 <= bi < len(target.beats)):
+            raise HTTPException(400, f"beat_index {bi} out of range")
+        if side not in ("left", "right"):
+            raise HTTPException(400, "side must be 'left' or 'right'")
+        # 推断 kind（从 asset 在哪个集合里）
+        kind_inferred = ""
+        if new_aid:
+            a = _ASSET_LIB.get(new_aid)
+            if a is None:
+                raise HTTPException(400, f"asset {new_aid} not in library")
+            # 确定 kind（粗判定：表情 ID 前缀 EXPR_，元素 EL_，BG_）
+            if new_aid.startswith("EXPR_") or new_aid.startswith("EXP_"):
+                kind_inferred = "expression"
+            elif new_aid.startswith("EL_") or new_aid.startswith("ELE_"):
+                kind_inferred = "element"
+        new_slot = _shot_table.BeatSlot(asset_id=new_aid, asset_kind=kind_inferred)
+        if side == "left":
+            target.beats[bi].left = new_slot
+        else:
+            target.beats[bi].right = new_slot
+        # 自动调 layout：双槽都有 → left_right；只有一个 → center
+        b = target.beats[bi]
+        b.layout = "left_right" if (b.left.asset_id and b.right.asset_id) else "center"
+
+    if "beat_layout" in updates:
+        # {"beat_layout": {"beat_index": 0, "layout": "center"|"left_right"}}
+        bl = updates["beat_layout"] or {}
+        bi = int(bl.get("beat_index", 0))
+        layout = bl.get("layout")
+        if layout not in ("left_right", "center"):
+            raise HTTPException(400, "layout must be 'left_right' or 'center'")
+        target = _shot_table.ensure_beats(target)
+        if 0 <= bi < len(target.beats):
+            target.beats[bi].layout = layout
+
+    table.total_duration_estimated = round(
+        sum(s.estimated_duration for s in table.shots), 1
+    )
+    _state.save_project_shot_table(video_id, table.to_dict())
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    return JSONResponse({
+        "ok": True,
+        "shot": _shot_to_view(target, bible=bible),
+        "total_duration": table.total_duration_estimated,
+    })
+
+
+@app.get("/api/shots/picker_options")
+async def api_shots_picker_options(video_id: str, shot_id: str, kind: str):
+    """返回当段可选素材候选（带缩略）。
+
+    kind:
+      - "expressions" → 当前 IP 库下，按 shot.scene_tags 排序的表情候选 + 全量 fallback
+      - "backgrounds" → 全量背景
+    """
+    if kind not in ("expressions", "backgrounds", "elements"):
+        raise HTTPException(400, "kind must be 'expressions' / 'backgrounds' / 'elements'")
+    raw = _state.load_project_shot_table(video_id)
+    if not raw:
+        raise HTTPException(404, "shot_table not found")
+    table = _shot_table.ShotTable.from_dict(raw)
+    target = next((s for s in table.shots if s.shot_id == shot_id), None)
+    if target is None:
+        raise HTTPException(404, "shot not found")
+
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    raw_ip_id = (bible.get("ip_library_id") or "").strip()
+    ip_libs = (_ASSET_LIB.meta or {}).get("ip_libraries", {})
+    ip_meta = ip_libs.get(raw_ip_id)
+    ip_char = (ip_meta or {}).get("character_name") or raw_ip_id
+
+    # scene_tags → element categories 映射（用于 elements 自动排序）
+    _SCENE_TAG_TO_ELEM_CATS: dict[str, list[str]] = {
+        "震惊":  ["散户心理", "紧张"],
+        "兴奋":  ["行情上涨", "财富盈利", "积极"],
+        "担忧":  ["风险陷阱", "消极", "紧张"],
+        "崩溃":  ["爆仓清盘", "财富亏损", "消极"],
+        "期待":  ["做多入场", "行情上涨", "积极"],
+        "调侃":  ["调侃", "散户心理"],
+        "困惑":  ["散户心理", "紧张", "数据图表"],
+        "沉思":  ["数据图表", "央行政策", "散户心理"],
+        "得意":  ["财富盈利", "行情上涨", "积极"],
+        "平静":  ["数据图表", "积极", "存款储蓄"],
+    }
+
+    if kind == "expressions":
+        # 1. 优先：按 scene_tags 命中（character 限定）
+        ranked = _ASSET_LIB.search_expressions(target.scene_tags, character=ip_char)
+        ranked_ids = {a.id for a in ranked}
+        # 2. 补充：character 名下其他表情
+        rest = [a for a in _ASSET_LIB.all("expressions")
+                if a.meta.get("character") == ip_char and a.id not in ranked_ids]
+        items = ranked + rest
+        # 3. 其他 IP 兜底
+        other_chars = [a for a in _ASSET_LIB.all("expressions")
+                       if a.meta.get("character") != ip_char]
+        # 收集所有出现的 scene_tags，用于前端筛选栏
+        all_expr_tags: list[str] = []
+        seen_tags: set[str] = set()
+        for a in items + other_chars[:30]:
+            for t in (a.meta.get("scene_tags") or []):
+                if t not in seen_tags:
+                    all_expr_tags.append(t)
+                    seen_tags.add(t)
+        return JSONResponse({
+            "ok": True,
+            "current": target.expression_id,
+            "shot_tags": list(target.scene_tags),      # 当前段的情绪标签，前端预选用
+            "ranked_count": len(ranked),
+            "filter_tags": all_expr_tags,              # 可用筛选标签列表
+            "items": [{
+                "id": a.id, "file": _absolute_asset_url(a.file), "description": a.description,
+                "scene_tags": a.meta.get("scene_tags", []),
+                "character": a.meta.get("character", ""),
+                "intensity": a.meta.get("intensity"),
+                "matched": a.id in ranked_ids,
+            } for a in items + other_chars[:30]],
+        })
+    elif kind == "backgrounds":
+        bgs = _ASSET_LIB.all("backgrounds")
+        return JSONResponse({
+            "ok": True,
+            "current": target.background_id,
+            "items": [{
+                "id": a.id, "file": _absolute_asset_url(a.file), "description": a.description,
+                "tags": a.tags,
+            } for a in bgs],
+        })
+    else:  # elements — 按 scene_tags → categories 映射自动排序
+        # 推导本段应优先的 element categories
+        want_cats: set[str] = set()
+        for st in (target.scene_tags or []):
+            for c in _SCENE_TAG_TO_ELEM_CATS.get(st, []):
+                want_cats.add(c)
+        els = _ASSET_LIB.all("elements")
+        # 排序：命中分类的排前面
+        def _el_score(a) -> int:
+            cats = set(a.meta.get("categories") or [])
+            return len(cats & want_cats)
+        ranked_els = sorted(els, key=_el_score, reverse=True)
+        ranked_el_ids = {a.id for a in ranked_els if _el_score(a) > 0}
+        # 收集所有分类供筛选栏
+        all_cats: list[str] = []
+        seen_cats: set[str] = set()
+        for a in ranked_els:
+            for c in (a.meta.get("categories") or []):
+                if c not in seen_cats:
+                    all_cats.append(c)
+                    seen_cats.add(c)
+        # want_cats 是由 scene_tags 映射出的「推荐元素分类」，直接作为 shot_tags
+        # 让前端筛选栏高亮并自动预选对应分类（而非原始情绪标签）
+        # 按 want_cats 中出现顺序排在 filter_tags 最前面，方便自动预选第一个
+        ordered_cats: list[str] = []
+        for st in (target.scene_tags or []):
+            for c in _SCENE_TAG_TO_ELEM_CATS.get(st, []):
+                if c not in ordered_cats:
+                    ordered_cats.append(c)
+        # filter_tags: 推荐分类排前，其余分类随后
+        priority = set(ordered_cats)
+        rest_cats = [c for c in all_cats if c not in priority]
+        final_filter_tags = ordered_cats + rest_cats
+
+        return JSONResponse({
+            "ok": True,
+            "current": "",
+            "shot_tags": ordered_cats,            # 映射后的推荐元素分类（供前端高亮+自动预选）
+            "ranked_count": len(ranked_el_ids),
+            "filter_tags": final_filter_tags,     # 推荐分类排最前
+            "items": [{
+                "id": a.id, "file": _absolute_asset_url(a.file),
+                "description": a.description,
+                "categories": a.meta.get("categories", []),
+                "matched": a.id in ranked_el_ids,
+            } for a in ranked_els],
+        })
+
+
+def _absolute_asset_url(file_path: str) -> str:
+    """规整 catalog 里 file 字段成浏览器可加载的 URL：
+    - 已是绝对 URL（http/https）→ 直通（七牛云 / OSS 场景）
+    - 已是 / 开头 → 直通（站内绝对路径）
+    - 是相对路径（'data/assets/...'）→ 加 / 前缀，让浏览器在任何上下文页都能解析到 /data/...
+    """
+    if not file_path:
+        return ""
+    if file_path.startswith(("http://", "https://", "/")):
+        return file_path
+    return "/" + file_path
+
+
+@app.post("/api/shots/reset")
+async def api_shots_reset(payload: dict):
+    """清空 shot_table（下游 L3 生图也作废）."""
+    video_id = payload.get("video_id")
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    with _state.get_conn() as conn:
+        conn.execute("DELETE FROM project_shot_table WHERE video_id = ?", (video_id,))
+    return JSONResponse({"ok": True})
+
+
+# ==================== ⑤ 素材（分镜段 × 图层矩阵） ====================
+def _seed_demo_shot_table(video_id: str) -> _shot_table.ShotTable | None:
+    """为演示项目（V0001）建一张真实 ShotTable，混合库存命中 + MISSING AI 兜底。"""
+    if video_id != "V0001":
+        return None
+    proj = get_project(video_id)
+    title = (proj or {}).get("title") or video_id
+    t = _shot_table.create_empty(video_id, title=title)
+
+    specs = [
+        dict(section="钩子", text="股票跌了，居然也能赚钱？",
+             dur=5.0, tags=["震惊"], bg="BG_OFFICE_01", expr="EXPR_SHOCK_01",
+             insets=[("EL_ARROW_DOWN_MBE", "polaroid", "top_right")]),
+        dict(section="共鸣", text="你可能听过做空，但这次我们拆开看",
+             dur=6.0, tags=["困惑"], bg="BG_HOME_01", expr="EXPR_THINK_01",
+             insets=[]),
+        dict(section="知识点", text="做空 = 先借股票卖出，等跌了再买回来还回去",
+             dur=8.0, tags=["沉思"], bg="BG_OFFICE_01", expr="EXPR_THINK_01",
+             insets=[
+                 ("EL_ARROW_DOWN_MBE", "polaroid", "top_right"),
+                 ("MISSING: 一块复古手写价格牌，3000 划掉改成 2000，木质边框", "sticky_note", "bottom_left"),
+             ]),
+        dict(section="知识点", text="3000 借一股，跌到 2000 买回，净赚 1000",
+             dur=9.0, tags=["兴奋"], bg="BG_HOME_01", expr="EXPR_MONEY_EYES_01",
+             insets=[
+                 ("EL_MONEY_BAG_MBE", "polaroid", "bottom_left"),
+                 ("MISSING: 一张股票 K 线图急剧下跌，大红色箭头贯穿", "tv_screen", "top_right"),
+             ]),
+        dict(section="金句", text="看懂做空的人，才不怕熊市",
+             dur=4.0, tags=["得意"], bg="BG_HOME_01", expr="EXPR_MONEY_EYES_01",
+             insets=[("EL_ARROW_UP_MBE", "circle_window", "top_right")]),
+        dict(section="CTA", text="点关注，下期讲融券成本",
+             dur=3.0, tags=["平静"], bg="BG_HOME_01", expr="EXPR_THINK_01",
+             insets=[]),
+    ]
+    for i, s in enumerate(specs):
+        insets = [
+            _shot_table.ElementInset(id=iid, frame_style=fs, position=pos, enter_offset=0.3)
+            for (iid, fs, pos) in s["insets"]
+        ]
+        t.shots.append(_shot_table.Shot(
+            shot_id=f"S{i+1:02d}",
+            section=s["section"],
+            text=s["text"],
+            estimated_duration=s["dur"],
+            scene_tags=s["tags"],
+            background_id=s["bg"],
+            expression_id=s["expr"],
+            element_insets=insets,
+        ))
+    t.total_duration_estimated = sum(s["dur"] for s in specs)
+    return t
+
+
+def _load_or_empty_shot_table(video_id: str) -> _shot_table.ShotTable:
+    data = _state.load_project_shot_table(video_id)
+    if data:
+        return _shot_table.ShotTable.from_dict(data)
+    # 首次访问：为演示项目播种一张
+    seeded = _seed_demo_shot_table(video_id)
+    if seeded is not None:
+        _state.save_project_shot_table(video_id, seeded.to_dict())
+        return seeded
+    proj = get_project(video_id)
+    title = (proj or {}).get("title") or video_id
+    return _shot_table.create_empty(video_id, title=title)
+
+
+def _save_shot_table(table: _shot_table.ShotTable) -> None:
+    _state.save_project_shot_table(table.video_id, table.to_dict())
+
+
 @app.get("/project/{video_id}/assets", response_class=HTMLResponse)
 async def page_assets(request: Request, video_id: str):
+    table = _load_or_empty_shot_table(video_id)
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    confirmed_all = bool(bible.get("confirmed")) and all(
+        bible["confirmed"].get(k) for k in
+        ("ip_library", "element_library", "background", "voice_subtitle")
+    )
+    queue = _material_agent.build_task_queue(table, _ASSET_LIB, bible=bible)
     return TEMPLATES.TemplateResponse("step_assets.html", build_ctx(
         request, "assets", video_id,
-        assets=MOCK_ASSETS,
+        queue=queue,
+        bible=bible,
+        bible_confirmed=confirmed_all,
+        voice_presets=VOICE_PRESETS,
+        subtitle_presets=SUBTITLE_PRESETS,
     ))
 
 
-# ==================== ⑤ 配音字幕 ====================
-@app.get("/project/{video_id}/audio", response_class=HTMLResponse)
-async def page_audio(request: Request, video_id: str):
-    return TEMPLATES.TemplateResponse("step_audio.html", build_ctx(
-        request, "audio", video_id,
-        subtitles=MOCK_SUBTITLES,
-        audio_duration=90.2,
-    ))
+@app.get("/api/assets/queue")
+async def api_assets_queue(video_id: str):
+    table = _load_or_empty_shot_table(video_id)
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    return JSONResponse(_material_agent.build_task_queue(table, _ASSET_LIB, bible=bible))
+
+
+def _resolve_voice(bible_voice_id: str | None) -> tuple[str, str]:
+    """按 bible 的 voice_id 解析真实 TTS 音色，返回 (voice_id, provider)。
+    优先级：Edge-TTS → Fish Audio → 兜底晓晓。"""
+    if bible_voice_id:
+        if _edge_tts.voice_exists(bible_voice_id):
+            return bible_voice_id, "edge_tts"
+        if _fish_audio.voice_exists(bible_voice_id, _FISH_VOICE_PRESETS):
+            return bible_voice_id, "fish_audio"
+    return "zh-CN-XiaoxiaoNeural", "edge_tts"
+
+
+def _audio_output_path(video_id: str, shot_id: str) -> Path:
+    dir_ = _DATA_DIR / "audio" / video_id
+    dir_.mkdir(parents=True, exist_ok=True)
+    return dir_ / f"{shot_id}.mp3"
+
+
+def _audio_url_for(video_id: str, shot_id: str) -> str:
+    return f"/data/audio/{video_id}/{shot_id}.mp3"
+
+
+async def _synthesize_one_shot(table, shot, bible) -> dict:
+    """合成一个 shot 的配音 mp3，成功返回 {ok, audio_url, path, bytes, voice, source}."""
+    voice, provider = _resolve_voice((bible or {}).get("voice_id"))
+    out = _audio_output_path(table.video_id, shot.shot_id)
+    if provider == "fish_audio":
+        r = await _fish_audio.synthesize_async(shot.text, voice, out)
+    else:
+        r = await _edge_tts.synthesize_async(shot.text, voice, out)
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error"), "shot_id": shot.shot_id}
+    shot.audio_clip_path = str(out.relative_to(_DATA_DIR.parent))
+    return {
+        "ok": True, "shot_id": shot.shot_id,
+        "audio_url": _audio_url_for(table.video_id, shot.shot_id),
+        "bytes": r.get("bytes"), "voice": voice, "source": provider,
+    }
+
+
+@app.post("/api/assets/audio/generate")
+async def api_assets_audio_generate(payload: dict):
+    """真调 Edge-TTS 合成单段配音 mp3 → data/audio/{video_id}/{shot_id}.mp3。"""
+    video_id = payload.get("video_id")
+    shot_id = payload.get("shot_id")
+    if not video_id or not shot_id:
+        raise HTTPException(400, "video_id and shot_id required")
+    table = _load_or_empty_shot_table(video_id)
+    target = next((s for s in table.shots if s.shot_id == shot_id), None)
+    if target is None:
+        raise HTTPException(404, f"shot {shot_id} not found")
+
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    res = await _synthesize_one_shot(table, target, bible)
+    if not res.get("ok"):
+        return JSONResponse({"ok": False, "error": res.get("error"), "shot_id": shot_id},
+                             status_code=200)
+    _save_shot_table(table)
+    return JSONResponse({
+        "ok": True,
+        "shot_id": shot_id,
+        "audio_url": res["audio_url"],
+        "duration": target.estimated_duration,
+        "voice": res["voice"],
+        "bytes": res["bytes"],
+        "source": res.get("source", "edge_tts"),
+    })
+
+
+@app.post("/api/assets/audio/generate_all")
+async def api_assets_audio_generate_all(payload: dict):
+    """批量合成所有段配音（跳过已有）。"""
+    video_id = payload.get("video_id")
+    force = bool(payload.get("force"))
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    table = _load_or_empty_shot_table(video_id)
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    results = []
+    for s in table.shots:
+        if s.audio_clip_path and not force:
+            results.append({"ok": True, "shot_id": s.shot_id, "skipped": True,
+                            "audio_url": _audio_url_for(video_id, s.shot_id)})
+            continue
+        res = await _synthesize_one_shot(table, s, bible)
+        results.append(res)
+    _save_shot_table(table)
+    ok_count = sum(1 for r in results if r.get("ok"))
+    return JSONResponse({
+        "ok": ok_count == len(results),
+        "total": len(results),
+        "success": ok_count,
+        "results": results,
+    })
+
+
+@app.post("/api/tts/preview")
+async def api_tts_preview(payload: dict):
+    """合成一小段试听 mp3，结果缓存到 data/audio/preview/，重复请求直接返回缓存。"""
+    voice_id  = (payload.get("voice_id") or "").strip()
+    provider  = (payload.get("provider") or "edge_tts").strip()
+    if not voice_id:
+        raise HTTPException(400, "voice_id required")
+
+    # 试听文本（短、能体现声线特色）
+    PREVIEW_TEXT = "大家好，这是我的声音试听样本，希望你喜欢这个声线。"
+
+    preview_dir = _DATA_DIR / "audio" / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    # voice_id 可能含特殊字符，安全化成文件名
+    safe_id = "".join(c if c.isalnum() or c in "-_" else "_" for c in voice_id)
+    out = preview_dir / f"{safe_id}.mp3"
+
+    # 有缓存直接返回
+    if out.exists() and out.stat().st_size > 0:
+        return JSONResponse({"ok": True, "url": f"/data/audio/preview/{safe_id}.mp3", "cached": True})
+
+    # 合成
+    if provider == "fish_audio":
+        r = await _fish_audio.synthesize_async(PREVIEW_TEXT, voice_id, out)
+    else:
+        r = await _edge_tts.synthesize_async(PREVIEW_TEXT, voice_id, out)
+
+    if not r.get("ok"):
+        return JSONResponse({"ok": False, "error": r.get("error")}, status_code=200)
+    return JSONResponse({"ok": True, "url": f"/data/audio/preview/{safe_id}.mp3", "cached": False})
+
+
+@app.post("/api/assets/l3/generate")
+async def api_assets_l3_generate(payload: dict):
+    video_id = payload.get("video_id")
+    shot_id = payload.get("shot_id")
+    inset_index = payload.get("inset_index")
+    intent = (payload.get("intent") or "").strip()
+    if not video_id or not shot_id or inset_index is None or not intent:
+        raise HTTPException(400, "video_id, shot_id, inset_index, intent required")
+    _ensure_video_row(video_id)
+
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = (saved_bible or {}).get("bible") or _style_agent.load_style_bible()
+    prompt = _style_agent.compose_image_prompt(intent, bible, library=_ASSET_LIB)
+
+    task_id = _state.start_task(
+        video_id, agent="material_l3_image", shot_id=shot_id,
+        input_data={"intent": intent, "inset_index": inset_index},
+    )
+    r = _ark_client.generate_image(prompt, size=bible.get("size", "2K"))
+    _state.finish_task(
+        task_id, success=r["ok"],
+        output={"url": r.get("url"), "provider": r["provider"]},
+        cost_cny=r["cost"],
+        error=(r.get("error") or "")[:500] if not r["ok"] else None,
+    )
+
+    # 回写 shot_table：把生成产物挂到 ElementInset 的 image_url / image_prompt 字段
+    # id 保持为 "MISSING: 描述" 不动（描述本身是下次重生的种子意图）
+    if r["ok"] and r.get("url"):
+        table = _load_or_empty_shot_table(video_id)
+        for s in table.shots:
+            if s.shot_id == shot_id and 0 <= int(inset_index) < len(s.element_insets):
+                ins = s.element_insets[int(inset_index)]
+                ins.image_url = r["url"]
+                ins.image_prompt = prompt
+                ins.image_cost = r["cost"]
+                # 重生时清掉老视频
+                ins.video_url = None
+                ins.video_task_id = None
+                ins.video_cost = 0.0
+                break
+        _save_shot_table(table)
+
+    return JSONResponse({
+        "ok": r["ok"],
+        "url": r.get("url"),
+        "cost": r["cost"],
+        "provider": r["provider"],
+        "prompt": prompt,
+        "error": r.get("error"),
+    })
+
+
+@app.post("/api/assets/l3/upgrade_video")
+async def api_assets_l3_upgrade_video(payload: dict):
+    video_id = payload.get("video_id")
+    shot_id = payload.get("shot_id")
+    inset_index = payload.get("inset_index")
+    image_url = payload.get("image_url")
+    motion_prompt = (payload.get("motion_prompt") or "").strip()
+    if not video_id or not shot_id or inset_index is None or not image_url:
+        raise HTTPException(400, "video_id, shot_id, inset_index, image_url required")
+    _ensure_video_row(video_id)
+    if not motion_prompt:
+        motion_prompt = "镜头轻微推进或摇动，保持主体清晰不变"
+    r = _ark_client.create_video_task(image_url, motion_prompt, duration=5, resolution="1080p")
+    if not r["ok"]:
+        return JSONResponse({"ok": False, "error": r["error"]}, status_code=200)
+    # 落到 shot_table：video_task_id
+    table = _load_or_empty_shot_table(video_id)
+    for s in table.shots:
+        if s.shot_id == shot_id and 0 <= int(inset_index) < len(s.element_insets):
+            s.element_insets[int(inset_index)].video_task_id = r["task_id"]
+            break
+    _save_shot_table(table)
+
+    _state.start_task(
+        video_id, agent="material_l3_video", shot_id=shot_id,
+        input_data={"inset_index": inset_index, "task_id": r["task_id"]},
+        provider=r["provider"],
+    )
+    return JSONResponse({"ok": True, "task_id": r["task_id"], "provider": r["provider"]})
+
+
+@app.get("/api/assets/l3/video_status")
+async def api_assets_l3_video_status(task_id: str, video_id: Optional[str] = None,
+                                      shot_id: Optional[str] = None,
+                                      inset_index: Optional[int] = None):
+    r = _ark_client.get_video_task(task_id)
+    # 若携带上下文且已 succeeded，持久化到 shot_table
+    if r.get("status") == "succeeded" and r.get("video_url") and video_id and shot_id and inset_index is not None:
+        table = _load_or_empty_shot_table(video_id)
+        for s in table.shots:
+            if s.shot_id == shot_id and 0 <= int(inset_index) < len(s.element_insets):
+                ins = s.element_insets[int(inset_index)]
+                ins.video_url = r["video_url"]
+                ins.video_cost = r.get("cost", 0.0)
+                break
+        _save_shot_table(table)
+    return JSONResponse(r)
+
+
+# （旧 ⑤ 配音页已合并进素材页的配音 Tab · 路由删除）
+@app.get("/project/{video_id}/audio")
+async def page_audio_redirect(video_id: str):
+    """旧链接回到素材页配音 Tab。"""
+    return RedirectResponse(url=f"/project/{video_id}/assets", status_code=302)
 
 
 # ==================== ⑥ 剪辑 ====================
+# 简单的 compose 进度 · 用 in-memory dict（单进程 server 可用）
+_EDIT_PROGRESS: dict[str, dict] = {}
+
+
+def _edit_status_for(video_id: str) -> dict:
+    mp4 = _DATA_DIR / "outputs" / f"{video_id}.mp4"
+    has_mp4 = mp4.exists() and mp4.stat().st_size > 0
+    progress = _EDIT_PROGRESS.get(video_id)
+    return {
+        "has_mp4": has_mp4,
+        "mp4_url": f"/data/outputs/{video_id}.mp4" if has_mp4 else None,
+        "mp4_bytes": mp4.stat().st_size if has_mp4 else 0,
+        "progress": progress,
+    }
+
+
 @app.get("/project/{video_id}/edit", response_class=HTMLResponse)
 async def page_edit(request: Request, video_id: str):
+    table = _load_or_empty_shot_table(video_id)
+    saved_bible = _state.load_project_style_bible(video_id)
+    bible = _merge_default_bible((saved_bible or {}).get("bible"))
+    queue = _material_agent.build_task_queue(table, _ASSET_LIB, bible=bible)
+    status = _edit_status_for(video_id)
+    publish_meta = _publish_meta_response(table)
     return TEMPLATES.TemplateResponse("step_edit.html", build_ctx(
         request, "edit", video_id,
-        shots=MOCK_SHOT_TABLE,
+        queue=queue,
+        bible=bible,
+        status=status,
+        shots_count=len(table.shots),
+        publish_meta=publish_meta,
     ))
+
+
+@app.post("/api/edit/compose")
+async def api_edit_compose(payload: dict):
+    """同步合成最终 mp4。MVP：阻塞几十秒到几分钟。"""
+    video_id = payload.get("video_id")
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    table = _load_or_empty_shot_table(video_id)
+    if not table.shots:
+        raise HTTPException(400, "shot_table 为空，先到分镜页确认")
+
+    _EDIT_PROGRESS[video_id] = {"running": True, "steps": []}
+
+    def _on_log(entry):
+        state = _EDIT_PROGRESS.setdefault(video_id, {"running": True, "steps": []})
+        state["steps"].append(entry)
+
+    r = _video_editor.compose_final(
+        video_id, shot_table=table, library=_ASSET_LIB, on_log=_on_log,
+    )
+    _EDIT_PROGRESS[video_id]["running"] = False
+    _EDIT_PROGRESS[video_id]["result"] = r
+    return JSONResponse(r)
+
+
+@app.get("/api/edit/status")
+async def api_edit_status(video_id: str):
+    return JSONResponse(_edit_status_for(video_id))
+
+
+# -------- 发布信息（标题/简介/话题）-----------
+def _save_publish_meta(video_id: str, table: _shot_table.ShotTable) -> None:
+    _state.save_project_shot_table(video_id, table.to_dict())
+
+
+def _publish_meta_response(table: _shot_table.ShotTable) -> dict:
+    """统一格式给前端：当前显示的 + 池子大小 + 索引。"""
+    pool = list(table.publish_meta_pool or [])
+    idx = max(0, min(table.publish_meta_index or 0, len(pool) - 1)) if pool else 0
+    current = pool[idx] if pool else None
+    return {
+        "ok": True,
+        "current": current,
+        "pool_size": len(pool),
+        "index": idx,
+        "exhausted": (len(pool) > 0 and idx >= len(pool) - 1),
+    }
+
+
+@app.get("/api/edit/publish_meta")
+async def api_publish_meta_get(video_id: str):
+    """读现有发布信息池。池为空时不自动生成（让用户主动点'生成发布信息'，避免无谓 LLM 调用）。"""
+    table = _load_or_empty_shot_table(video_id)
+    return JSONResponse(_publish_meta_response(table))
+
+
+@app.post("/api/edit/publish_meta/regenerate")
+async def api_publish_meta_regenerate(payload: dict):
+    """调 LLM 生新一批备选（覆盖旧池），index 重置到 0。"""
+    video_id = payload.get("video_id")
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    n = int(payload.get("n") or 3)
+    table = _load_or_empty_shot_table(video_id)
+    if not table.shots:
+        raise HTTPException(400, "shot_table 为空，先到分镜页确认")
+    result = _publish_meta.generate_meta_batch(video_id, table, n=n)
+    if result.get("error"):
+        return JSONResponse({"ok": False, "error": result["error"]}, status_code=502)
+    table.publish_meta_pool = result["metas"]
+    table.publish_meta_index = 0
+    # 同步把当前选中的写到 publish_title/description/tags（兼容老字段）
+    if table.publish_meta_pool:
+        m = table.publish_meta_pool[0]
+        table.publish_title = m.get("title") or None
+        table.publish_description = m.get("description") or None
+        table.publish_tags = m.get("tags") or []
+    _save_publish_meta(video_id, table)
+    out = _publish_meta_response(table)
+    out["provider"] = result.get("provider")
+    out["cost"] = result.get("cost")
+    return JSONResponse(out)
+
+
+@app.post("/api/edit/publish_meta/cycle")
+async def api_publish_meta_cycle(payload: dict):
+    """换下一条备选（pool 内循环）。pool 用尽时返回 exhausted=True，让前端提示重新生成。"""
+    video_id = payload.get("video_id")
+    if not video_id:
+        raise HTTPException(400, "video_id required")
+    table = _load_or_empty_shot_table(video_id)
+    pool = list(table.publish_meta_pool or [])
+    if not pool:
+        return JSONResponse({"ok": False, "error": "池为空，先点重新生成"}, status_code=400)
+    new_idx = (table.publish_meta_index + 1) % len(pool)
+    table.publish_meta_index = new_idx
+    m = pool[new_idx]
+    table.publish_title = m.get("title") or None
+    table.publish_description = m.get("description") or None
+    table.publish_tags = m.get("tags") or []
+    _save_publish_meta(video_id, table)
+    return JSONResponse(_publish_meta_response(table))
 
 
 # ==================== 素材库 ====================
 @app.get("/library", response_class=HTMLResponse)
 async def library(request: Request):
+    """素材库 · 三大分组：IP库 / 场景元素库 / 背景库 —— 全量真实数据。"""
+
+    # ---- IP 库（按 character 聚合 expressions + characters） ----
+    ip_libs_meta = (_ASSET_LIB.meta or {}).get("ip_libraries", {})
+    ip_groups: dict[str, dict] = {}
+    for ch in _ASSET_LIB.all("characters"):
+        char_name = ch.meta.get("character") or ch.id
+        ip_groups.setdefault(char_name, {
+            "character_name": char_name, "cover_file": ch.file,
+            "assets": [],
+        })
+    for expr in _ASSET_LIB.all("expressions"):
+        char_name = expr.meta.get("character") or "其他"
+        g = ip_groups.setdefault(char_name, {
+            "character_name": char_name, "cover_file": expr.file,
+            "assets": [],
+        })
+        g["assets"].append({
+            "id": expr.id, "file": expr.file,
+            "description": expr.description or expr.meta.get("alt", ""),
+            "scene_tags": expr.meta.get("scene_tags", []),
+            "intensity": expr.meta.get("intensity"),
+            "duration": expr.meta.get("duration"),
+        })
+    ip_libraries_view = []
+    for name, g in ip_groups.items():
+        # meta 反查：lib_id + display_name
+        lib_id, display_name, desc = name, name, ""
+        for lid, lmeta in ip_libs_meta.items():
+            if lmeta.get("character_name") == name:
+                lib_id = lid
+                display_name = lmeta.get("name", name)
+                desc = lmeta.get("desc", "")
+                break
+        # 收集这个 IP 的所有 scene_tag
+        scene_tag_set: set[str] = set()
+        for it in g["assets"]:
+            for t in it["scene_tags"]:
+                scene_tag_set.add(t)
+        ip_libraries_view.append({
+            "id": lib_id,
+            "name": display_name,
+            "desc": desc,
+            "character_name": name,
+            "cover_file": g["cover_file"],
+            "count": len(g["assets"]),
+            "scene_tags": sorted(scene_tag_set),
+            "assets": g["assets"],
+        })
+
+    # ---- 场景元素库（按 style group） ----
+    el_libs_meta = (_ASSET_LIB.meta or {}).get("element_libraries", {})
+    el_groups: dict[str, list] = {}
+    for el in _ASSET_LIB.all("elements"):
+        key = el.style or "其他"
+        el_groups.setdefault(key, []).append(el)
+    element_libraries_view = []
+    for style_id, elements in el_groups.items():
+        lmeta = el_libs_meta.get(style_id, {})
+        element_libraries_view.append({
+            "id": style_id,
+            "name": lmeta.get("name", style_id),
+            "desc": lmeta.get("desc", ""),
+            "style_tags": lmeta.get("style_tags", []),
+            "count": len(elements),
+            "assets": [{
+                "id": e.id, "file": e.file,
+                "description": e.description or e.meta.get("alt", ""),
+                "tags": e.tags,
+            } for e in elements],
+        })
+
+    # ---- 背景库 ----
+    backgrounds_view = [{
+        "id": b.id, "file": b.file,
+        "description": b.description,
+        "tags": b.tags,
+    } for b in _ASSET_LIB.all("backgrounds")]
+
+    total_count = (sum(lib["count"] for lib in ip_libraries_view)
+                   + sum(lib["count"] for lib in element_libraries_view)
+                   + len(backgrounds_view))
+
     return TEMPLATES.TemplateResponse("library.html", build_ctx(
         request, "library",
-        library=MOCK_LIBRARY,
+        ip_libraries=ip_libraries_view,
+        element_libraries=element_libraries_view,
+        backgrounds=backgrounds_view,
+        total_count=total_count,
+        scene_tags_closed=sorted(list(_shot_table.SCENE_TAGS)),
+    ))
+
+
+# ==================== 素材库编辑 API ====================
+
+def _serialize_asset(a) -> dict:
+    return {
+        "id": a.id,
+        "kind": a.kind,
+        "file": a.file,
+        "description": a.description,
+        "tags": a.tags,
+        "style": a.style,
+        "ip": a.meta.get("ip"),
+        "format": a.meta.get("format"),
+        "has_alpha": a.meta.get("has_alpha"),
+        "scene_tags": a.meta.get("scene_tags", []),
+        "scene_tags_ai": a.meta.get("scene_tags_ai", []),
+        "scene_tags_ai_rationale": a.meta.get("scene_tags_ai_rationale", ""),
+        "categories": a.meta.get("categories", []),
+        "categories_ai": a.meta.get("categories_ai", []),
+        "categories_ai_rationale": a.meta.get("categories_ai_rationale", ""),
+        "intensity": a.meta.get("intensity"),
+        "duration": a.meta.get("duration"),
+        "character": a.meta.get("character"),
+        "source": a.meta.get("source"),
+        "needs_review": bool(a.meta.get("needs_review")),
+        "reviewed_at": a.meta.get("reviewed_at"),
+    }
+
+
+@app.get("/api/library/list")
+async def api_library_list():
+    """Flat JSON dump of all assets for client-side filtering."""
+    items = []
+    for kind in ("backgrounds", "characters", "elements", "expressions"):
+        for a in _ASSET_LIB.all(kind):
+            items.append(_serialize_asset(a))
+    return {
+        "ok": True,
+        "items": items,
+        "stats": _ASSET_LIB.stats(),
+        "ips": _ASSET_LIB.list_ips(),
+        "scene_tags_closed": sorted(list(_shot_table.SCENE_TAGS)),
+        "scene_tag_groups": _shot_table.SCENE_TAG_GROUPS,
+        "element_categories_closed": sorted(list(_shot_table.ELEMENT_CATEGORIES)),
+        "element_category_groups": _shot_table.ELEMENT_CATEGORY_GROUPS,
+    }
+
+
+@app.patch("/api/library/{asset_id}")
+async def api_library_update(asset_id: str, request: Request):
+    payload = await request.json()
+    a = _ASSET_LIB.update(
+        asset_id,
+        scene_tags=payload.get("scene_tags"),
+        description=payload.get("description"),
+        ip=payload.get("ip"),
+        meta_patch=payload.get("meta_patch"),
+        tags=payload.get("tags"),
+    )
+    if a is None:
+        raise HTTPException(404, f"asset {asset_id} not found")
+    return {"ok": True, "asset": _serialize_asset(a)}
+
+
+@app.post("/api/library/bulk_update")
+async def api_library_bulk(request: Request):
+    payload = await request.json()
+    updates = payload.get("updates") or []
+    res = _ASSET_LIB.bulk_update(updates)
+    return {"ok": True, **res}
+
+
+@app.post("/api/library/mark_all_review")
+async def api_library_mark_all_review(request: Request):
+    """把符合条件的素材全部标记 needs_review=true（让人工重审）。
+
+    payload: {kind?, ip?, only_unreviewed?: bool}.  无条件 = 全库。
+    """
+    payload = await request.json() if (await request.body()) else {}
+    kind = payload.get("kind")
+    ip = payload.get("ip")
+    updates = []
+    for k in ("backgrounds", "characters", "elements", "expressions"):
+        if kind and k != kind:
+            continue
+        for a in _ASSET_LIB.all(k):
+            if ip and a.meta.get("ip") != ip:
+                continue
+            updates.append({"asset_id": a.id, "meta_patch": {"needs_review": True}})
+    res = _ASSET_LIB.bulk_update(updates)
+    return {"ok": True, "marked": res["ok_count"]}
+
+
+@app.post("/api/library/snapshot")
+async def api_library_snapshot(request: Request):
+    """把当前已审过的素材冻结成快照 JSON（不可变存档）。
+
+    生成 data/audit_snapshots/approved_<YYYYMMDD_HHMMSS>.json
+    供 video_editor / shot_table 在生成时按 ID 引用。
+    """
+    import json as _json
+    import time as _time
+    from datetime import datetime
+    snap_dir = _DATA_DIR / "audit_snapshots"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "snapshot_at": _time.time(),
+        "snapshot_iso": datetime.now().isoformat(),
+        "stats": _ASSET_LIB.approval_stats(),
+        "approved": {},
+    }
+    for kind in ("backgrounds", "characters", "elements", "expressions"):
+        payload["approved"][kind] = [
+            _serialize_asset(a) for a in _ASSET_LIB.approved(kind)
+        ]
+    name = f"approved_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    fp = snap_dir / name
+    fp.write_text(_json.dumps(payload, ensure_ascii=False, indent=2),
+                  encoding="utf-8")
+    total = sum(len(v) for v in payload["approved"].values())
+    return {"ok": True, "file": str(fp.relative_to(_ROOT)),
+            "filename": name, "total": total,
+            "stats": payload["stats"]}
+
+
+@app.get("/api/library/snapshots")
+async def api_library_snapshots():
+    """列出所有已存的审核快照。"""
+    snap_dir = _DATA_DIR / "audit_snapshots"
+    if not snap_dir.exists():
+        return {"ok": True, "snapshots": []}
+    snaps = []
+    for fp in sorted(snap_dir.glob("approved_*.json"), reverse=True):
+        try:
+            stat = fp.stat()
+            import json as _json
+            head = _json.loads(fp.read_text(encoding="utf-8"))
+            snaps.append({
+                "filename": fp.name,
+                "url": f"/data/audit_snapshots/{fp.name}",
+                "size_kb": round(stat.st_size / 1024, 1),
+                "snapshot_iso": head.get("snapshot_iso"),
+                "stats": head.get("stats", {}),
+                "total": sum(len(v) for v in (head.get("approved") or {}).values()),
+            })
+        except Exception:
+            continue
+    return {"ok": True, "snapshots": snaps}
+
+
+@app.get("/api/library/audit_log")
+async def api_library_audit_log(limit: int = 200):
+    """已审过的素材按 reviewed_at 倒序，给审核页面板用。"""
+    entries = []
+    for kind in ("backgrounds", "characters", "elements", "expressions"):
+        for a in _ASSET_LIB.all(kind):
+            ts = a.meta.get("reviewed_at")
+            if not ts:
+                continue
+            applied = (a.meta.get("categories") if kind == "elements"
+                       else a.meta.get("scene_tags")) or []
+            entries.append({
+                "id": a.id,
+                "kind": a.kind,
+                "file": a.file,
+                "ts": ts,
+                "applied": applied,
+                "ip": a.meta.get("ip"),
+            })
+    entries.sort(key=lambda e: -(e["ts"] or 0))
+    return {"ok": True, "entries": entries[:limit]}
+
+
+@app.get("/api/library/audit_log/export.csv")
+async def api_library_audit_log_csv():
+    """CSV 导出已审记录。"""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+    rows = []
+    for kind in ("backgrounds", "characters", "elements", "expressions"):
+        for a in _ASSET_LIB.all(kind):
+            ts = a.meta.get("reviewed_at")
+            if not ts:
+                continue
+            applied = (a.meta.get("categories") if kind == "elements"
+                       else a.meta.get("scene_tags")) or []
+            rows.append({
+                "id": a.id, "kind": a.kind, "file": a.file,
+                "ip": a.meta.get("ip") or "",
+                "applied_tags": ",".join(applied),
+                "reviewed_at": ts,
+                "reviewed_at_iso": __import__("datetime").datetime.fromtimestamp(ts).isoformat(),
+                "description": a.description or "",
+            })
+    rows.sort(key=lambda r: -(r["reviewed_at"] or 0))
+    buf = io.StringIO()
+    if rows:
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=audit_log.csv"},
+    )
+
+
+@app.post("/api/library/{asset_id}/confirm")
+async def api_library_confirm(asset_id: str, request: Request):
+    """确认入库：写最终 scene_tags / categories / description + needs_review=false."""
+    import time as _time
+    payload = await request.json()
+    meta_patch = {"needs_review": False, "reviewed_at": _time.time()}
+    if payload.get("intensity") is not None:
+        meta_patch["intensity"] = payload.get("intensity")
+    if payload.get("categories") is not None:
+        meta_patch["categories"] = payload.get("categories")
+    a = _ASSET_LIB.update(
+        asset_id,
+        scene_tags=payload.get("scene_tags"),
+        description=payload.get("description"),
+        ip=payload.get("ip"),
+        meta_patch=meta_patch,
+    )
+    if a is None:
+        raise HTTPException(404)
+    return {"ok": True, "asset": _serialize_asset(a)}
+
+
+@app.post("/api/library/{asset_id}/delete")
+async def api_library_delete(asset_id: str):
+    ok = _ASSET_LIB.delete(asset_id)
+    if not ok:
+        raise HTTPException(404)
+    return {"ok": True}
+
+
+# ---- harvest 任务（在后台异步跑）----
+_HARVEST_TASKS: dict[str, dict] = {}
+
+
+def _run_harvest(task_id: str, queries: list[str], limit: int, kind: str):
+    import threading  # noqa: F401  reserved
+    from scripts import harvest_yierbubu as _h
+    task = _HARVEST_TASKS[task_id]
+    task["status"] = "running"
+    try:
+        lib = _ASSET_LIB
+        total = 0
+        registered = 0
+        for q in queries:
+            try:
+                items = _h.harvest_query(q, limit)
+                total += len(items)
+                n = _h.register(items, q, lib, kind)
+                registered += n
+                task["progress"].append({"query": q, "found": len(items), "new": n})
+            except Exception as e:
+                task["progress"].append({"query": q, "error": str(e)[:200]})
+        task["total_files"] = total
+        task["registered"] = registered
+        task["status"] = "succeeded"
+    except Exception as e:
+        task["status"] = "failed"
+        task["error"] = str(e)[:300]
+
+
+@app.post("/api/library/harvest")
+async def api_library_harvest(request: Request):
+    import uuid
+    import threading
+    payload = await request.json()
+    queries = payload.get("queries") or []
+    if isinstance(queries, str):
+        queries = [queries]
+    queries = [q.strip() for q in queries if q and q.strip()]
+    limit = int(payload.get("limit") or 20)
+    kind = payload.get("kind") or "expressions"
+    if not queries:
+        raise HTTPException(400, "queries required")
+    task_id = uuid.uuid4().hex[:12]
+    _HARVEST_TASKS[task_id] = {
+        "task_id": task_id, "status": "queued",
+        "queries": queries, "limit": limit, "kind": kind,
+        "progress": [],
+    }
+    th = threading.Thread(target=_run_harvest, args=(task_id, queries, limit, kind),
+                          daemon=True)
+    th.start()
+    return {"ok": True, "task_id": task_id}
+
+
+@app.get("/api/library/harvest/{task_id}")
+async def api_library_harvest_status(task_id: str):
+    t = _HARVEST_TASKS.get(task_id)
+    if not t:
+        raise HTTPException(404)
+    return t
+
+
+# ---- auto-label 任务（Step 5/6 实装；这里先占位）----
+_LABEL_TASKS: dict[str, dict] = {}
+
+
+def _run_auto_label(task_id: str, asset_ids: list[str]):
+    from pipeline.agents.material_agent import auto_label_expressions  # 后面会实装
+    task = _LABEL_TASKS[task_id]
+    task["status"] = "running"
+    try:
+        results = auto_label_expressions(asset_ids, library=_ASSET_LIB,
+                                          on_progress=lambda i, n, r:
+                                          task["progress"].append(r))
+        task["results"] = results
+        task["status"] = "succeeded"
+    except Exception as e:
+        task["status"] = "failed"
+        task["error"] = str(e)[:300]
+
+
+@app.post("/api/library/auto_label")
+async def api_library_auto_label(request: Request):
+    import uuid
+    import threading
+    payload = await request.json()
+    asset_ids = payload.get("asset_ids") or []
+    if not asset_ids:
+        raise HTTPException(400, "asset_ids required")
+    task_id = uuid.uuid4().hex[:12]
+    _LABEL_TASKS[task_id] = {
+        "task_id": task_id, "status": "queued",
+        "asset_ids": asset_ids, "progress": [],
+    }
+    th = threading.Thread(target=_run_auto_label, args=(task_id, asset_ids),
+                          daemon=True)
+    th.start()
+    return {"ok": True, "task_id": task_id}
+
+
+@app.get("/api/library/auto_label/{task_id}")
+async def api_library_auto_label_status(task_id: str):
+    t = _LABEL_TASKS.get(task_id)
+    if not t:
+        raise HTTPException(404)
+    return t
+
+
+@app.get("/library/review", response_class=HTMLResponse)
+async def library_review(request: Request):
+    """全屏单条审核工作台。"""
+    return TEMPLATES.TemplateResponse("library_review.html", build_ctx(
+        request, "library",
+        scene_tags_closed=sorted(list(_shot_table.SCENE_TAGS)),
+        scene_tag_groups=_shot_table.SCENE_TAG_GROUPS,
+        element_categories_closed=sorted(list(_shot_table.ELEMENT_CATEGORIES)),
+        element_category_groups=_shot_table.ELEMENT_CATEGORY_GROUPS,
     ))
 
 

@@ -1,0 +1,552 @@
+{% extends "base.html" %}
+{% block page_title %}素材审核{% endblock %}
+{% block stepper %}{% endblock %}
+
+{% block content %}
+<div x-data="reviewPage()" x-init="init()" @keydown.window="handleKey($event)"
+     class="px-6 py-5 max-w-[1500px] mx-auto">
+
+  <!-- 顶部：进度 + 切换 -->
+  <section class="bg-white border border-ink-200 rounded-2xl p-4 mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-3">
+        <a href="/library" class="text-[12px] text-ink-500 hover:text-ink-900 flex items-center gap-1">
+          <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> 返回素材库
+        </a>
+        <div class="h-4 w-px bg-ink-200"></div>
+        <h1 class="font-display text-[20px] font-semibold text-ink-900">素材审核</h1>
+        <span class="text-[11px] text-ink-500">单条 audit · 键盘 1-9 选 / Enter 确认 / ←→ 切张 / D 删除</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="text-[12px]">
+          <span class="text-emerald-600 font-bold" x-text="reviewedCount"></span> 已审 ·
+          <span class="text-amber-600 font-bold" x-text="queue.length"></span> 待审 ·
+          <span class="text-ink-500" x-text="totalCount"></span> 总
+        </div>
+        <button @click="markAllReview()"
+                class="px-3 py-1.5 text-[11px] rounded-lg border border-ink-200 hover:border-ink-400 text-ink-600">
+          ↻ 全库重审
+        </button>
+      </div>
+    </div>
+
+    <!-- 筛选 -->
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="text-[10px] font-semibold uppercase text-ink-500">筛选审核队列:</span>
+      <template x-for="k in ['all','expressions','elements','backgrounds','characters']" :key="k">
+        <button @click="kindFilter=k; rebuildQueue()"
+                :class="kindFilter===k ? 'bg-ink-900 text-white' : 'bg-ink-50 text-ink-600 hover:bg-ink-100'"
+                class="px-2.5 py-1 rounded text-[11px] font-medium">
+          <span x-text="kindLabel(k)"></span>
+        </button>
+      </template>
+      <div class="h-4 w-px bg-ink-200 mx-1"></div>
+      <button @click="ipFilter='all'; rebuildQueue()"
+              :class="ipFilter==='all' ? 'bg-brand-500 text-white' : 'bg-ink-50 text-ink-600 hover:bg-ink-100'"
+              class="px-2.5 py-1 rounded text-[11px] font-medium">全 IP</button>
+      <template x-for="ip in ips" :key="ip">
+        <button @click="ipFilter=ip; rebuildQueue()"
+                :class="ipFilter===ip ? 'bg-brand-500 text-white' : 'bg-ink-50 text-ink-600 hover:bg-ink-100'"
+                class="px-2.5 py-1 rounded text-[11px] font-medium" x-text="ip"></button>
+      </template>
+    </div>
+
+    <!-- 进度条 -->
+    <div class="mt-3 h-1.5 bg-ink-100 rounded-full overflow-hidden">
+      <div class="h-full bg-emerald-500 transition-all"
+           :style="`width: ${totalCount > 0 ? (reviewedCount / totalCount * 100) : 0}%`"></div>
+    </div>
+  </section>
+
+  <!-- 全部审完 状态 -->
+  <div x-show="queue.length === 0 && !loading" x-cloak
+       class="bg-white border border-ink-200 rounded-2xl p-12 text-center">
+    <div class="text-[48px] mb-3">✓</div>
+    <div class="text-[18px] font-semibold text-ink-900 mb-1">全部审完</div>
+    <div class="text-[12px] text-ink-500 mb-4">当前筛选下没有待审素材</div>
+    <div class="flex items-center justify-center gap-2">
+      <a href="/library" class="px-4 py-2 text-[12px] rounded-lg bg-ink-900 text-white">去看已审材料库</a>
+      <button @click="markAllReview()" class="px-4 py-2 text-[12px] rounded-lg border border-ink-200 hover:border-ink-400 text-ink-700">↻ 把全库重置为待审</button>
+    </div>
+  </div>
+
+  <!-- 单条审核工作台 -->
+  <div x-show="current && queue.length > 0" x-cloak class="grid grid-cols-12 gap-4">
+
+    <!-- 左侧：图 + 元数据 -->
+    <div class="col-span-4 bg-white border border-ink-200 rounded-2xl p-5">
+      <div class="aspect-square bg-ink-100 rounded-xl overflow-hidden mb-3 relative">
+        <img x-show="current" :src="thumbSrc(current)" class="w-full h-full object-contain">
+        <div class="absolute top-2 right-2 flex flex-col gap-1 items-end">
+          <span x-show="current?.format" class="px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px] font-mono" x-text="current?.format"></span>
+          <span x-show="current?.has_alpha" class="px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[10px] font-bold">α 透明</span>
+        </div>
+        <div class="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-ink-900/70 text-white text-[10px]">
+          <span x-text="(idx+1)+' / '+queue.length"></span>
+        </div>
+      </div>
+
+      <div class="space-y-1.5 text-[12px]">
+        <div class="font-mono text-[11px] text-ink-500 break-all" x-text="current?.id"></div>
+        <div class="text-ink-700">
+          <span class="text-ink-400">类型:</span> <span x-text="current?.kind"></span> ·
+          <span class="text-ink-400">IP:</span> <span x-text="current?.ip || '(未标)'"></span> ·
+          <span class="text-ink-400">来源:</span> <span x-text="current?.source || '-'"></span>
+        </div>
+        <div class="text-[11px] text-ink-500" x-show="current?.description">
+          <span class="text-ink-400">原描述:</span>
+          <span x-text="current?.description"></span>
+        </div>
+      </div>
+
+      <!-- AI 预测 -->
+      <div x-show="current?.kind!=='elements' && current?.scene_tags_ai && current.scene_tags_ai.length"
+           class="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[10px] font-semibold text-amber-700">🤖 AI 预测情绪</span>
+          <button @click="acceptAI()" class="px-2 py-0.5 text-[10px] rounded bg-amber-500 text-white">采纳 (A)</button>
+        </div>
+        <div class="flex flex-wrap gap-1 mb-1">
+          <template x-for="t in (current?.scene_tags_ai||[])" :key="t">
+            <span class="px-1.5 py-0.5 rounded bg-white text-amber-700 text-[10px] border border-amber-300" x-text="'#'+t"></span>
+          </template>
+        </div>
+        <div class="text-[10px] text-amber-700/80 italic" x-text="current?.scene_tags_ai_rationale"></div>
+      </div>
+      <div x-show="current?.kind==='elements' && current?.categories_ai && current.categories_ai.length"
+           class="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[10px] font-semibold text-amber-700">🤖 AI 预测类别</span>
+          <button @click="acceptAI()" class="px-2 py-0.5 text-[10px] rounded bg-amber-500 text-white">采纳 (A)</button>
+        </div>
+        <div class="flex flex-wrap gap-1 mb-1">
+          <template x-for="c in (current?.categories_ai||[])" :key="c">
+            <span class="px-1.5 py-0.5 rounded bg-white text-amber-700 text-[10px] border border-amber-300" x-text="c"></span>
+          </template>
+        </div>
+        <div class="text-[10px] text-amber-700/80 italic" x-text="current?.categories_ai_rationale"></div>
+      </div>
+
+      <!-- 当前已选 -->
+      <div class="mt-3 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
+        <div class="text-[10px] font-semibold text-emerald-700 mb-1">
+          当前已选 (<span x-text="picked.length"></span>/5) — 确认后入库
+        </div>
+        <div class="flex flex-wrap gap-1 min-h-[24px]">
+          <template x-for="t in picked" :key="t">
+            <span class="px-2 py-0.5 rounded bg-emerald-500 text-white text-[10px]" x-text="t"></span>
+          </template>
+          <span x-show="picked.length===0" class="text-[10px] text-emerald-700/50 italic">还没选</span>
+        </div>
+      </div>
+
+      <!-- 描述编辑 -->
+      <div class="mt-3">
+        <label class="block">
+          <div class="text-[10px] font-semibold text-ink-700 mb-1">描述（可改）</div>
+          <textarea x-model="descEdit" rows="2"
+                    class="w-full px-2 py-1.5 text-[11px] border border-ink-200 rounded resize-none"></textarea>
+        </label>
+      </div>
+
+      <!-- IP 改 -->
+      <div class="mt-2 grid grid-cols-2 gap-2">
+        <label>
+          <div class="text-[10px] font-semibold text-ink-700 mb-1">IP</div>
+          <select x-model="ipEdit" class="w-full px-2 py-1 text-[11px] border border-ink-200 rounded">
+            <option :value="null">(未标)</option>
+            <option value="yierbubu">yierbubu</option>
+            <option value="general">general</option>
+          </select>
+        </label>
+        <label x-show="current?.kind!=='elements'">
+          <div class="text-[10px] font-semibold text-ink-700 mb-1">强度 1-3</div>
+          <input type="number" min="1" max="3" x-model.number="intensityEdit"
+                 class="w-full px-2 py-1 text-[11px] border border-ink-200 rounded">
+        </label>
+      </div>
+    </div>
+
+    <!-- 右侧：标签分组 -->
+    <div class="col-span-8 bg-white border border-ink-200 rounded-2xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-[14px] font-semibold text-ink-900">
+          <span x-text="current?.kind==='elements' ? '场景类别' : '情绪标签'"></span>
+          <span class="text-[11px] text-ink-500 ml-2 font-normal">点选 1-5 个 · 数字键 1-9 快选</span>
+        </h2>
+        <button @click="picked = []" class="text-[11px] text-ink-500 hover:text-ink-900">清空</button>
+      </div>
+
+      <div class="space-y-3">
+        <template x-for="(g, gi) in activeGroups()" :key="g[0]">
+          <div class="border border-ink-100 rounded-xl p-3 bg-ink-50/30">
+            <div class="text-[11px] font-semibold text-ink-600 mb-2 flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-ink-900 text-white text-[10px] flex items-center justify-center font-mono"
+                    x-text="gi+1"></span>
+              <span x-text="g[0]"></span>
+              <span class="text-[10px] text-ink-400" x-text="'('+g[1].length+'个)'"></span>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="(t, ti) in g[1]" :key="t">
+                <button @click="togglePick(t)"
+                        :class="picked.includes(t) ? 'bg-emerald-500 text-white border-emerald-500 shadow' : 'bg-white border-ink-200 hover:border-emerald-300 hover:bg-emerald-50'"
+                        class="text-[12px] px-3 py-1.5 rounded-lg cursor-pointer border transition flex items-center gap-1">
+                  <span x-text="current?.kind==='elements' ? t : '#'+t"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- 操作按钮栏 -->
+      <div class="mt-5 pt-4 border-t border-ink-100 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <button @click="prev()" :disabled="idx===0"
+                  :class="idx===0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-ink-50'"
+                  class="px-3 py-2 text-[12px] rounded-lg border border-ink-200 text-ink-600 flex items-center gap-1">
+            <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> 上一张
+          </button>
+          <button @click="skip()" class="px-3 py-2 text-[12px] rounded-lg border border-ink-200 text-ink-600 hover:bg-ink-50">
+            跳过 →
+          </button>
+          <button @click="deleteCurrent()" class="px-3 py-2 text-[12px] rounded-lg border border-red-200 text-red-600 hover:bg-red-50">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5 inline"></i> 删除
+          </button>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-[11px] text-ink-400" x-show="picked.length===0">至少选 1 个标签才能入库</span>
+          <button @click="confirm()" :disabled="picked.length===0"
+                  :class="picked.length===0 ? 'bg-ink-200 text-ink-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'"
+                  class="px-6 py-2.5 text-[13px] font-semibold rounded-lg flex items-center gap-2 transition">
+            <i data-lucide="check-check" class="w-4 h-4"></i>
+            确认入库 (Enter ⏎)
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 审核日志面板（最近入库的） ============ -->
+  <section class="mt-4 bg-white border border-ink-200 rounded-2xl p-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <i data-lucide="archive" class="w-4 h-4 text-ink-700"></i>
+        <h3 class="text-[13px] font-semibold text-ink-900">审核存档</h3>
+        <span class="text-[11px] text-ink-500">最近入库 <b class="text-emerald-600" x-text="auditLog.length"></b> 条 · 鼠标悬停看时间 · 撤回 = 重新待审</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="createSnapshot()" :disabled="snapshotting"
+                class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-medium flex items-center gap-1 disabled:opacity-50">
+          <i data-lucide="archive" class="w-3 h-3"></i>
+          <span x-text="snapshotting ? '存档中...' : '📦 保存审核快照'"></span>
+        </button>
+        <a :href="'/api/library/audit_log/export.csv'" target="_blank"
+           class="text-[11px] text-ink-600 hover:text-ink-900 underline">导出 CSV</a>
+      </div>
+    </div>
+
+    <!-- 已存快照列表 -->
+    <div x-show="snapshots.length > 0" class="mb-3 p-2.5 rounded-lg bg-ink-50 border border-ink-200">
+      <div class="text-[10px] font-semibold text-ink-600 mb-1.5">已存快照（agent 引用这些 JSON 文件）</div>
+      <div class="space-y-1">
+        <template x-for="s in snapshots.slice(0, 5)" :key="s.filename">
+          <div class="flex items-center justify-between text-[11px]">
+            <div class="flex items-center gap-2 min-w-0">
+              <i data-lucide="file-json" class="w-3 h-3 text-emerald-600 shrink-0"></i>
+              <a :href="s.url" target="_blank" class="font-mono text-ink-700 hover:text-ink-900 truncate"
+                 x-text="s.filename"></a>
+              <span class="text-ink-400 shrink-0" x-text="s.snapshot_iso?.slice(0,16).replace('T',' ')"></span>
+            </div>
+            <div class="text-[10px] text-ink-500 shrink-0">
+              共 <b x-text="s.total"></b> 条 · <span x-text="s.size_kb"></span> KB
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+    <div x-show="auditLog.length === 0" class="text-[11px] text-ink-400 text-center py-6">
+      还没有审核过的素材 · 审完一张会出现在这里
+    </div>
+    <div class="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-2.5">
+      <template x-for="entry in auditLog.slice(0, 30)" :key="entry.id">
+        <div class="relative group rounded-lg border border-emerald-100 bg-emerald-50/30 overflow-hidden"
+             :title="'审核于 ' + entry.timeStr">
+          <div class="aspect-square bg-ink-100">
+            <img :src="thumbSrc(entry)" loading="lazy" class="w-full h-full object-cover">
+          </div>
+          <div class="p-1.5">
+            <div class="text-[9px] font-mono text-ink-500 truncate" x-text="entry.id"></div>
+            <div class="mt-0.5 flex flex-wrap gap-0.5">
+              <template x-for="t in entry.applied" :key="t">
+                <span class="text-[8px] px-1 rounded bg-emerald-500 text-white" x-text="entry.kind==='elements' ? t : '#'+t"></span>
+              </template>
+            </div>
+            <div class="text-[9px] text-ink-400 mt-0.5" x-text="entry.timeStr"></div>
+          </div>
+          <button @click="undoAudit(entry)"
+                  class="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-ink-900/80 text-white text-[9px] opacity-0 group-hover:opacity-100 transition">
+            ↩ 撤回
+          </button>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- toast -->
+  <div x-show="toast" x-cloak x-transition.opacity
+       class="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-ink-900 text-white text-[12px]"
+       x-text="toast"></div>
+
+  <!-- 加载中 -->
+  <div x-show="loading" x-cloak class="text-center py-12 text-ink-500">加载中...</div>
+</div>
+
+<script>
+function reviewPage() {
+  return {
+    queue: [],            // [asset, ...]  待审队列
+    idx: 0,
+    reviewedCount: 0,
+    totalCount: 0,
+    ips: [],
+    tagGroups: [],
+    categoryGroups: [],
+    kindFilter: 'all',
+    ipFilter: 'all',
+    picked: [],           // 当前已选标签
+    descEdit: '',
+    ipEdit: null,
+    intensityEdit: 2,
+    toast: null,
+    loading: true,
+    allItems: [],         // 全量数据，重建队列用
+    auditLog: [],         // 审核存档：[{id, file, kind, applied: [...], ts, timeStr}]
+    snapshots: [],        // 已存快照文件列表
+    snapshotting: false,
+
+    get current() {
+      return this.queue[this.idx] || null;
+    },
+
+    async init() {
+      const r = await fetch('/api/library/list').then(r => r.json());
+      this.allItems = r.items || [];
+      this.ips = r.ips || [];
+      this.tagGroups = r.scene_tag_groups || [];
+      this.categoryGroups = r.element_category_groups || [];
+      this.totalCount = this.allItems.length;
+      this.reviewedCount = this.allItems.filter(i => !i.needs_review).length;
+      // 从已审过的素材里重建审核日志（按 reviewed_at 倒序）
+      const log = await fetch('/api/library/audit_log').then(r => r.json()).catch(() => ({entries:[]}));
+      this.auditLog = (log.entries || []).map(e => ({
+        ...e, timeStr: this.formatTime(e.ts),
+      }));
+      // 加载已存快照
+      const snaps = await fetch('/api/library/snapshots').then(r => r.json()).catch(() => ({snapshots:[]}));
+      this.snapshots = snaps.snapshots || [];
+      this.rebuildQueue();
+      this.loading = false;
+      this.$nextTick(() => window.lucide && window.lucide.createIcons());
+    },
+    formatTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts * 1000);
+      const now = new Date();
+      const diff = (now - d) / 1000;
+      if (diff < 60) return '刚刚';
+      if (diff < 3600) return Math.floor(diff/60) + ' 分钟前';
+      if (diff < 86400) return Math.floor(diff/3600) + ' 小时前';
+      return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    },
+
+    rebuildQueue() {
+      this.queue = this.allItems.filter(i => {
+        if (!i.needs_review) return false;
+        if (this.kindFilter !== 'all' && i.kind !== this.kindFilter) return false;
+        if (this.ipFilter !== 'all' && i.ip !== this.ipFilter) return false;
+        return true;
+      });
+      this.idx = 0;
+      this.loadCurrent();
+    },
+
+    loadCurrent() {
+      const c = this.current;
+      if (!c) {
+        this.picked = [];
+        this.descEdit = '';
+        this.ipEdit = null;
+        this.intensityEdit = 2;
+        return;
+      }
+      // 已有的 scene_tags / categories 作为初始已选
+      this.picked = c.kind === 'elements' ? [...(c.categories || [])] : [...(c.scene_tags || [])];
+      this.descEdit = c.description || '';
+      this.ipEdit = c.ip || null;
+      this.intensityEdit = c.intensity ?? 2;
+      this.$nextTick(() => window.lucide && window.lucide.createIcons());
+    },
+
+    activeGroups() {
+      return this.current?.kind === 'elements' ? this.categoryGroups : this.tagGroups;
+    },
+    kindLabel(k) {
+      return {all:'全部', expressions:'表情', elements:'元素', backgrounds:'背景', characters:'角色'}[k] || k;
+    },
+    thumbSrc(it) {
+      if (!it?.file) return '';
+      if (it.file.startsWith('http')) return it.file;
+      return '/' + it.file.replace(/^\//, '');
+    },
+
+    togglePick(t) {
+      const i = this.picked.indexOf(t);
+      if (i >= 0) this.picked.splice(i, 1);
+      else if (this.picked.length < 5) this.picked.push(t);
+      else this.showToast('最多 5 个');
+    },
+    acceptAI() {
+      const c = this.current;
+      if (!c) return;
+      const aiTags = c.kind === 'elements' ? (c.categories_ai || []) : (c.scene_tags_ai || []);
+      this.picked = [...aiTags].slice(0, 5);
+    },
+
+    async confirm() {
+      const c = this.current;
+      if (!c || this.picked.length === 0) return;
+      const body = {
+        description: this.descEdit,
+        ip: this.ipEdit,
+        intensity: this.intensityEdit,
+      };
+      if (c.kind === 'elements') body.categories = [...this.picked];
+      else body.scene_tags = [...this.picked];
+      const r = await fetch('/api/library/' + encodeURIComponent(c.id) + '/confirm', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      }).then(r => r.json());
+      if (r.ok) {
+        // 同步 allItems
+        const ix = this.allItems.findIndex(x => x.id === c.id);
+        if (ix >= 0) this.allItems[ix] = r.asset;
+        this.reviewedCount += 1;
+        // 推到审核日志（最前面）
+        const ts = r.asset?.reviewed_at || (Date.now()/1000);
+        this.auditLog.unshift({
+          id: c.id, file: c.file, kind: c.kind,
+          applied: [...this.picked], ts, timeStr: this.formatTime(ts),
+        });
+        // 从 queue 移除
+        this.queue.splice(this.idx, 1);
+        if (this.idx >= this.queue.length) this.idx = Math.max(0, this.queue.length - 1);
+        this.loadCurrent();
+        this.showToast('✓ 已入库');
+      } else this.showToast('保存失败');
+    },
+
+    async createSnapshot() {
+      this.snapshotting = true;
+      try {
+        const r = await fetch('/api/library/snapshot', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: '{}',
+        }).then(r => r.json());
+        if (r.ok) {
+          this.showToast(`✓ 已存快照 · ${r.total} 条 → ${r.filename}`);
+          // refresh snapshot list
+          const snaps = await fetch('/api/library/snapshots').then(r => r.json());
+          this.snapshots = snaps.snapshots || [];
+        } else {
+          this.showToast('保存快照失败');
+        }
+      } finally {
+        this.snapshotting = false;
+      }
+    },
+
+    async undoAudit(entry) {
+      if (!confirm('撤回 ' + entry.id + ' 入库？将重新进入待审队列。')) return;
+      const r = await fetch('/api/library/' + encodeURIComponent(entry.id), {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({meta_patch: {needs_review: true, reviewed_at: 0}}),
+      }).then(r => r.json());
+      if (r.ok) {
+        // 从日志移除 + 同步 allItems + 加回队列
+        this.auditLog = this.auditLog.filter(e => e.id !== entry.id);
+        const ix = this.allItems.findIndex(x => x.id === entry.id);
+        if (ix >= 0) this.allItems[ix] = r.asset;
+        this.reviewedCount -= 1;
+        this.rebuildQueue();
+        this.showToast('已撤回 → 进待审');
+      }
+    },
+
+    skip() {
+      if (this.idx < this.queue.length - 1) { this.idx += 1; this.loadCurrent(); }
+      else this.showToast('已是最后一张');
+    },
+    prev() {
+      if (this.idx > 0) { this.idx -= 1; this.loadCurrent(); }
+    },
+
+    async deleteCurrent() {
+      const c = this.current;
+      if (!c) return;
+      if (!confirm('删除登记 ' + c.id + '？(盘上文件保留)')) return;
+      const r = await fetch('/api/library/' + encodeURIComponent(c.id) + '/delete', {method:'POST'}).then(r=>r.json());
+      if (r.ok) {
+        const ix = this.allItems.findIndex(x => x.id === c.id);
+        if (ix >= 0) this.allItems.splice(ix, 1);
+        this.totalCount -= 1;
+        this.queue.splice(this.idx, 1);
+        if (this.idx >= this.queue.length) this.idx = Math.max(0, this.queue.length - 1);
+        this.loadCurrent();
+        this.showToast('已删除');
+      }
+    },
+
+    async markAllReview() {
+      if (!confirm('把当前筛选范围内的素材全部标记为"待审"？这会清掉原已审标记。')) return;
+      const body = {};
+      if (this.kindFilter !== 'all') body.kind = this.kindFilter;
+      if (this.ipFilter !== 'all') body.ip = this.ipFilter;
+      const r = await fetch('/api/library/mark_all_review', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      }).then(r=>r.json());
+      if (r.ok) {
+        this.showToast('已重置 ' + r.marked + ' 条为待审');
+        await this.init();
+      }
+    },
+
+    handleKey(ev) {
+      // 在 textarea / input 里不响应（避免输入打架）
+      if (['TEXTAREA','INPUT','SELECT'].includes(ev.target.tagName)) return;
+      if (ev.key === 'Enter') { ev.preventDefault(); this.confirm(); }
+      else if (ev.key === 'ArrowRight') { ev.preventDefault(); this.skip(); }
+      else if (ev.key === 'ArrowLeft') { ev.preventDefault(); this.prev(); }
+      else if (ev.key === 'a' || ev.key === 'A') { ev.preventDefault(); this.acceptAI(); }
+      else if (ev.key === 'd' || ev.key === 'D') { ev.preventDefault(); this.deleteCurrent(); }
+      else if (/^[1-9]$/.test(ev.key)) {
+        // 数字键 N = 切到第 N 组的第 1 个；如已在同组则切下一项
+        ev.preventDefault();
+        const groups = this.activeGroups();
+        const gi = parseInt(ev.key) - 1;
+        if (gi < groups.length) {
+          const tags = groups[gi][1];
+          // 找当前 picked 在该组的位置 → 切下一个；否则选第一个
+          const inGroup = tags.find(t => !this.picked.includes(t));
+          if (inGroup) this.togglePick(inGroup);
+          else this.togglePick(tags[0]);
+        }
+      }
+    },
+
+    showToast(msg) { this.toast = msg; setTimeout(() => this.toast = null, 1500); },
+  };
+}
+</script>
+{% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_loading_banner.html" import loading_banner %}
 {% block page_title %}② 文案 · 完整文稿 · {{ current_video.title }}{% endblock %}
 
 {% block topbar_right %}
@@ -10,7 +11,7 @@
 
 {% block content %}
 <script>
-document.addEventListener('alpine:init', () => {
+(function(){ var _fn = function() {
   const initFull = {{ full | tojson if full else 'null' }};
   Alpine.store('full', {
     videoId: "{{ current_video.video_id }}",
@@ -18,6 +19,9 @@ document.addEventListener('alpine:init', () => {
     full: initFull,
     available: {{ available | tojson }},
     refining: {},   // {idx: true}
+    regenerating: false,
+    elapsedSec: 0,
+    _tickHandle: null,
     saveTimer: null,
     statusText: initFull ? `${initFull.total_chars||0} 字 · ${initFull.duration_sec}s` : '尚未生成',
 
@@ -63,6 +67,12 @@ document.addEventListener('alpine:init', () => {
 
     async regenerate() {
       if (!confirm('用相同选题/风格/大纲重新生成本时长（' + this.full.duration_sec + 's）的完整文稿？\n当前稿会被覆盖（如已编辑的请先复制全文）。')) return;
+      this.regenerating = true;
+      this.elapsedSec = 0;
+      const t0 = Date.now();
+      this._tickHandle = setInterval(() => {
+        this.elapsedSec = Math.round((Date.now() - t0) / 1000);
+      }, 500);
       this.statusText = `重新生成中 · 时长 ${this.full.duration_sec}s · 约 90-180 秒`;
       try {
         // 拿大纲：重新去 /api/script/full/load 拿 outline_id 然后查 drafts
@@ -85,6 +95,9 @@ document.addEventListener('alpine:init', () => {
         this.statusText = `重新生成完成 · ${data.provider} · ¥${(data.cost||0).toFixed(4)} · ${data.full.total_chars} 字`;
       } catch(e) {
         alert('网络错误: ' + e.message);
+      } finally {
+        if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null; }
+        this.regenerating = false;
       }
     },
 
@@ -161,10 +174,29 @@ document.addEventListener('alpine:init', () => {
       }
     },
   });
-});
+};
+  window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
+})();
 </script>
 
 <div x-data="{ get F() { return $store.full; } }" class="px-6 py-6 max-w-[1200px] mx-auto">
+
+  <!-- ========== 子 tab：要素提炼 ↔ 完整文稿 ========== -->
+  <div class="mb-4 flex gap-1 border-b border-ink-200">
+    <a href="/project/{{ current_video.video_id }}/script"
+       class="px-4 py-2 text-[13px] font-medium border-b-2 -mb-px flex items-center gap-1.5
+              border-transparent text-ink-500 hover:text-ink-800">
+      <i data-lucide="list" class="w-4 h-4"></i> 要素提炼（3 套大纲）
+    </a>
+    <a href="/project/{{ current_video.video_id }}/script/full"
+       class="px-4 py-2 text-[13px] font-medium border-b-2 -mb-px flex items-center gap-1.5
+              border-brand-500 text-ink-900">
+      <i data-lucide="file-text" class="w-4 h-4"></i> 完整文稿
+      {% if full %}
+      <span class="ml-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px]">已生成</span>
+      {% endif %}
+    </a>
+  </div>
 
   <!-- ========== 顶条 ========== -->
   <div class="rounded-2xl bg-white border border-ink-200 shadow-soft p-4 mb-5">
@@ -209,12 +241,19 @@ document.addEventListener('alpine:init', () => {
           <i data-lucide="arrow-left" class="w-3 h-3"></i><span>换大纲/时长</span>
         </a>
 
-        <a href="/project/{{ current_video.video_id }}/shots"
+        <a href="{{ next_step_url }}"
            class="ml-1 btn-primary text-[11px]" style="background: linear-gradient(135deg, #059669, #047857);">
-          <span>定稿 · 进入分镜</span>
+          <span>定稿 · 进入{{ next_step_label }}</span>
           <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
         </a>
       </div>
+      {{ loading_banner(
+          cond='F.regenerating',
+          label='DeepSeek 正在重新扩写完整文稿',
+          elapsed='F.elapsedSec',
+          est=120,
+          note='通常 60-180 秒。当前稿会被新版替换。请勿刷新或返回。',
+      ) }}
     </div>
   </div>
 
@@ -427,17 +466,17 @@ document.addEventListener('alpine:init', () => {
             </button>
             <span class="w-px h-4 bg-ink-200 mx-1"></span>
             <!-- AI 重写 -->
-            <button @click="F.refine(idx)" :disabled="F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5 text-blue-700" title="让 AI 立刻重写这段">
+            <button @click="F.refine(idx)" :disabled="!!F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5 text-blue-700" title="让 AI 立刻重写这段">
               <template x-if="!F.refining[idx]"><i data-lucide="refresh-cw" class="w-3 h-3"></i></template>
-              <template x-if="F.refining[idx]"><i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i></template>
+              <template x-if="!!F.refining[idx]"><i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i></template>
               <span>重写</span>
             </button>
             <!-- 缩短 -->
-            <button @click="F.refine(idx, '缩短到原文 70% 长度')" :disabled="F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5" title="缩短">
+            <button @click="F.refine(idx, '缩短到原文 70% 长度')" :disabled="!!F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5" title="缩短">
               <i data-lucide="scissors" class="w-3 h-3"></i>
             </button>
             <!-- 扩写 -->
-            <button @click="F.refine(idx, '扩写一倍，加入一个具体数字或案例')" :disabled="F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5" title="扩写">
+            <button @click="F.refine(idx, '扩写一倍，加入一个具体数字或案例')" :disabled="!!F.refining[idx]" class="btn-ghost text-[10px] py-1 px-1.5" title="扩写">
               <i data-lucide="expand" class="w-3 h-3"></i>
             </button>
             <span class="w-px h-4 bg-ink-200 mx-1"></span>
@@ -479,6 +518,223 @@ document.addEventListener('alpine:init', () => {
       <span x-text="'AI 摘要: ' + F.full.summary"></span>
     </div>
 
+    <!-- ===== 断句审核面板 ===== -->
+    <div x-show="F.full" x-data="segPanel()"
+         class="rounded-xl border border-ink-200 bg-white overflow-hidden">
+
+      <!-- 标题栏 -->
+      <div class="flex items-center gap-2 px-4 py-3 border-b border-ink-100 bg-ink-50/60 cursor-pointer select-none"
+           @click="open = !open">
+        <i data-lucide="scissors" class="w-4 h-4 text-brand-500 shrink-0"></i>
+        <span class="text-[13px] font-semibold text-ink-900 flex-1">断句审核</span>
+        <span class="text-[11px] text-ink-400" x-text="hasUnits ? '已切分 · 点击展开编辑' : '未切分 · 生成分镜前建议先切分'"></span>
+        <span x-show="saved" class="text-[10px] text-emerald-600 font-medium">✓ 已保存</span>
+        <i :data-lucide="open ? 'chevron-up' : 'chevron-down'" class="w-4 h-4 text-ink-400 shrink-0"></i>
+      </div>
+
+      <div x-show="open">
+        <!-- 操作栏 -->
+        <div class="flex items-center gap-2 px-4 py-2.5 border-b border-ink-100">
+          <button @click="generate()"
+                  :disabled="generating"
+                  class="btn-primary text-[11px] py-1 px-3 flex items-center gap-1.5">
+            <svg x-show="generating" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="31.4" stroke-dashoffset="10"/>
+            </svg>
+            <i x-show="!generating" data-lucide="wand-2" class="w-3 h-3"></i>
+            <span x-text="generating ? 'AI 切分中…' : 'AI 一键切分'"></span>
+          </button>
+          <button @click="saveAll()" x-show="dirty"
+                  class="btn-outline text-[11px] py-1 px-3">
+            <i data-lucide="save" class="w-3 h-3"></i><span>保存修改</span>
+          </button>
+          <span class="text-[11px] text-ink-400 ml-1" x-show="errMsg" x-text="errMsg"></span>
+          <div class="ml-auto text-[10px] text-ink-400">
+            每个单元 = 一句字幕 / 一次 TTS 停顿 · 建议 8-22 字
+          </div>
+        </div>
+
+        <!-- 段落 + 单元列表 -->
+        <div class="divide-y divide-ink-100" x-show="paragraphs.length">
+          <template x-for="(para, pi) in paragraphs" :key="pi">
+            <div class="px-4 py-3">
+              <!-- 段落头 -->
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-ink-400" x-text="para.role || '段落'"></span>
+                <span class="text-[10px] text-ink-300" x-text="'原文 ' + para.text.length + ' 字'"></span>
+              </div>
+              <!-- 单元列表 -->
+              <div class="space-y-1">
+                <template x-for="(unit, ui) in para.units" :key="ui">
+                  <div class="flex items-start gap-2 group">
+                    <!-- 序号 + 字数 -->
+                    <div class="shrink-0 w-6 text-right text-[10px] text-ink-300 mt-1.5" x-text="ui+1"></div>
+                    <!-- 可编辑文本 -->
+                    <div contenteditable="true"
+                         class="flex-1 text-[12px] text-ink-900 border border-ink-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-brand-400 bg-white leading-relaxed"
+                         :class="unit.length < 4 ? 'border-amber-300 bg-amber-50/40' : unit.length > 25 ? 'border-rose-300 bg-rose-50/40' : ''"
+                         x-text="unit"
+                         @input="updateUnit(pi, ui, $event.target.innerText); dirty=true"
+                         @blur="$el.innerText = para.units[ui]">
+                    </div>
+                    <!-- 字数气泡 -->
+                    <div class="shrink-0 text-[10px] mt-1.5 w-6 text-center"
+                         :class="unit.length < 4 || unit.length > 25 ? 'text-amber-500 font-bold' : 'text-ink-300'"
+                         x-text="unit.length"></div>
+                    <!-- 操作：合并下、拆分、删 -->
+                    <div class="shrink-0 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
+                      <button @click="mergeDown(pi, ui)" :disabled="ui >= para.units.length-1"
+                              class="w-5 h-5 rounded flex items-center justify-center hover:bg-ink-100 text-ink-400 disabled:opacity-20"
+                              title="与下一句合并">
+                        <i data-lucide="arrow-down-to-line" class="w-3 h-3"></i>
+                      </button>
+                      <button @click="splitAt(pi, ui)"
+                              class="w-5 h-5 rounded flex items-center justify-center hover:bg-ink-100 text-ink-400"
+                              title="从光标处拆分（按末尾逗号/句号分）">
+                        <i data-lucide="split" class="w-3 h-3"></i>
+                      </button>
+                      <button @click="removeUnit(pi, ui)"
+                              class="w-5 h-5 rounded flex items-center justify-center hover:bg-rose-100 text-ink-400 hover:text-rose-500"
+                              title="删除此单元（文字合入上一句）">
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                      </button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- 未切分提示 -->
+        <div x-show="!paragraphs.length" class="px-4 py-6 text-center text-[12px] text-ink-400">
+          点击"AI 一键切分"，LLM 会按语义把文稿分成每句 8-22 字的朗读单元
+        </div>
+      </div>
+    </div>
+    <!-- ===== /断句审核 ===== -->
+
   </div>
 </div>
+
+<script>
+function segPanel() {
+  return {
+    open: true,           // 默认展开，让按钮直接可见
+    generating: false,
+    dirty: false,
+    saved: false,
+    errMsg: '',
+    paragraphs: [],
+
+    get hasUnits() {
+      return this.paragraphs.some(p => p.units && p.units.length > 0);
+    },
+
+    // 用 Alpine.store() 而非 $store（在普通 JS 方法里更稳）
+    _store() { return Alpine.store('full'); },
+
+    init() {
+      // 初始化时同步一次
+      this.$nextTick(() => {
+        this._syncFromStore();
+        lucide.createIcons();
+      });
+    },
+
+    _syncFromStore() {
+      const st = this._store();
+      const paras = (st && st.full && st.full.paragraphs) || [];
+      this.paragraphs = paras
+        .filter(p => (p.text || '').trim())
+        .map(p => ({ ...p, units: p.units ? [...p.units] : [] }));
+    },
+
+    async generate() {
+      this.generating = true;
+      this.errMsg = '';
+      const st = this._store();
+      try {
+        const res = await fetch('/api/segments/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            video_id: st.videoId,
+            duration_sec: st.duration,
+          }),
+        });
+        const r = await res.json();
+        if (!r.ok) { this.errMsg = r.error || '切分失败'; return; }
+
+        // 把 units 写回 store
+        if (r.paragraphs && st.full) {
+          r.paragraphs.forEach((rp, i) => {
+            if (st.full.paragraphs[i]) st.full.paragraphs[i].units = rp.units;
+          });
+        }
+        this._syncFromStore();
+        this.dirty = false;
+        this.saved = true;
+        setTimeout(() => { this.saved = false; }, 2000);
+        if (r.warnings && r.warnings.length) this.errMsg = '⚠ ' + r.warnings.join(' / ');
+      } catch (e) {
+        this.errMsg = '网络错误：' + e.message;
+      } finally {
+        this.generating = false;
+        this.$nextTick(() => lucide.createIcons());
+      }
+    },
+
+    async saveAll() {
+      const st = this._store();
+      const res = await fetch('/api/segments/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ video_id: st.videoId, paragraphs: this.paragraphs }),
+      }).then(r => r.json()).catch(() => ({ ok: false }));
+      if (res.ok) {
+        this.paragraphs.forEach((p, i) => {
+          if (st.full && st.full.paragraphs[i]) st.full.paragraphs[i].units = [...p.units];
+        });
+        this.dirty = false;
+        this.saved = true;
+        setTimeout(() => { this.saved = false; }, 2000);
+      }
+    },
+
+    updateUnit(pi, ui, text) { this.paragraphs[pi].units[ui] = text.trim(); },
+
+    mergeDown(pi, ui) {
+      const u = this.paragraphs[pi].units;
+      if (ui >= u.length - 1) return;
+      u.splice(ui, 2, u[ui] + u[ui + 1]);
+      this.dirty = true;
+    },
+
+    splitAt(pi, ui) {
+      const text = this.paragraphs[pi].units[ui];
+      const re = /[。！？!?，、；,;]/g;
+      let lastIdx = -1, m;
+      while ((m = re.exec(text)) !== null) lastIdx = m.index;
+      if (lastIdx <= 0 || lastIdx >= text.length - 1) {
+        const mid = Math.floor(text.length / 2);
+        this.paragraphs[pi].units.splice(ui, 1, text.slice(0, mid), text.slice(mid));
+      } else {
+        this.paragraphs[pi].units.splice(ui, 1, text.slice(0, lastIdx + 1), text.slice(lastIdx + 1).trim());
+      }
+      this.dirty = true;
+      this.$nextTick(() => lucide.createIcons());
+    },
+
+    removeUnit(pi, ui) {
+      const u = this.paragraphs[pi].units;
+      if (u.length <= 1) return;
+      const removed = u.splice(ui, 1)[0];
+      if (ui > 0) u[ui - 1] += removed;
+      else u[0] = removed + u[0];
+      this.dirty = true;
+    },
+  };
+}
+</script>
 {% endblock %}

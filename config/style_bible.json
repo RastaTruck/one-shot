@@ -1,0 +1,50 @@
+{
+  "project_id": "yierbubu_finance_v1",
+  "style_pack_version": "v1",
+  "display_name": "一二布布 · 金橙说金融 v1",
+  "tagline": "MBE 扁平 × 粗描边 × 暖金橙",
+
+  "palette": [
+    {"role": "主色", "name": "金橙", "hex": "#F48A0C"},
+    {"role": "强调", "name": "深橙", "hex": "#D06E05"},
+    {"role": "深色", "name": "墨黑", "hex": "#1C1B18"},
+    {"role": "亮色", "name": "奶白", "hex": "#FAFAF7"},
+    {"role": "警示", "name": "赤红", "hex": "#D93A2C"}
+  ],
+
+  "visual_style_tags": [
+    "MBE 扁平风",
+    "粗黑描边",
+    "厚涂肌理",
+    "哑光质感",
+    "颗粒感阴影",
+    "暖金橙主调",
+    "儿童书插画感"
+  ],
+
+  "composition": "纯色或极简背景，单一主体清晰可辨，前景占画面 50-70%，9:16 竖版",
+
+  "negative_prompt_global": "写实、3D 渲染、塑料感、低清、模糊、迪士尼风、日系 anime、多余文字、水印、logo",
+
+  "aspect_ratio": "9:16",
+  "size": "2K",
+  "test_intent": "一块复古手写价格牌，上面写着 3000 划掉改成 2000，木质边框，白色底",
+
+  "ip_library_id": "yierbubu",
+  "element_library_ids": ["MBE"],
+  "background_source": "stock",
+  "bg_id": null,
+  "bg_title_overlay": false,
+  "voice_id": "zh-CN-XiaoxiaoNeural",
+  "subtitle_style": "classic_white",
+  "bgm_id": "none",
+
+  "confirmed": {
+    "visual_dna": false,
+    "ip_library": false,
+    "element_library": false,
+    "background": false,
+    "voice_subtitle": false,
+    "bgm": false
+  }
+}
