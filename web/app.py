@@ -1328,6 +1328,8 @@ async def api_topic_generate(payload: dict):
     keywords = (payload.get("keywords") or "").strip()
     extra = (payload.get("extra") or "").strip()
     n_topics = int(payload.get("n_topics") or 6)
+    intent = (payload.get("intent") or "搞懂概念").strip()
+    audience = (payload.get("audience") or "完全小白").strip()
     if not video_id or not keywords:
         raise HTTPException(400, "video_id and keywords required")
     # 把当前输入也持久化（这样刷新页面不丢）
@@ -1339,7 +1341,7 @@ async def api_topic_generate(payload: dict):
     full_extra = extra
     if notes:
         full_extra = (extra + "\n参考笔记: " + notes).strip()
-    result = _topic_generator.generate_fused_topics(video_id, keywords, full_extra, n_topics)
+    result = _topic_generator.generate_fused_topics(video_id, keywords, full_extra, n_topics, intent=intent, audience=audience)
     if result.get("topics"):
         _state.save_project_topic_pool(video_id, result["topics"])
     return JSONResponse(result)

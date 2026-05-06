@@ -32,6 +32,8 @@ def generate_fused_topics(
     keywords: str,
     extra: str = "",
     n_topics: int = 6,
+    intent: str = "搞懂概念",
+    audience: str = "完全小白",
 ) -> dict[str, Any]:
     """返回 {"topics": [...], "provider": str, "cost": float}"""
     _ensure_video_row(video_id)
@@ -40,9 +42,11 @@ def generate_fused_topics(
         keywords=keywords or "(未指定)",
         extra=extra or "(无)",
         n_topics=n_topics,
+        intent=intent,
+        audience=audience,
     )
     user = "请按上述要求生成选题列表。"
-    task_id = state.start_task(video_id, agent="topic_generator", input_data={"keywords": keywords})
+    task_id = state.start_task(video_id, agent="topic_generator", input_data={"keywords": keywords, "intent": intent, "audience": audience})
 
     result = llm_client.call_json_with_fallback(system, user)
     if result is None:

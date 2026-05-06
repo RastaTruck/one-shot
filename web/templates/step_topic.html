@@ -20,6 +20,8 @@
     notes:    initSources.notes || "",
     extra:    initSources.extra || "",
     nTopics: 6,
+    intent: "搞懂概念",
+    audience: "完全小白",
     aiTopics: initPool || [],
     picked: initPicked || null,
     loading: false,
@@ -49,7 +51,7 @@
       if (!this.keywords.trim()) { this.error = '请先填关键词'; return; }
       this.loading = true; this.error = '';
       this.elapsedSec = 0;
-      this.statusText = '生成中 · Gemini 通常 10-20 秒';
+      this.statusText = 'AI 生成中…';
       const t0 = Date.now();
       this._tickHandle = setInterval(() => {
         this.elapsedSec = Math.round((Date.now() - t0) / 1000);
@@ -59,9 +61,13 @@
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
-            video_id: this.videoId, keywords: this.keywords,
-            notes: this.notes, extra: this.extra,
+            video_id: this.videoId,
+            keywords: this.keywords,
+            notes: this.notes,
+            extra: this.extra,
             n_topics: this.nTopics,
+            intent: this.intent,
+            audience: this.audience,
           })
         });
         const data = await r.json();
@@ -90,9 +96,22 @@
     },
 
     isPickedId(id) { return this.picked && this.picked.id === id; },
+
+    // 按视角分组展示
+    topicsByPerspective() {
+      const order = ['类比降维', '身边故事', '数字锚点'];
+      const groups = {};
+      order.forEach(p => { groups[p] = []; });
+      (this.aiTopics || []).forEach(t => {
+        const p = t.perspective || '类比降维';
+        if (!groups[p]) groups[p] = [];
+        groups[p].push(t);
+      });
+      return order.map(p => ({ perspective: p, items: groups[p] })).filter(g => g.items.length > 0);
+    },
   });
 
-  // 风格选择 store — 从 DB 读最新 picked style
+  // 风格选择 store
   const initStyle = {{ (current_video.get('style_preset') if current_video else None) | tojson }};
   Alpine.store('styleStore', {
     videoId: "{{ current_video.video_id }}",
@@ -115,6 +134,21 @@
   window.Alpine ? _fn() : document.addEventListener('alpine:init', _fn);
 })();
 </script>
+
+<style>
+  .intent-btn { @apply flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[12px] font-medium transition cursor-pointer select-none; }
+  .intent-btn-active { @apply bg-ink-900 text-white border-ink-900 shadow-medium; }
+  .intent-btn-idle   { @apply bg-white text-ink-600 border-ink-200 hover:border-ink-400 hover:text-ink-900; }
+  .audience-chip { @apply px-3 py-1.5 rounded-lg border text-[11px] font-medium transition cursor-pointer select-none; }
+  .audience-chip-active { @apply bg-brand-500 text-white border-brand-500; }
+  .audience-chip-idle   { @apply bg-white text-ink-600 border-ink-200 hover:border-brand-300; }
+  .perspective-badge-类比降维 { @apply bg-violet-100 text-violet-700; }
+  .perspective-badge-身边故事 { @apply bg-emerald-100 text-emerald-700; }
+  .perspective-badge-数字锚点 { @apply bg-amber-100 text-amber-700; }
+  .depth-badge-钩子款 { @apply bg-rose-50 text-rose-600; }
+  .depth-badge-深度款 { @apply bg-blue-50 text-blue-600; }
+</style>
+
 <div x-data='{
   activeStyle: "humor",
   compareStyle: "serious",
@@ -153,10 +187,9 @@
   {# ============================================================ #}
   {% if phase == 'explore' %}
 
-  <!-- ============== 阶段 A · 探索题材（真实输入 + 真实 AI） ============== -->
   <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
 
-    <!-- 左侧 Composer：你的输入 -->
+    <!-- ===== 左侧 Composer ===== -->
     <div class="lg:col-span-5 space-y-4">
 
       <div class="rounded-2xl bg-white border border-ink-200 shadow-soft overflow-hidden">
@@ -166,26 +199,76 @@
           </div>
           <div>
             <div class="font-display font-semibold text-[13px] text-ink-900">你的输入 · 灵感源</div>
-            <div class="text-[11px] text-ink-500">三块都可编辑，离开输入框自动保存</div>
+            <div class="text-[11px] text-ink-500">填完后点「AI 生成候选选题」</div>
           </div>
-          <span class="ml-auto text-[10px] text-emerald-600 flex items-center gap-1" x-data x-show="$store.topic.statusText.startsWith('已')||$store.topic.statusText.startsWith('✓')||$store.topic.statusText.startsWith('生成完成')">
+          <span class="ml-auto text-[10px] text-emerald-600 flex items-center gap-1" x-data
+                x-show="$store.topic.statusText.startsWith('已')||$store.topic.statusText.startsWith('✓')||$store.topic.statusText.startsWith('生成完成')">
             <div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
             <span>已存</span>
           </span>
         </div>
 
         <div class="p-4 space-y-4" x-data>
+
           <!-- 关键词 -->
           <div>
             <label class="text-[11px] font-semibold text-ink-700 flex items-center gap-1 mb-1.5">
               <i data-lucide="hash" class="w-3 h-3 text-brand-500"></i>
               <span>关键词 / 主题</span>
               <span class="text-rose-500">*</span>
-              <span class="ml-auto text-[10px] text-ink-400 font-normal">必填，AI 围绕它生成选题</span>
+              <span class="ml-auto text-[10px] text-ink-400 font-normal">必填</span>
             </label>
             <input type="text" x-model="$store.topic.keywords" @input="$store.topic.saveSourcesDebounced()"
-                   placeholder="例：定投 / 期权希腊字母 / 美联储加息 / 可转债套利..."
+                   placeholder="例：加息 / 期权希腊字母 / 定投 / 可转债..."
                    class="w-full px-3 py-2 rounded-lg border border-ink-200 text-[13px] focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none">
+          </div>
+
+          <!-- ★ 意图选择 -->
+          <div>
+            <label class="text-[11px] font-semibold text-ink-700 flex items-center gap-1 mb-2">
+              <i data-lucide="target" class="w-3 h-3 text-rose-500"></i>
+              <span>你想做一条什么类型的视频？</span>
+            </label>
+            <div class="grid grid-cols-2 gap-2">
+              <template x-for="item in [
+                {id:'搞懂概念', icon:'book-open',   desc:'让人秒懂「它是什么」'},
+                {id:'探讨影响', icon:'trending-up', desc:'讲清「它会改变什么」'},
+                {id:'学会操作', icon:'tool',        desc:'给出可执行的步骤'},
+                {id:'引发共鸣', icon:'heart',       desc:'故事情绪先行'},
+              ]" :key="item.id">
+                <button type="button"
+                        @click="$store.topic.intent = item.id"
+                        :class="$store.topic.intent === item.id ? 'intent-btn intent-btn-active' : 'intent-btn intent-btn-idle'">
+                  <i :data-lucide="item.icon" class="w-3.5 h-3.5 shrink-0"></i>
+                  <div class="text-left min-w-0">
+                    <div class="text-[12px] leading-tight" x-text="item.id"></div>
+                    <div class="text-[10px] opacity-70 leading-tight truncate" x-text="item.desc"></div>
+                  </div>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <!-- ★ 受众层级 -->
+          <div>
+            <label class="text-[11px] font-semibold text-ink-700 flex items-center gap-1 mb-2">
+              <i data-lucide="users" class="w-3 h-3 text-blue-500"></i>
+              <span>目标受众是谁？</span>
+            </label>
+            <div class="flex gap-2 flex-wrap">
+              <template x-for="item in [
+                {id:'完全小白', desc:'零金融基础'},
+                {id:'有点基础', desc:'了解基本概念'},
+                {id:'进阶用户', desc:'熟悉专业术语'},
+              ]" :key="item.id">
+                <button type="button"
+                        @click="$store.topic.audience = item.id"
+                        :class="$store.topic.audience === item.id ? 'audience-chip audience-chip-active' : 'audience-chip audience-chip-idle'">
+                  <span x-text="item.id"></span>
+                  <span class="opacity-70 ml-1" x-text="'· ' + item.desc"></span>
+                </button>
+              </template>
+            </div>
           </div>
 
           <!-- 笔记 -->
@@ -193,11 +276,11 @@
             <label class="text-[11px] font-semibold text-ink-700 flex items-center gap-1 mb-1.5">
               <i data-lucide="file-text" class="w-3 h-3 text-emerald-500"></i>
               <span>笔记 / 素材片段</span>
-              <span class="ml-auto text-[10px] text-ink-400 font-normal">可空，把想法/段落贴进来 AI 会参考</span>
+              <span class="ml-auto text-[10px] text-ink-400 font-normal">可空</span>
             </label>
             <textarea x-model="$store.topic.notes" @blur="$store.topic.saveSourcesDebounced()"
-                      rows="4"
-                      placeholder="例：最近研究了一下期权，发现期权不是赌博而是对冲工具。Delta/Gamma/Vega/Theta 四个希腊字母决定一切..."
+                      rows="3"
+                      placeholder="把想法/段落贴进来，AI 会参考..."
                       class="w-full px-3 py-2 rounded-lg border border-ink-200 text-[12px] focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none resize-y"></textarea>
           </div>
 
@@ -205,31 +288,40 @@
           <div>
             <label class="text-[11px] font-semibold text-ink-700 flex items-center gap-1 mb-1.5">
               <i data-lucide="sliders" class="w-3 h-3 text-violet-500"></i>
-              <span>额外指令 / 硬约束</span>
-              <span class="ml-auto text-[10px] text-ink-400 font-normal">可空，用来约束 AI 别越界</span>
+              <span>额外约束</span>
+              <span class="ml-auto text-[10px] text-ink-400 font-normal">可空</span>
             </label>
             <textarea x-model="$store.topic.extra" @blur="$store.topic.saveSourcesDebounced()"
                       rows="2"
-                      placeholder="例：不准荐股；每条必须带一个真实人物或机构故事；标题 ≤ 25 字"
+                      placeholder="例：不准荐股；标题 ≤ 20 字；必须有真实机构名..."
                       class="w-full px-3 py-2 rounded-lg border border-ink-200 text-[12px] font-mono focus:border-violet-500 focus:ring-2 focus:ring-violet-100 outline-none resize-y"></textarea>
           </div>
 
-          <!-- 生成数量 -->
+          <!-- 生成数量 + 成本 -->
           <div class="flex items-center gap-2 pt-2 border-t border-ink-100">
             <span class="text-[11px] text-ink-700">生成</span>
             <select x-model.number="$store.topic.nTopics"
                     class="px-2 py-1 rounded-md border border-ink-200 text-[12px] outline-none focus:border-brand-500">
               <option value="3">3 条</option>
               <option value="6">6 条</option>
-              <option value="10">10 条</option>
+              <option value="9">9 条</option>
             </select>
             <span class="text-[11px] text-ink-700">候选</span>
-            <span class="ml-auto text-[10px] text-ink-400 font-mono" x-data x-show="$store.topic.cost > 0" x-text="'上次成本 ¥' + $store.topic.cost.toFixed(4)"></span>
+            <span class="ml-auto text-[10px] text-ink-400 font-mono" x-show="$store.topic.cost > 0"
+                  x-text="'上次 ¥' + $store.topic.cost.toFixed(4)"></span>
           </div>
         </div>
 
         <!-- 主行动 -->
         <div class="p-4 pt-0" x-data>
+          <!-- 当前设置摘要 -->
+          <div class="mb-2.5 px-3 py-2 rounded-lg bg-ink-50 border border-ink-100 text-[11px] text-ink-600 flex items-center gap-2 flex-wrap">
+            <span class="font-semibold text-ink-900" x-text="$store.topic.intent"></span>
+            <span class="text-ink-300">·</span>
+            <span x-text="$store.topic.audience"></span>
+            <span class="text-ink-300">·</span>
+            <span>3 视角均衡分布</span>
+          </div>
           <button @click="$store.topic.generate()" :disabled="$store.topic.loading || !$store.topic.keywords.trim()"
                   class="w-full py-3.5 rounded-xl bg-gradient-to-r from-ink-900 via-ink-800 to-brand-700 text-white font-display font-semibold text-[14px] shadow-strong hover:shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
             <template x-if="!$store.topic.loading"><i data-lucide="wand-2" class="w-4 h-4"></i></template>
@@ -238,27 +330,25 @@
             <span class="text-[11px] opacity-70 px-1.5 py-0.5 rounded bg-white/10" x-text="$store.topic.nTopics + ' 条'"></span>
           </button>
 
-          <!-- Loading 大字反馈 · 不允许用户以为按钮坏了 -->
+          <!-- Loading 反馈 -->
           <template x-if="$store.topic.loading">
             <div class="mt-3 rounded-xl border-2 border-brand-300 bg-brand-50 p-3.5">
               <div class="flex items-center gap-2.5">
                 <i data-lucide="loader-2" class="w-5 h-5 text-brand-600 animate-spin shrink-0"></i>
                 <div class="flex-1 min-w-0">
                   <div class="font-display font-semibold text-[13px] text-ink-900">
-                    AI 正在生成 <span x-text="$store.topic.nTopics"></span> 条候选 · 已等待 <span x-text="$store.topic.elapsedSec" class="font-mono text-brand-700"></span> 秒
+                    AI 正在生成 <span x-text="$store.topic.nTopics"></span> 条候选 · <span x-text="$store.topic.elapsedSec" class="font-mono text-brand-700"></span> 秒
                   </div>
-                  <div class="text-[11px] text-ink-600 mt-0.5">通常需 25-40 秒，最长可能 60 秒。请勿刷新或返回。</div>
+                  <div class="text-[11px] text-ink-600 mt-0.5">Gemini 通常 15-30 秒，请勿刷新。</div>
                 </div>
               </div>
-              <!-- 进度条（按 35 秒预估 cap 100%） -->
               <div class="mt-2.5 h-1.5 rounded-full bg-white/70 overflow-hidden">
                 <div class="h-full bg-gradient-to-r from-brand-400 to-brand-600 transition-all duration-500"
-                     :style="`width: ${Math.min(100, ($store.topic.elapsedSec / 35) * 100)}%`"></div>
+                     :style="`width: ${Math.min(100, ($store.topic.elapsedSec / 30) * 100)}%`"></div>
               </div>
             </div>
           </template>
 
-          <!-- 完成 / 错误反馈 -->
           <template x-if="!$store.topic.loading && ($store.topic.error || $store.topic.statusText)">
             <div class="mt-2 text-center text-[11px]"
                  :class="$store.topic.error ? 'text-rose-600 font-semibold' : 'text-ink-500'"
@@ -268,10 +358,10 @@
       </div>
     </div>
 
-    <!-- 右侧 结果区 -->
-    <div class="lg:col-span-7 space-y-3" id="ai-topics-list" x-data>
+    <!-- ===== 右侧 结果区 ===== -->
+    <div class="lg:col-span-7 space-y-4" id="ai-topics-list" x-data>
 
-      <!-- 已锁定题材（顶部) -->
+      <!-- 已锁定题材 -->
       <div x-show="$store.topic.picked" x-cloak
            class="rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white p-4 shadow-medium">
         <div class="flex items-center gap-3">
@@ -281,11 +371,15 @@
           <div class="flex-1 min-w-0">
             <div class="text-[10px] text-white/70 tracking-wider uppercase font-semibold">已锁定题材</div>
             <div class="font-display font-semibold text-[15px] truncate" x-text="$store.topic.picked?.title"></div>
-            <div class="text-[11px] text-white/80 mt-0.5" x-text="($store.topic.picked?.category||'') + ' · 评分 ' + ($store.topic.picked?.score||0)"></div>
+            <div class="text-[11px] text-white/80 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span x-text="$store.topic.picked?.perspective || ''"></span>
+              <span x-show="$store.topic.picked?.depth" x-text="'· ' + ($store.topic.picked?.depth || '')"></span>
+              <span x-text="'· 评分 ' + ($store.topic.picked?.score || 0)"></span>
+            </div>
           </div>
           <a href="?phase=direct"
              class="shrink-0 px-4 py-2 rounded-lg bg-white text-emerald-700 font-semibold text-[12px] flex items-center gap-1 hover:bg-emerald-50">
-            <span>下一步：风格定向</span>
+            <span>下一步：风格</span>
             <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
           </a>
         </div>
@@ -298,61 +392,122 @@
           <i data-lucide="sparkles" class="w-6 h-6"></i>
         </div>
         <div class="font-display font-semibold text-[15px] text-ink-900">还没有候选选题</div>
-        <div class="mt-1 text-[12px] text-ink-500">在左边填关键词（必填）和可选的笔记/指令，<br>点"AI 生成候选选题"。</div>
+        <div class="mt-1 text-[12px] text-ink-500">
+          在左边选好意图 + 受众 + 关键词，<br>点「AI 生成候选选题」。
+        </div>
+        <div class="mt-4 flex items-center justify-center gap-4 text-[11px]">
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-50 text-violet-700">
+            <div class="w-2 h-2 rounded-full bg-violet-400"></div>
+            <span>类比降维</span>
+          </div>
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700">
+            <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+            <span>身边故事</span>
+          </div>
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-700">
+            <div class="w-2 h-2 rounded-full bg-amber-400"></div>
+            <span>数字锚点</span>
+          </div>
+        </div>
       </div>
 
       <!-- Loading 骨架 -->
       <div x-show="$store.topic.loading" x-cloak class="space-y-3">
         <template x-for="i in $store.topic.nTopics" :key="i">
           <div class="rounded-2xl bg-white border border-ink-200 p-4 animate-pulse">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="h-4 w-16 bg-violet-100 rounded-full"></div>
+              <div class="h-4 w-12 bg-rose-50 rounded-full"></div>
+            </div>
             <div class="h-4 w-3/4 bg-ink-100 rounded mb-2"></div>
-            <div class="h-3 w-1/2 bg-ink-100 rounded mb-3"></div>
             <div class="h-3 w-full bg-ink-50 rounded"></div>
           </div>
         </template>
       </div>
 
-      <!-- 真实生成的候选 -->
-      <template x-for="t in $store.topic.aiTopics" :key="t.id">
-        <div @click="$store.topic.pickTopic(t)"
-             class="group rounded-2xl bg-white border-2 cursor-pointer transition p-4 hover:shadow-medium"
-             :class="$store.topic.isPickedId(t.id) ? 'border-emerald-500 shadow-medium ring-2 ring-emerald-100' : 'border-ink-200 hover:border-brand-400'">
-          <div class="flex items-start gap-3">
-            <div class="shrink-0 text-[10px] font-mono text-ink-400 mt-1 bg-ink-50 px-1.5 py-0.5 rounded" x-text="t.id"></div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-start gap-2">
-                <div class="flex-1 font-display font-semibold text-[14px] text-ink-900 leading-snug" x-text="t.title"></div>
-                <span class="badge text-[10px] shrink-0" :class="(t.score||0) >= 14 ? 'badge-green' : 'badge-gray'" x-text="(t.score||0) + '/15'"></span>
-                <template x-if="$store.topic.isPickedId(t.id)">
-                  <span class="badge badge-green text-[10px] shrink-0">✓ 已选</span>
+      <!-- ★ 视角分组展示 -->
+      <template x-if="$store.topic.aiTopics.length > 0 && !$store.topic.loading">
+        <div class="space-y-5">
+          <template x-for="group in $store.topic.topicsByPerspective()" :key="group.perspective">
+            <div>
+              <!-- 视角标题 -->
+              <div class="flex items-center gap-2 mb-2.5">
+                <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold"
+                     :class="{
+                       'bg-violet-100 text-violet-700': group.perspective === '类比降维',
+                       'bg-emerald-100 text-emerald-700': group.perspective === '身边故事',
+                       'bg-amber-100 text-amber-700': group.perspective === '数字锚点',
+                     }">
+                  <i class="w-3 h-3"
+                     :data-lucide="group.perspective === '类比降维' ? 'layers' : group.perspective === '身边故事' ? 'user' : 'bar-chart-2'"></i>
+                  <span x-text="group.perspective"></span>
+                </div>
+                <div class="h-px flex-1 bg-ink-100"></div>
+                <span class="text-[10px] text-ink-400" x-text="group.items.length + ' 条'"></span>
+              </div>
+
+              <!-- 该视角的选题卡片 -->
+              <div class="space-y-2.5">
+                <template x-for="t in group.items" :key="t.id">
+                  <div @click="$store.topic.pickTopic(t)"
+                       class="group rounded-2xl bg-white border-2 cursor-pointer transition p-4 hover:shadow-medium"
+                       :class="$store.topic.isPickedId(t.id)
+                         ? 'border-emerald-500 shadow-medium ring-2 ring-emerald-100'
+                         : 'border-ink-200 hover:border-brand-400'">
+                    <div class="flex items-start gap-3">
+                      <div class="shrink-0 text-[10px] font-mono text-ink-400 mt-1 bg-ink-50 px-1.5 py-0.5 rounded"
+                           x-text="t.id"></div>
+                      <div class="flex-1 min-w-0">
+                        <!-- 标签行 -->
+                        <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                          <!-- 深度标签 -->
+                          <span class="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                                :class="(t.depth === '钩子款') ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'"
+                                x-text="t.depth || '钩子款'"></span>
+                          <!-- 评分 -->
+                          <span class="badge text-[10px] ml-auto"
+                                :class="(t.score||0) >= 14 ? 'badge-green' : 'badge-gray'"
+                                x-text="(t.score||0) + '/15'"></span>
+                          <!-- 已选 -->
+                          <template x-if="$store.topic.isPickedId(t.id)">
+                            <span class="badge badge-green text-[10px]">✓ 已选</span>
+                          </template>
+                        </div>
+                        <!-- 标题 -->
+                        <div class="font-display font-semibold text-[14px] text-ink-900 leading-snug"
+                             x-text="t.title"></div>
+                        <!-- Why -->
+                        <div class="mt-1.5 text-[11px] text-ink-600 italic flex items-start gap-1" x-show="t.why">
+                          <i data-lucide="sparkles" class="w-3 h-3 shrink-0 mt-0.5 text-brand-500"></i>
+                          <span x-text="t.why"></span>
+                        </div>
+                        <!-- 评分分项 -->
+                        <div class="mt-2 flex items-center gap-3 text-[10px] flex-wrap">
+                          <span class="text-ink-500">痛感 <b class="text-rose-600" x-text="t.pain||0"></b></span>
+                          <span class="text-ink-500">反常识 <b class="text-amber-600" x-text="t.surprise||0"></b></span>
+                          <span class="text-ink-500">钩子 <b class="text-blue-600" x-text="t.hook||0"></b></span>
+                          <span class="text-ink-500">难度 <b class="text-emerald-600" x-text="t.difficulty||0"></b></span>
+                          <span class="ml-auto px-1.5 py-0.5 rounded-md bg-brand-50 text-brand-700 font-medium"
+                                x-text="'⭐ ' + (t.best_style || '-')"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </template>
               </div>
-              <div class="mt-1 text-[11px] text-ink-500" x-text="(t.category||'') + ' · ' + (t.tags||[]).join(' / ')"></div>
-              <div class="mt-2 text-[11px] text-ink-700 italic flex items-start gap-1" x-show="t.why">
-                <i data-lucide="sparkles" class="w-3 h-3 shrink-0 mt-0.5 text-brand-500"></i>
-                <span x-text="t.why"></span>
-              </div>
-              <div class="mt-2 flex items-center gap-3 text-[10px] flex-wrap">
-                <span class="text-ink-500">痛感 <b class="text-rose-600" x-text="t.pain||0"></b></span>
-                <span class="text-ink-500">反常识 <b class="text-amber-600" x-text="t.surprise||0"></b></span>
-                <span class="text-ink-500">钩子 <b class="text-blue-600" x-text="t.hook||0"></b></span>
-                <span class="text-ink-500">难度 <b class="text-emerald-600" x-text="t.difficulty||0"></b></span>
-                <span class="ml-auto px-1.5 py-0.5 rounded-md bg-brand-50 text-brand-700 font-medium" x-text="'⭐ 适合 ' + (t.best_style||'-')"></span>
-              </div>
             </div>
+          </template>
+
+          <!-- 底部操作栏 -->
+          <div class="flex items-center justify-between text-[11px] text-ink-500 px-2 py-1">
+            <span>共 <b class="text-ink-900" x-text="$store.topic.aiTopics.length"></b> 条 · 点任意卡片选定</span>
+            <button @click="$store.topic.generate()" class="btn-ghost text-[11px]">
+              <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+              <span>重新生成</span>
+            </button>
           </div>
         </div>
       </template>
-
-      <!-- 已生成的二级行动 -->
-      <div x-show="$store.topic.aiTopics.length > 0 && !$store.topic.loading" x-cloak
-           class="flex items-center justify-between text-[11px] text-ink-500 px-2 py-1">
-        <span>共 <b class="text-ink-900" x-text="$store.topic.aiTopics.length"></b> 条 · 点击任意一条采用 · 不满意可换关键词重新生成</span>
-        <button @click="$store.topic.generate()" class="btn-ghost text-[11px]">
-          <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-          <span>重新生成</span>
-        </button>
-      </div>
 
     </div>
   </div>
@@ -364,7 +519,6 @@
   {# ============================================================ #}
   {% if phase == 'direct' %}
 
-  <!-- ============== 阶段 B · 给已选题材定风格（真实绑定） ============== -->
   <div x-data="{ get S(){ return Alpine.store('topic'); } }" class="space-y-5">
 
     <!-- 已选题材大卡 -->
@@ -375,23 +529,25 @@
           <i data-lucide="target" class="w-5 h-5 text-white"></i>
         </div>
         <div class="flex-1 min-w-0">
-          <div class="text-[10px] text-brand-200 font-semibold tracking-wider uppercase">已锁定题材 · 给它挑一个最贴合的风格</div>
-          <div class="mt-1 font-display font-semibold text-[20px] leading-snug" x-text="S.picked?.title || '尚未选题，请回阶段 A'"></div>
+          <div class="text-[10px] text-brand-200 font-semibold tracking-wider uppercase">已锁定题材 · 给它挑一个风格</div>
+          <div class="mt-1 font-display font-semibold text-[20px] leading-snug"
+               x-text="S.picked?.title || '尚未选题，请回阶段 A'"></div>
           <div class="mt-1 text-[11px] text-white/60 flex items-center gap-2 flex-wrap" x-show="S.picked">
-            <span x-text="S.picked?.category"></span>
-            <span>·</span>
-            <span>评分 <b class="text-white" x-text="S.picked?.score"></b>/15</span>
-            <span>·</span>
-            <span>AI 推荐 <b class="text-white" x-text="S.picked?.best_style"></b></span>
+            <span x-text="S.picked?.perspective || ''"></span>
+            <span x-show="S.picked?.depth">·</span>
+            <span x-text="S.picked?.depth || ''"></span>
+            <span>· 评分 <b class="text-white" x-text="S.picked?.score"></b>/15</span>
+            <span>· AI 推荐 <b class="text-white" x-text="S.picked?.best_style"></b></span>
           </div>
         </div>
-        <a href="?phase=explore" class="shrink-0 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-[12px] flex items-center gap-1">
+        <a href="?phase=explore"
+           class="shrink-0 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-[12px] flex items-center gap-1">
           <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>换题</span>
         </a>
       </div>
     </div>
 
-    <!-- 5 个风格预设 -->
+    <!-- 5 风格预设 -->
     <div>
       <div class="flex items-end justify-between mb-3">
         <div>
@@ -409,12 +565,14 @@
              :style="$store.styleStore.picked?.id === '{{ ps.id }}' ? 'border-color: {{ ps.color }};' : ''"
              class="cursor-pointer rounded-2xl bg-white p-4 transition relative">
           <template x-if="$store.styleStore.picked?.id === '{{ ps.id }}'">
-            <div class="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-white" :style="'background: {{ ps.color }};'">
+            <div class="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-white"
+                 :style="'background: {{ ps.color }};'">
               <i data-lucide="check" class="w-3 h-3"></i>
             </div>
           </template>
           <div class="flex items-center gap-2">
-            <div class="w-10 h-10 rounded-lg flex items-center justify-center text-[20px]" style="background: {{ ps.bg }};">{{ ps.emoji }}</div>
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center text-[20px]"
+                 style="background: {{ ps.bg }};">{{ ps.emoji }}</div>
             <div class="min-w-0">
               <div class="font-display font-semibold text-[13px] text-ink-900">{{ ps.name }}</div>
               <div class="text-[10px] text-ink-500 truncate">{{ ps.desc }}</div>
@@ -447,12 +605,12 @@
       </div>
       <a href="{{ next_step_url }}"
          class="shrink-0 px-5 py-2.5 rounded-xl bg-white text-emerald-700 font-semibold text-[13px] flex items-center gap-1.5 hover:bg-emerald-50">
-        <span>进入文案 · AI 写 3 套</span>
+        <span>进入文案</span>
         <i data-lucide="arrow-right" class="w-4 h-4"></i>
       </a>
     </div>
 
-    <!-- 没选题材的提示 -->
+    <!-- 没选题材提示 -->
     <div x-data x-show="!$store.topic.picked" x-cloak
          class="rounded-2xl bg-amber-50 border border-amber-200 p-5 text-center">
       <i data-lucide="alert-triangle" class="w-6 h-6 mx-auto text-amber-600 mb-2"></i>
