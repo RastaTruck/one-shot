@@ -27,6 +27,8 @@
     provider: '',
     cost: 0,
     statusText: '就绪',
+    currentStyleId: "{{ style_preset.id }}",
+    styleSwitching: false,
 
     async init() {
       // 拉灵感库
@@ -57,6 +59,24 @@
         if (this._tickHandle) { clearInterval(this._tickHandle); this._tickHandle = null; }
         this.loading = false;
       }
+    },
+
+    async switchStyle(styleId) {
+      if (this.currentStyleId === styleId || this.loading) return;
+      this.styleSwitching = true;
+      this.currentStyleId = styleId;
+      try {
+        await fetch('/api/style/pick', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({video_id: this.videoId, style_id: styleId})
+        });
+      } catch(e) {}
+      this.styleSwitching = false;
+      // 清旧稿、重新生成
+      this.drafts = [];
+      this.pickedOutlineId = null;
+      await this.generate(true);
+      setTimeout(() => lucide.createIcons(), 100);
     },
 
     pickOutline(draft) {
@@ -147,32 +167,22 @@
   </div>
 
   <!-- ========== 顶条 ========== -->
-  <div class="rounded-2xl bg-white border border-ink-200 shadow-soft p-4 mb-5">
-    <div class="flex items-center gap-3">
-      <div class="shrink-0 flex items-center gap-3 pr-4 border-r border-ink-200">
-        <div class="w-10 h-10 rounded-lg flex items-center justify-center text-[20px]" style="background: {{ style_preset.bg }};">{{ style_preset.emoji }}</div>
-        <div class="min-w-0">
-          <div class="text-[10px] text-ink-500 flex items-center gap-1">
-            <i data-lucide="link" class="w-2.5 h-2.5"></i>
-            <span>继承自选题</span>
-            <a href="/project/{{ current_video.video_id }}/topic?phase=explore" class="text-brand-600 hover:text-brand-800 underline ml-1">改</a>
-          </div>
-          <div class="text-[13px] font-semibold text-ink-900 truncate max-w-[280px]">{{ current_video.title }}</div>
-          <div class="text-[10px] text-brand-700 flex items-center gap-1">
-            <span>风格: {{ style_preset.name }}</span>
-            <a href="/project/{{ current_video.video_id }}/topic?phase=direct" class="text-brand-600 hover:text-brand-800 underline">换</a>
-          </div>
-        </div>
-      </div>
+  <div class="rounded-2xl bg-white border border-ink-200 shadow-soft p-4 mb-5 space-y-3">
 
-      <div class="flex-1 text-[12px] text-ink-600">
-        <div class="font-semibold text-ink-900">第 1 步 · 要素提炼</div>
-        <div class="text-[11px] text-ink-500">AI 给你 3 个差异化方向 · 选一个 + 时长 → 生成完整口播文稿</div>
-        <!-- 文案策略标签：继承自选题的 intent/perspective/audience -->
+    <!-- 行一：选题信息 + 操作按钮 -->
+    <div class="flex items-start gap-3">
+      <div class="flex-1 min-w-0">
+        <div class="text-[10px] text-ink-400 flex items-center gap-1 mb-0.5">
+          <i data-lucide="link" class="w-2.5 h-2.5"></i>
+          <span>继承自选题</span>
+          <a href="/project/{{ current_video.video_id }}/topic?phase=explore" class="text-brand-600 hover:text-brand-800 underline ml-1">换选题</a>
+        </div>
+        <div class="text-[14px] font-semibold text-ink-900 leading-snug truncate">{{ current_video.title }}</div>
+        <!-- intent / perspective / audience 标签 -->
         {% set _intent = topic_meta.get('intent', '') if topic_meta else '' %}
         {% set _perspective = topic_meta.get('perspective', '') if topic_meta else '' %}
         {% set _audience = topic_meta.get('audience', '') if topic_meta else '' %}
-        {% if _intent or _perspective %}
+        {% if _intent or _perspective or _audience %}
         <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
           {% if _intent %}
           <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-ink-900 text-white text-[10px] font-semibold">
@@ -183,27 +193,53 @@
           <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold
             {% if _perspective == '类比降维' %}bg-violet-100 text-violet-700
             {% elif _perspective == '身边故事' %}bg-emerald-100 text-emerald-700
-            {% else %}bg-amber-100 text-amber-700{% endif %}">
-            {{ _perspective }}
-          </span>
+            {% else %}bg-amber-100 text-amber-700{% endif %}">{{ _perspective }}</span>
           {% endif %}
           {% if _audience %}
-          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">
-            {{ _audience }}
-          </span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">{{ _audience }}</span>
           {% endif %}
-          <a href="/project/{{ current_video.video_id }}/topic?phase=explore"
-             class="text-[10px] text-ink-400 hover:text-brand-600 underline">换选题</a>
         </div>
         {% endif %}
       </div>
-
-      <div class="shrink-0 flex items-center gap-1.5">
-        <button @click="S.generate(true)" :disabled="S.loading" class="btn-ghost text-[11px]">
-          <i data-lucide="refresh-cw" class="w-3 h-3"></i><span>重新提炼</span>
+      <div class="shrink-0 flex items-center gap-1.5 pt-0.5">
+        <button @click="S.generate(true)" :disabled="S.loading || S.styleSwitching" class="btn-ghost text-[11px]">
+          <i data-lucide="refresh-cw" class="w-3 h-3" :class="S.loading ? 'animate-spin' : ''"></i>
+          <span x-text="S.loading ? '生成中…' : '重新提炼'"></span>
         </button>
       </div>
     </div>
+
+    <!-- 行二：口吻风格切换条 -->
+    <div class="border-t border-ink-100 pt-3">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-[10px] font-semibold text-ink-400 uppercase tracking-wide">口吻风格</span>
+        <span class="text-[10px] text-ink-400">· 切换后自动重新生成 3 套大纲</span>
+        <template x-if="S.styleSwitching">
+          <span class="text-[10px] text-brand-600 flex items-center gap-1">
+            <i data-lucide="loader-2" class="w-2.5 h-2.5 animate-spin"></i>切换中…
+          </span>
+        </template>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        {% for ps in style_presets %}
+        <button type="button"
+                @click="S.switchStyle('{{ ps.id }}')"
+                :disabled="S.loading || S.styleSwitching"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-medium transition border"
+                :class="S.currentStyleId === '{{ ps.id }}'
+                  ? 'text-white shadow-soft border-transparent'
+                  : 'bg-white text-ink-700 border-ink-200 hover:border-ink-400 hover:bg-ink-50'"
+                :style="S.currentStyleId === '{{ ps.id }}' ? 'background: {{ ps.color }};' : ''">
+          <span>{{ ps.emoji }}</span>
+          <span>{{ ps.name }}</span>
+          <template x-if="S.currentStyleId === '{{ ps.id }}'">
+            <i data-lucide="check" class="w-3 h-3 opacity-90"></i>
+          </template>
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+
   </div>
 
   {% if full_summary %}

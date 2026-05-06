@@ -1378,7 +1378,7 @@ async def api_topic_pick(payload: dict):
     with _state.get_conn() as conn:
         conn.execute("DELETE FROM script_drafts WHERE video_id = ?", (video_id,))
         conn.execute("DELETE FROM script_working WHERE video_id = ?", (video_id,))
-    return JSONResponse({"ok": True, "next": f"/project/{video_id}/topic?phase=direct"})
+    return JSONResponse({"ok": True, "next": f"/project/{video_id}/script"})
 
 
 @app.post("/api/style/pick")
@@ -1450,6 +1450,7 @@ async def page_script(request: Request, video_id: str):
     return TEMPLATES.TemplateResponse("step_script.html", build_ctx(
         request, "script", video_id,
         style_preset=style,
+        style_presets=STYLE_PRESETS,
         initial_drafts=drafts,
         initial_working=working,
         archives=archives,
@@ -1535,7 +1536,9 @@ async def api_script_full_generate(payload: dict):
         raise HTTPException(400, "video_id and outline required")
     style = _script_style_for(video_id)
     topic = _script_topic_for(video_id)
-    result = _script_writer.generate_full_script(video_id, topic, style, outline, duration_sec, pace)
+    topic_meta = _script_topic_meta_for(video_id)
+    result = _script_writer.generate_full_script(video_id, topic, style, outline, duration_sec, pace,
+                                                  topic_meta=topic_meta)
     if result.get("full"):
         # 给每段加 marked 字段（前端勾选/标记用）
         for p in result["full"].get("paragraphs", []):

@@ -12,6 +12,7 @@ LLM 升级后替换此文件（保留函数签名）。
 """
 from __future__ import annotations
 
+import random
 import re
 from typing import Any
 
@@ -19,9 +20,24 @@ from pipeline import shot_table as _st
 from pipeline.asset_library import AssetLibrary
 
 # 单个 sub-shot 时长上限（秒）。超过自动切分到下一段。
-MAX_SHOT_DUR = 6.0   # ~4-6s 一个 shot，表情随 shot 自然切换
+# 上限调到 8s（≈44字），给"句末标点优先"装段策略留出 buffer：
+# 字数到软阈值后，宁可多装几字等到句末再切，也不在逗号处截断。
+MAX_SHOT_DUR = 8.0
 MIN_SHOT_DUR = 2.0
 PACE = 5.5  # 字/秒
+
+# ── 装 shot 的标点感知阈值 ──
+# 软阈值：到此字数即开始寻找"句末标点收尾"，命中就立刻切
+# 硬阈值：超过则不管末尾是什么，强制切（防止超长 shot 把 cap_chars 撑爆）
+# 之间的"等待区" = 给一两个 unit 的余地走到下一个 。！？
+PACK_SOFT_CAP = 24      # ~4.4s
+PACK_HARD_CAP = 40      # ~7.3s
+PACK_SEMI_BONUS = 8     # 没等到 。！？，但 ; 也算次优收尾，这里允许的额外字数
+
+# 标点权重分级（决定 shot 边界的合法性）
+_PUNCT_SENT_END = "。！？!?"      # 一级停顿：句末
+_PUNCT_SEMI = "；;"               # 二级停顿：分号
+_PUNCT_COMMA = "，,"              # 三级停顿：逗号（最差选项）
 
 
 # --------- 映射表 ---------
@@ -201,18 +217,14 @@ def _search_expr_with_fallback(
     library: "AssetLibrary",
     character: str | None,
 ) -> list:
-    """带情绪近邻链的表情搜索。
-    1. 精确搜主 tags
-    2. 没有 → 按 EMOTION_PROXIMITY 展开近邻 tag 再搜
-    3. 还没有 → 只按 character 过滤但要求有 scene_tags（有情绪标注的）
-    4. 最终兜底 → 该角色所有表情（避免空槽，但绝不混入其他角色）
+    """带情绪近邻链的表情搜索 · 主动扩池。
+    主路径：主 tags 池 ∪ 近邻 tags 池（合并去重）→ 池大幅扩宽，避免反复撞车
+    兜底：角色内任何带情绪标注的 / 角色全集
     """
     # 1. 主 tag 精确搜
-    pool = library.search_expressions(tags, character=character, only_reviewed=False)
-    if pool:
-        return pool
+    main_pool = library.search_expressions(tags, character=character, only_reviewed=False)
 
-    # 2. 近邻展开
+    # 2. 主动展开近邻（即使主池非空也合并，扩宽候选）
     expanded: list[str] = []
     seen: set[str] = set(tags)
     for t in tags:
@@ -220,10 +232,18 @@ def _search_expr_with_fallback(
             if nb not in seen:
                 expanded.append(nb)
                 seen.add(nb)
-    if expanded:
-        pool = library.search_expressions(expanded, character=character, only_reviewed=False)
-        if pool:
-            return pool
+    nb_pool = library.search_expressions(expanded, character=character, only_reviewed=False) if expanded else []
+
+    # 合并主池 + 近邻池（保序去重，主池靠前 → 语义优先级保持）
+    if main_pool or nb_pool:
+        merged: list = []
+        seen_ids: set[str] = set()
+        for a in list(main_pool) + list(nb_pool):
+            if a.id in seen_ids:
+                continue
+            seen_ids.add(a.id)
+            merged.append(a)
+        return merged
 
     # 3. 角色内有情绪标注的表情（兜底但情绪不乱）
     if character:
@@ -259,7 +279,10 @@ def _pick_least_used(
     # 先从 recent 之外选
     outside = [a for a in pool if a.id not in recent_set]
     candidates = outside if outside else pool  # 池太小就不管 recent
-    best = min(candidates, key=lambda a: usage.get(a.id, 0))
+    # 找 usage 最小值，再在所有并列最小的里随机选一个 → 打散同分头部偏置
+    min_u = min(usage.get(a.id, 0) for a in candidates)
+    tied = [a for a in candidates if usage.get(a.id, 0) == min_u]
+    best = random.choice(tied)
     usage[best.id] = usage.get(best.id, 0) + 1
     return best.id
 
@@ -294,6 +317,16 @@ def _pick_element_pool(text: str, library: "AssetLibrary", k: int = 4) -> list:
 
     scored.sort(key=lambda x: -x[0])
     result = [a for _, a in scored[:k]]
+
+    # 2b. 关键词未命中时（target_tags 为空）→ 从所有元素里随机兜底，保证元素不空
+    if not target_tags:
+        all_elems = library.all("elements")
+        if all_elems:
+            # 优先返回有 categories 标注的元素（质量更高），不足再补无标注
+            tagged = [a for a in all_elems if (a.meta or {}).get("categories")]
+            untagged = [a for a in all_elems if not (a.meta or {}).get("categories")]
+            pool_fallback = (tagged + untagged)[:k]
+            return pool_fallback
 
     # 3. 降级：新标签结果不足时，用英文关键词在无标签素材里补充
     if len(result) < k and fallback_pool and target_tags:
@@ -527,32 +560,76 @@ def _pack_sentences_into_shots(sentences: list[str]) -> list[str]:
     return shots
 
 
+def _ends_with_any(s: str, charset: str) -> bool:
+    return bool(s) and s[-1] in charset
+
+
 def _pack_units_with_tracking(units: list[str]) -> list[tuple[str, list[str]]]:
-    """同 _pack_sentences_into_shots，但同时追踪每个 shot 包含哪些 units。
+    """装 shot 的核心算法 · 标点感知版（治"配音不自然"第一层）。
+
+    策略（关键改动）：
+    - 旧版：纯字数贪心，到 cap=33 就强制切 → shot 末尾标点几乎随机，
+            导致跨 mp3 拼接时"逗号尾"被拉成"假长停顿"。
+    - 新版：分级阈值 + 标点权重
+        * 字数 < SOFT_CAP(24)：无脑装
+        * 字数 ∈ [SOFT_CAP, HARD_CAP]：遇到 。！？ 立即切；
+                                      末段允许 ; 收尾（次优）
+        * 字数 ≥ HARD_CAP(40)：不管末尾是什么强制切（兜底）
+    - 后果：≥90% 的 shot 末尾是句末标点 → TTS 收尾自然 →
+            跨 shot mp3 拼接时不再出现"该停的不停、不该停的停"
+
     返回 [(packed_text, [unit1, unit2, ...]), ...]
     """
-    cap_chars = int(MAX_SHOT_DUR * PACE)   # 33
     min_chars = int(MIN_SHOT_DUR * PACE)   # 11
     shots: list[tuple[str, list[str]]] = []
     cur_text = ""
     cur_units: list[str] = []
 
+    def _flush() -> None:
+        nonlocal cur_text, cur_units
+        if cur_text:
+            shots.append((cur_text, cur_units))
+            cur_text = ""
+            cur_units = []
+
     for u in units:
-        if len(u) >= cap_chars:
-            if cur_text:
-                shots.append((cur_text, cur_units)); cur_text = ""; cur_units = []
+        # 单个 unit 自身就超 hard_cap：单独成 shot（不破坏字幕单元完整性）
+        if len(u) >= PACK_HARD_CAP:
+            _flush()
             shots.append((u, [u]))
             continue
-        if not cur_text:
-            cur_text = u; cur_units = [u]
-        elif len(cur_text) + len(u) <= cap_chars:
-            cur_text += u; cur_units.append(u)
-        else:
-            shots.append((cur_text, cur_units))
-            cur_text = u; cur_units = [u]
 
+        # 装入
+        if not cur_text:
+            cur_text = u
+            cur_units = [u]
+        else:
+            cur_text += u
+            cur_units.append(u)
+
+        cur_len = len(cur_text)
+        ends_sent = _ends_with_any(cur_text, _PUNCT_SENT_END)
+        ends_semi = _ends_with_any(cur_text, _PUNCT_SEMI)
+
+        # 决策：此刻该不该切？
+        if cur_len >= PACK_HARD_CAP:
+            # 超硬上限，不管末尾是什么强制切
+            _flush()
+        elif cur_len >= PACK_SOFT_CAP and ends_sent:
+            # 进入软区且末尾是 。！？ —— 黄金切点
+            _flush()
+        elif cur_len >= PACK_SOFT_CAP + PACK_SEMI_BONUS and ends_semi:
+            # 软区 + 额外 buffer 还没等到句末，分号也接受
+            _flush()
+        # else：还没到软区，或在软区但末尾是逗号 → 继续装等下一个 unit
+
+    # 末尾兜底：太短的尾段并入上一 shot；否则直接成段
     if cur_text:
-        if shots and len(cur_text) < min_chars and len(shots[-1][0]) + len(cur_text) <= cap_chars + 6:
+        if (
+            shots
+            and len(cur_text) < min_chars
+            and len(shots[-1][0]) + len(cur_text) <= PACK_HARD_CAP + 6
+        ):
             prev_text, prev_units = shots[-1]
             shots[-1] = (prev_text + cur_text, prev_units + cur_units)
         else:
@@ -607,24 +684,21 @@ def generate_shot_table(
     expr_usage: dict[str, int] = {}
     elem_usage: dict[str, int] = {}
     # 近期使用窗口：记录最近 RECENT_WINDOW 个表情/元素 id，避免连续重复
-    # 8 = 典型视频 15-20 shot 里，同一个表情至少间隔 8 个 shot 才可能复现
-    RECENT_WINDOW = 8
+    # 14 = 典型视频 15-20 shot 里，几乎全程都不让同一个素材复现
+    RECENT_WINDOW = 14
     recent_exprs: list[str] = []
     recent_elems: list[str] = []
     # 布局均匀交替计数：每 LAYOUT_CYCLE 个 shot 中，最后 1 个放 element（left_right）
     # 其余用 center（只有表情），保证约 1:4 节奏（4 center → 1 element）
     # 改为 5 是因为：典型 topic 元素池只有 5-8 个，CYCLE=3 时一个 15-shot 视频
     # 需要 5 个 element slot，池耗尽后必然重复；CYCLE=5 降到 3 个 slot 更安全。
-    LAYOUT_CYCLE = 5   # 5 shot 为一个周期
-    layout_counter = 0  # 当前周期内已分配的 shot 数
-    # 元素最多重复次数阈值：超过则跳过（宁可不放也不放重复的）
-    ELEM_MAX_REUSE = 1  # 非强制 shot 里每个元素最多用 1 次
-
-    # 双表情节奏控制：每 DUAL_CYCLE 个 shot 中，DUAL_POSITIONS 位置触发双表情
-    # 目标：约 40% 双表情（2/5）；双表情帧不加元素，避免三者同框
-    DUAL_CYCLE = 5
-    DUAL_POSITIONS = {1, 4}   # 0-indexed，2/5 = 40%
-    dual_counter = 0
+    # 布局节奏：每 ELEM_CYCLE 个 shot 里，ELEM_POSITIONS 位置用「表情+元素」左右布局
+    # 其余位置用「表情居中」。目标 40% 有元素（2/5）。
+    ELEM_CYCLE = 5
+    ELEM_POSITIONS = {1, 3}   # 0-indexed，2/5 = 40%
+    layout_counter = 0
+    # 元素最多重复次数：池没耗尽前每个元素最多 1 次；池真耗尽再考虑放元素与否
+    ELEM_MAX_REUSE = 1
 
     for para in paragraphs:
         section = _infer_section(para.get("role", ""))
@@ -651,8 +725,10 @@ def generate_shot_table(
             sid_counter += 1
             shot_id = f"S{sid_counter:02d}"
 
-            # sub-shot 时长：基于字数 + ±15% 容差
-            dur = max(MIN_SHOT_DUR, min(MAX_SHOT_DUR, len(sub) / PACE))
+            # sub-shot 预估时长：纯按字数算，不再卡 MAX_SHOT_DUR 上限——
+            # 标点感知装段后，shot 末尾必须收在句号，字数会自然落在 22-44 区间，
+            # 估时跟着实际字数走才准（剪辑层最终用 ffprobe 真实音频，估时只是 UI 显示）
+            dur = max(MIN_SHOT_DUR, len(sub) / PACE)
 
             # ---- 语境驱动表情匹配 ----
             # 1. 用 sub-shot 自身文本推 scene_tags（比整段更精确）
@@ -663,45 +739,30 @@ def generate_shot_table(
             # 2. 带情绪近邻链搜索表情池（绝不随机乱 fallback）
             expr_pool_shot = _search_expr_with_fallback(sub_tags, library, ip_char)
 
-            # 3. 从池里选使用次数最少、且不在近期窗口内的表情
+            # 3. 从池里选使用次数最少、且不在近期窗口内的表情（语义驱动）
             expr_id_1 = ""
-            expr_id_2 = ""
             if expr_pool_shot:
                 expr_id_1 = _pick_least_used(expr_pool_shot, expr_usage, recent_exprs)
                 recent_exprs.append(expr_id_1)
                 if len(recent_exprs) > RECENT_WINDOW:
                     recent_exprs.pop(0)
 
-            # 3b. 双表情：在同一情绪池里选第二个，40% 频率触发
-            #   - 双表情帧不加 element（三者同框太杂）
-            #   - 只有池 ≥ 2 个可选且 expr_id_1 存在时才触发
-            want_dual_expr = (dual_counter % DUAL_CYCLE) in DUAL_POSITIONS
-            dual_counter += 1
-            if want_dual_expr and expr_id_1:
-                pool_for_2 = [a for a in expr_pool_shot if a.id != expr_id_1]
-                if pool_for_2:
-                    expr_id_2 = _pick_least_used(pool_for_2, expr_usage, recent_exprs)
-                    recent_exprs.append(expr_id_2)
-                    if len(recent_exprs) > RECENT_WINDOW:
-                        recent_exprs.pop(0)
-
-            # 4. 布局均匀交替规则（双表情帧跳过 element 判断）
+            # 4. 元素节奏：40% shot 用「表情+元素」左右布局，60% 用「表情居中」
+            #    含数据关键词的 shot 强制触发元素（不受周期限制）
             ELEMENT_FORCE_KWS = ["数据", "图表", "K线", "走势", "%", "万", "亿", "倍", "胜率", "概率"]
             force_element = any(kw in sub for kw in ELEMENT_FORCE_KWS)
-            # 双表情帧不加 element；强制 element 关键词也仅在单表情帧生效
-            want_element = (not expr_id_2) and (
-                force_element or (layout_counter % LAYOUT_CYCLE == LAYOUT_CYCLE - 1)
-            )
+            want_element = force_element or ((layout_counter % ELEM_CYCLE) in ELEM_POSITIONS)
             layout_counter += 1
 
-            # 5. 元素：只在 want_element 时才取
+            # 5. 元素：只在 want_element 时才取；允许复用（ELEM_MAX_REUSE=3）
             elem_id_1 = ""
             if want_element:
                 elem_pool_shot = _pick_element_pool(sub, library, k=12)
                 if elem_pool_shot:
                     min_usage_in_pool = min(elem_usage.get(a.id, 0) for a in elem_pool_shot)
+                    # force_element 不限复用；普通周期触发也放宽到 ELEM_MAX_REUSE
                     if not force_element and min_usage_in_pool >= ELEM_MAX_REUSE:
-                        pass  # 池耗尽 → 不放元素
+                        pass  # 只有全部元素超限时才跳过
                     else:
                         elem_id_1 = _pick_least_used(elem_pool_shot, elem_usage, recent_elems)
                         recent_elems.append(elem_id_1)
@@ -725,18 +786,11 @@ def generate_shot_table(
 
             # ---- beats 布局规则 ----
             # center     → 单表情居中（约 60% 的 shot）
-            # left_right → 双表情并列（约 40%）或 表情+元素（含数据关键词/周期触发）
+            # left_right → 表情（左）+ 场景元素（右）（约 40%）
             beats: list[_st.Beat] = []
             if expr_id_1:
-                if expr_id_2:
-                    # 双表情并列：两个表情左右各站，无 element
-                    beats = [_st.Beat(
-                        duration_ratio=1.0, layout="left_right",
-                        left=_st.BeatSlot(asset_id=expr_id_1, asset_kind="expression"),
-                        right=_st.BeatSlot(asset_id=expr_id_2, asset_kind="expression"),
-                    )]
-                elif elem_id_1:
-                    # 单表情 + 元素
+                if elem_id_1:
+                    # 表情 + 场景元素：左右并列
                     beats = [_st.Beat(
                         duration_ratio=1.0, layout="left_right",
                         left=_st.BeatSlot(asset_id=expr_id_1, asset_kind="expression"),

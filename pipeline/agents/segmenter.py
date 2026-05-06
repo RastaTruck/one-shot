@@ -124,16 +124,14 @@ def run(video_id: str, duration_sec: int | None = None) -> dict[str, Any]:
 
 
 def persist(video_id: str, paragraphs_with_units: list[dict]) -> bool:
-    """用户在 UI 编辑了 units → 保存。校验每段 units 拼起来等于原 text（允许去标点差）。"""
+    """用户在 UI 编辑了 units → 保存。
+    text 字段以前端传来的为准（用户可能已在段落编辑器里修改过正文）。
+    """
     full = _state.load_script_full(video_id)
     if not full:
         return False
-    src = {(p.get("id") or i): p for i, p in enumerate(full.get("paragraphs") or [])}
     for i, p in enumerate(paragraphs_with_units):
-        # 不允许改 text，只允许改 units
-        if "id" in p and p["id"] in src:
-            p["text"] = src[p["id"]].get("text", p.get("text", ""))
-        # units 字符必须是原 text 的有序子序列（不严格相等，允许用户合并/调）
+        # 只过滤空字符串，不强制回写原始 text（允许用户的正文编辑生效）
         units = [str(u or "").strip() for u in (p.get("units") or [])]
         p["units"] = [u for u in units if u]
     new_full = {**full, "paragraphs": paragraphs_with_units}

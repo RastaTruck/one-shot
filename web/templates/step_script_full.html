@@ -536,21 +536,16 @@
         <!-- 操作栏 -->
         <div class="flex items-center gap-2 px-4 py-2.5 border-b border-ink-100">
           <button @click="generate()"
-                  :disabled="generating"
                   class="btn-primary text-[11px] py-1 px-3 flex items-center gap-1.5">
-            <svg x-show="generating" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="31.4" stroke-dashoffset="10"/>
-            </svg>
-            <i x-show="!generating" data-lucide="wand-2" class="w-3 h-3"></i>
-            <span x-text="generating ? 'AI 切分中…' : 'AI 一键切分'"></span>
+            <i data-lucide="scissors" class="w-3 h-3"></i>
+            <span>一键切分</span>
           </button>
-          <button @click="saveAll()" x-show="dirty"
-                  class="btn-outline text-[11px] py-1 px-3">
-            <i data-lucide="save" class="w-3 h-3"></i><span>保存修改</span>
-          </button>
-          <span class="text-[11px] text-ink-400 ml-1" x-show="errMsg" x-text="errMsg"></span>
+          <span x-show="saved" class="text-[10px] text-emerald-600 font-medium flex items-center gap-1">
+            <i data-lucide="check" class="w-3 h-3"></i>已自动保存
+          </span>
+          <span class="text-[11px] text-rose-500 ml-1" x-show="errMsg" x-text="errMsg"></span>
           <div class="ml-auto text-[10px] text-ink-400">
-            每个单元 = 一句字幕 / 一次 TTS 停顿 · 建议 8-22 字
+            按句末标点切分 · 每单元 = 一行字幕 · 建议 8–22 字
           </div>
         </div>
 
@@ -608,7 +603,7 @@
 
         <!-- 未切分提示 -->
         <div x-show="!paragraphs.length" class="px-4 py-6 text-center text-[12px] text-ink-400">
-          点击"AI 一键切分"，LLM 会按语义把文稿分成每句 8-22 字的朗读单元
+          点击"一键切分"，按句末标点（。！？!?）自动拆成朗读单元 · 改完即时自动保存
         </div>
       </div>
     </div>
@@ -650,39 +645,64 @@ function segPanel() {
         .map(p => ({ ...p, units: p.units ? [...p.units] : [] }));
     },
 
-    async generate() {
-      this.generating = true;
-      this.errMsg = '';
-      const st = this._store();
-      try {
-        const res = await fetch('/api/segments/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            video_id: st.videoId,
-            duration_sec: st.duration,
-          }),
-        });
-        const r = await res.json();
-        if (!r.ok) { this.errMsg = r.error || '切分失败'; return; }
-
-        // 把 units 写回 store
-        if (r.paragraphs && st.full) {
-          r.paragraphs.forEach((rp, i) => {
-            if (st.full.paragraphs[i]) st.full.paragraphs[i].units = rp.units;
-          });
+    // 按标点切分一段文字 → 字符串数组
+    _splitByPunct(text) {
+      if (!text) return [];
+      const result = [];
+      let buf = '';
+      for (const ch of text) {
+        buf += ch;
+        // 句末标点：切一刀
+        if ('。！？!?'.includes(ch)) {
+          const t = buf.trim();
+          if (t) result.push(t);
+          buf = '';
         }
-        this._syncFromStore();
-        this.dirty = false;
-        this.saved = true;
-        setTimeout(() => { this.saved = false; }, 2000);
-        if (r.warnings && r.warnings.length) this.errMsg = '⚠ ' + r.warnings.join(' / ');
-      } catch (e) {
-        this.errMsg = '网络错误：' + e.message;
-      } finally {
-        this.generating = false;
-        this.$nextTick(() => lucide.createIcons());
       }
+      // 末尾没有句末标点的剩余部分也保留
+      if (buf.trim()) result.push(buf.trim());
+
+      // 超过 22 字的块，按软标点（逗号/分号/破折号）再切
+      const final = [];
+      for (const chunk of result) {
+        if (chunk.length <= 22) {
+          final.push(chunk);
+        } else {
+          let sub = '';
+          for (const ch of chunk) {
+            sub += ch;
+            if ('，,；;——'.includes(ch) && sub.trim().length >= 5) {
+              const t = sub.trim();
+              if (t) final.push(t);
+              sub = '';
+            }
+          }
+          if (sub.trim()) final.push(sub.trim());
+        }
+      }
+      return final.filter(s => s.length > 0);
+    },
+
+    // 纯前端标点切分，不调 LLM，直接读当前编辑器里的最新文字
+    generate() {
+      const st = this._store();
+      const paras = (st && st.full && st.full.paragraphs) || [];
+      // 用 store 里最新的 text（包含用户在编辑器里改过的内容）
+      this.paragraphs = paras
+        .filter(p => (p.text || '').trim())
+        .map(p => ({ ...p, units: this._splitByPunct((p.text || '').trim()) }));
+
+      // 同步回 store，让后续存盘 / 分镜生成能拿到最新 units
+      this.paragraphs.forEach((p, i) => {
+        if (st.full && st.full.paragraphs[i]) {
+          st.full.paragraphs[i].units = [...p.units];
+        }
+      });
+      this.errMsg = '';
+      this.dirty = false;
+      // 立即存盘（切分结果直接落 DB，不需要用户再手动点"保存修改"）
+      this.saveAll();
+      this.$nextTick(() => lucide.createIcons());
     },
 
     async saveAll() {
@@ -702,13 +722,24 @@ function segPanel() {
       }
     },
 
-    updateUnit(pi, ui, text) { this.paragraphs[pi].units[ui] = text.trim(); },
+    // 任何单元改动后调这个 —— debounce 800ms 自动存盘，不需要手动点"保存修改"
+    _autoSaveTimer: null,
+    _autoSave() {
+      this.dirty = true;
+      clearTimeout(this._autoSaveTimer);
+      this._autoSaveTimer = setTimeout(() => { this.saveAll(); }, 800);
+    },
+
+    updateUnit(pi, ui, text) {
+      this.paragraphs[pi].units[ui] = text.trim();
+      this._autoSave();
+    },
 
     mergeDown(pi, ui) {
       const u = this.paragraphs[pi].units;
       if (ui >= u.length - 1) return;
       u.splice(ui, 2, u[ui] + u[ui + 1]);
-      this.dirty = true;
+      this._autoSave();
     },
 
     splitAt(pi, ui) {
@@ -722,17 +753,20 @@ function segPanel() {
       } else {
         this.paragraphs[pi].units.splice(ui, 1, text.slice(0, lastIdx + 1), text.slice(lastIdx + 1).trim());
       }
-      this.dirty = true;
+      this._autoSave();
       this.$nextTick(() => lucide.createIcons());
     },
 
     removeUnit(pi, ui) {
       const u = this.paragraphs[pi].units;
-      if (u.length <= 1) return;
-      const removed = u.splice(ui, 1)[0];
-      if (ui > 0) u[ui - 1] += removed;
-      else u[0] = removed + u[0];
-      this.dirty = true;
+      // 只有一个单元时允许删除（直接清空整段 units）
+      if (u.length <= 1) {
+        u.splice(0, 1);
+        this._autoSave();
+        return;
+      }
+      u.splice(ui, 1);
+      this._autoSave();
     },
   };
 }
