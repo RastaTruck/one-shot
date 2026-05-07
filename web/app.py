@@ -1044,7 +1044,7 @@ async def project_outhan_topic(request: Request, video_id: str):
         refs.append({
             "id": a["id"],
             "url": f"/api/outhan/{video_id}/asset/{a['id']}",
-            "source": meta.get("source") or "upload",  # upload | pexels
+            "source": meta.get("source") or "upload",  # 只有 upload；之前的 pexels 来源已废弃
         })
     candidates = []
     for a in _outhan_storage.list_assets(video_id, "first_frame"):
@@ -1352,65 +1352,6 @@ async def api_outhan_summarize_video(video_id: str, request: Request):
 # ==================== Outhan 步骤 1（合并）：首帧 API ====================
 # 注：GET /first-frame 已被 project_outhan_first_frame_legacy（topic 那块）重定向；
 # 首帧生成 API 仍独立保留，由合并后的 topic 页面调用。
-
-# [AI-NOTE] 2026-05-08: Pexels 搜图 + 导入为参考图（步骤 1 首帧用）。
-# 搜图本身不带 video_id（全局通用），导入时才落到具体项目的 reference 资产。
-
-@app.get("/api/outhan/pexels-search")
-async def api_outhan_pexels_search(q: str = "", per_page: int = 12):
-    from pipeline.tools import pexels_client as _pexels
-    if not _pexels.is_configured():
-        return JSONResponse(
-            {"error": "PEXELS_API_KEY 未配置 — 请到 pexels.com/api 注册后填进 config/.env"},
-            status_code=400,
-        )
-    res = await _pexels.search_async(q, per_page=per_page)
-    if not res.get("ok"):
-        return JSONResponse({"error": res.get("error", "搜图失败")}, status_code=502)
-    return JSONResponse({"photos": res["photos"], "total": res.get("total", 0)})
-
-
-@app.post("/api/outhan/{video_id}/import-pexels")
-async def api_outhan_import_pexels(video_id: str, request: Request):
-    """下载用户选中的 Pexels 图到本地，落 type=reference 资产。"""
-    proj = _state.get_video(video_id)
-    if not proj:
-        return JSONResponse({"error": "项目不存在"}, status_code=404)
-    body = await request.json()
-    full_url = (body.get("full_url") or "").strip()
-    if not full_url:
-        return JSONResponse({"error": "缺 full_url"}, status_code=400)
-    photographer = (body.get("photographer") or "").strip()
-    src_page = (body.get("src_page") or "").strip()
-    alt = (body.get("alt") or "").strip()
-
-    from pipeline.tools import pexels_client as _pexels
-    from pipeline import outhan_storage as _outhan_storage
-    dl = await _pexels.download_async(full_url)
-    if not dl.get("ok"):
-        return JSONResponse({"error": dl.get("error", "下载失败")}, status_code=502)
-    saved = _outhan_storage.save_asset(
-        video_id,
-        "reference",
-        dl["data"],
-        ext=".jpg",
-        base_name=f"pexels-{int(__import__('time').time())}",
-        metadata={
-            "source": "pexels",
-            "source_url": full_url,
-            "photographer": photographer,
-            "src_page": src_page,
-            "alt": alt,
-            "size_bytes": len(dl["data"]),
-        },
-    )
-    return JSONResponse({
-        "id": saved["id"],
-        "url": saved["url"],
-        "photographer": photographer,
-        "src_page": src_page,
-    })
-
 
 @app.post("/api/outhan/{video_id}/generate-first-frame")
 async def api_outhan_generate_first_frame(video_id: str, request: Request):
