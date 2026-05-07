@@ -251,57 +251,105 @@
     </p>
   </div>
 
-  <!-- ==================== 首帧（合并：上传 + AI 生成） ==================== -->
+  <!-- ==================== 首帧（参考图 + Gemini 融合 + 即梦出图） ==================== -->
   <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <div class="mb-4 flex items-start justify-between gap-3">
+      <div>
+        <h3 class="font-display text-[18px] font-semibold text-ink-900">首帧</h3>
+        <p class="mt-1 text-[13px] text-ink-500">
+          上传/搜参考图 + 简单描述 → Gemini 看图总结 prompt → 即梦出图。
+          已有满意的图？走右上「📷 上传图直接当首帧」秒完事。
+        </p>
+      </div>
+      <!-- 快捷入口：上传图直接当首帧 -->
+      <label class="inline-block flex-shrink-0">
+        <input type="file" accept="image/*" class="hidden"
+               @change="uploadAsFirstFrame($event.target.files)" :disabled="uploading">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-bold cursor-pointer transition"
+              :class="uploading ? 'opacity-50 cursor-wait' : ''">
+          <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+          <span x-text="uploading ? '上传中...' : '📷 上传图直接当首帧'"></span>
+        </span>
+      </label>
+    </div>
+
+    <!-- 参考图区 -->
     <div class="mb-4">
-      <h3 class="font-display text-[18px] font-semibold text-ink-900">首帧</h3>
-      <p class="mt-1 text-[13px] text-ink-500">
-        两条入口：直接上传一张图当首帧（最快），或让 AI 按主题画一张。后续每段视频都从首帧延续。
+      <label class="block text-[12px] font-bold text-ink-700 mb-2">
+        参考图 <span class="text-ink-400 font-normal">（最多 5 张，Gemini 会综合所有图的视觉语言）</span>
+      </label>
+
+      <div class="flex gap-2 flex-wrap mb-3" x-show="refs.length > 0" x-cloak>
+        <template x-for="r in refs" :key="r.id">
+          <div class="relative group">
+            <div class="w-24 h-24 rounded-lg overflow-hidden border-2 border-ink-200">
+              <img :src="r.url" class="w-full h-full object-cover">
+            </div>
+            <span x-show="r.source === 'pexels'" x-cloak
+                  class="absolute bottom-0.5 left-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-violet-100 text-violet-700">
+              🔍 Pexels
+            </span>
+            <button @click="removeRef(r.id)"
+                    class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[12px] font-bold flex items-center justify-center shadow">×</button>
+          </div>
+        </template>
+      </div>
+
+      <div class="flex items-center gap-2 flex-wrap">
+        <label class="inline-block">
+          <input type="file" accept="image/*" class="hidden"
+                 @change="uploadReference($event.target.files)" :disabled="uploadingRef || refs.length >= 5">
+          <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-ink-700 text-[12px] font-bold cursor-pointer transition"
+                :class="(uploadingRef || refs.length >= 5) ? 'opacity-50 cursor-not-allowed' : ''">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span x-text="uploadingRef ? '上传中...' : '+ 上传参考图'"></span>
+          </span>
+        </label>
+        <button @click="openPexelsSearch()" :disabled="refs.length >= 5"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-violet-50 border border-ink-200 hover:border-violet-400 text-ink-700 text-[12px] font-bold transition disabled:opacity-50">
+          <i data-lucide="search" class="w-3.5 h-3.5"></i>
+          <span>🔍 搜 Pexels</span>
+        </button>
+        <span x-show="refs.length >= 5" x-cloak class="text-[11px] text-amber-700">已达上限 5 张</span>
+        <span x-show="refs.length === 0" x-cloak class="text-[11px] text-ink-400">没参考图也行，Gemini 会按主题想象</span>
+      </div>
+    </div>
+
+    <!-- 用户描述 + 尺寸 + 生成按钮 -->
+    <div class="mb-4">
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">
+        对首帧的补充描述 <span class="text-ink-400 font-normal">（可选 · 留空 = 完全跟随主题）</span>
+      </label>
+      <textarea x-model="ffForm.user_desc" rows="2"
+                placeholder="例：主体放右侧 / 想要更暖的色调 / 加一只蝴蝶飞过"
+                class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px]"></textarea>
+    </div>
+
+    <div class="flex items-center gap-3 flex-wrap">
+      <select x-model="ffForm.size"
+              class="h-9 px-3 rounded-md border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] font-bold bg-white">
+        <option value="2K">2K · 16:9 横屏（默认）</option>
+        <option value="4K">4K · 高清慢一些</option>
+        <option value="1024x1820">1024×1820 · 9:16 竖屏</option>
+        <option value="2048x2048">2048×2048 · 1:1 方形</option>
+      </select>
+      <button @click="generateFirstFrame()" :disabled="generating || !canGenerate"
+              class="px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
+        <span x-text="generating ? generatingLabel : (hasAiCandidate ? '🎨 再画一张候选' : (refs.length > 0 ? '🎨 让 Gemini 看图 + 即梦出图' : '🎨 即梦出图（无参考图）'))"></span>
+      </button>
+      <p x-show="!canGenerate" x-cloak class="text-[11px] text-amber-700">
+        需先填标题与主题
       </p>
     </div>
 
-    <!-- 两条入口并列 -->
-    <div class="grid md:grid-cols-2 gap-4">
-      <!-- A. 上传图当首帧 -->
-      <div class="rounded-xl border-2 border-dashed border-ink-200 hover:border-blue-300 p-4 transition">
-        <div class="text-[13px] font-bold text-ink-900 mb-1">📷 上传图当首帧</div>
-        <p class="text-[11px] text-ink-500 mb-3">手头已有想要的画面？直接传，落地即首帧。</p>
-        <label class="inline-block">
-          <input type="file" accept="image/*" class="hidden"
-                 @change="uploadAsFirstFrame($event.target.files)" :disabled="uploading">
-          <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold cursor-pointer transition"
-                :class="uploading ? 'opacity-50 cursor-wait' : ''">
-            <i data-lucide="upload" class="w-3.5 h-3.5"></i>
-            <span x-text="uploading ? '上传中...' : '选图上传'"></span>
-          </span>
-        </label>
-      </div>
-
-      <!-- B. AI 生成首帧 -->
-      <div class="rounded-xl border-2 border-dashed border-ink-200 hover:border-blue-300 p-4 transition">
-        <div class="text-[13px] font-bold text-ink-900 mb-1">🎨 AI 画首帧</div>
-        <p class="text-[11px] text-ink-500 mb-3">即梦图（Seedream）按上方主题画；Gemini 自动改写成更出图的 prompt。</p>
-        <div class="space-y-2 mb-3">
-          <textarea x-model="ffForm.prompt" rows="2"
-                    placeholder="留空就用上方主题（推荐）"
-                    class="w-full px-2 py-1.5 rounded-md border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px]"></textarea>
-          <select x-model="ffForm.size"
-                  class="w-full h-8 px-2 rounded-md border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] bg-white">
-            <option value="2K">2K · 16:9 横屏（默认）</option>
-            <option value="4K">4K · 高清慢一些</option>
-            <option value="1024x1820">1024×1820 · 9:16 竖屏</option>
-            <option value="2048x2048">2048×2048 · 1:1 方形</option>
-          </select>
-        </div>
-        <button @click="generateFirstFrame()" :disabled="generating || !canGenerate"
-                class="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-bold transition disabled:opacity-50">
-          <span x-text="generating ? '生成中（约 5-15 秒）...' : (hasAiCandidate ? '再画一张候选' : '生成首帧')"></span>
-        </button>
-        <p x-show="!canGenerate" x-cloak class="mt-2 text-[11px] text-amber-700">
-          需先填标题与主题
-        </p>
-      </div>
-    </div>
+    <!-- Gemini 融合后的 prompt（debug 信息，给用户看 AI 看到了啥） -->
+    <details x-show="lastFusedPrompt" x-cloak class="mt-3">
+      <summary class="cursor-pointer text-[11px] text-ink-500 hover:text-ink-700 font-bold">
+        ▸ 看 Gemini 这次给即梦的 prompt
+      </summary>
+      <pre class="mt-2 p-3 bg-ink-50 border border-ink-200 rounded-lg whitespace-pre-wrap text-[11px] text-ink-700"
+           x-text="lastFusedPrompt"></pre>
+    </details>
 
     <div x-show="error" x-cloak
          class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
@@ -342,6 +390,57 @@
       进入步骤 2 · 台本 →
     </button>
   </div>
+
+  <!-- ==================== Pexels 搜图模态框 ==================== -->
+  <div x-show="pexels.open" x-cloak
+       @click.self="closePexelsSearch()"
+       class="fixed inset-0 z-50 bg-ink-900/60 flex items-start justify-center pt-12 px-4 overflow-y-auto">
+    <div @click.stop class="w-full max-w-4xl bg-white rounded-2xl shadow-strong p-6 mb-12">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-display text-[18px] font-semibold text-ink-900">🔍 Pexels 在线搜图</h3>
+        <button @click="closePexelsSearch()" class="w-8 h-8 rounded-full hover:bg-ink-100 text-ink-500 hover:text-ink-900 transition">×</button>
+      </div>
+
+      <div class="flex items-center gap-2 mb-4">
+        <input type="text" x-model="pexels.query" @keydown.enter="runPexelsSearch()"
+               placeholder="例：橘猫 / 咖啡 / sunset / mountain..."
+               class="flex-1 h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]">
+        <button @click="runPexelsSearch()" :disabled="pexels.loading || !pexels.query.trim()"
+                class="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
+          <span x-text="pexels.loading ? '搜索中...' : '搜索'"></span>
+        </button>
+      </div>
+
+      <div x-show="pexels.error" x-cloak class="mb-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700"
+           x-text="pexels.error"></div>
+
+      <div x-show="!pexels.loading && pexels.searched && pexels.photos.length === 0" x-cloak
+           class="text-center py-12 text-[13px] text-ink-400">
+        没找到匹配图片，换个关键词试试。
+      </div>
+
+      <div x-show="pexels.photos.length > 0" x-cloak class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+        <template x-for="p in pexels.photos" :key="p.id">
+          <div class="relative group rounded-lg overflow-hidden border-2 border-ink-200 hover:border-blue-400 transition">
+            <img :src="p.thumb_url" :alt="p.alt" class="w-full h-40 object-cover block">
+            <div class="absolute inset-0 bg-ink-900/0 group-hover:bg-ink-900/30 transition flex items-end p-2">
+              <button @click="importFromPexels(p)" :disabled="pexels.importing === p.id"
+                      class="w-full px-2 py-1.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition opacity-0 group-hover:opacity-100 disabled:opacity-50">
+                <span x-text="pexels.importing === p.id ? '导入中...' : '✓ 加入参考图'"></span>
+              </button>
+            </div>
+            <div class="absolute bottom-0 left-0 right-0 px-2 py-1 bg-ink-900/70 text-[9px] text-white truncate">
+              📸 <span x-text="p.photographer"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <p class="mt-3 text-[10px] text-ink-400">
+        图源：Pexels · 点击「加入参考图」会下载到项目本地，附带摄影师署名（Pexels 协议要求）。
+      </p>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -355,15 +454,28 @@ function outhanTopicAndFirstFrame() {
       video_engine: {{ outhan_data.video_engine|tojson }},
       video_kind: {{ outhan_data.get('video_kind', 'dialogue')|tojson }},
     },
-    ffForm: { prompt: "", size: "2K" },
+    ffForm: { user_desc: "", size: "2K", prompt: "" },
     candidates: {{ candidates|tojson }},
-    uploading: false,
+    refs: {{ refs|tojson }},                 // 参考图列表（Gemini 看图用）
+    uploading: false,                         // "📷 上传图直接当首帧" 上传中
+    uploadingRef: false,                      // "+ 上传参考图" 上传中
     summarizing: false,
     summarizedFrom: null,
     autoSaving: false,
     generating: false,
     saving: false,
     error: null,
+    lastFusedPrompt: '',                      // Gemini 这次给即梦的 prompt，给用户看
+    generatingLabel: '生成中...',
+    pexels: {
+      open: false,
+      query: '',
+      loading: false,
+      searched: false,
+      photos: [],
+      error: '',
+      importing: null,                        // 正在导入的 photo id
+    },
 
     // ===== 头脑风暴页签状态 =====
     activeTab: 'custom',           // init() 决定
@@ -551,17 +663,27 @@ function outhanTopicAndFirstFrame() {
       await this.autoSaveTopic();
       this.generating = true;
       this.error = null;
+      this.lastFusedPrompt = '';
+      // 步骤化进度提示（即使 fetch 没有 stream，也至少给用户预期时间感）
+      this.generatingLabel = this.refs.length > 0
+        ? `Gemini 看 ${this.refs.length} 张参考图（约 10-25 秒）...`
+        : '即梦出图（约 5-15 秒）...';
       try {
         const res = await fetch(`/api/outhan/${this.videoId}/generate-first-frame`, {
           method:'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({prompt: this.ffForm.prompt, size: this.ffForm.size}),
+          body: JSON.stringify({
+            reference_asset_ids: this.refs.map(r => r.id),
+            user_desc: this.ffForm.user_desc,
+            size: this.ffForm.size,
+          }),
         });
         if (!res.ok) {
           const d = await res.json().catch(() => ({}));
           throw new Error(d.error || `HTTP ${res.status}`);
         }
         const d = await res.json();
+        this.lastFusedPrompt = d.fused_prompt || '';
         this.candidates.forEach(c => c.is_current = false);
         this.candidates.unshift({
           id: d.asset_id, url: d.url, is_current: true,
@@ -572,6 +694,99 @@ function outhanTopicAndFirstFrame() {
         this.error = e.message || String(e);
       } finally {
         this.generating = false;
+        this.generatingLabel = '生成中...';
+      }
+    },
+
+    // ===== 参考图：上传 / 删除 =====
+    async uploadReference(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      if (this.refs.length >= 5) {
+        this.error = '参考图已达上限 5 张';
+        return;
+      }
+      this.uploadingRef = true; this.error = null;
+      try {
+        const file = fileList[0];
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`/api/outhan/${this.videoId}/upload-reference`, {method:'POST', body: fd});
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+        const d = await res.json();
+        this.refs.push({id: d.id, url: d.url, source: 'upload'});
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.uploadingRef = false;
+      }
+    },
+
+    async removeRef(assetId) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/asset/${assetId}`, {method:'DELETE'});
+        this.refs = this.refs.filter(r => r.id !== assetId);
+      } catch (e) {
+        this.error = e.message || String(e);
+      }
+    },
+
+    // ===== Pexels 搜图 =====
+    openPexelsSearch() {
+      this.pexels.open = true;
+      this.$nextTick(() => { if (window.lucide) lucide.createIcons(); });
+    },
+    closePexelsSearch() {
+      this.pexels.open = false;
+    },
+    async runPexelsSearch() {
+      const q = (this.pexels.query || '').trim();
+      if (!q) return;
+      this.pexels.loading = true; this.pexels.error = ''; this.pexels.searched = true;
+      try {
+        const res = await fetch(`/api/outhan/pexels-search?q=${encodeURIComponent(q)}&per_page=18`);
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+        const d = await res.json();
+        this.pexels.photos = d.photos || [];
+      } catch (e) {
+        this.pexels.error = e.message || String(e);
+        this.pexels.photos = [];
+      } finally {
+        this.pexels.loading = false;
+      }
+    },
+    async importFromPexels(photo) {
+      if (this.refs.length >= 5) {
+        this.pexels.error = '参考图已达上限 5 张';
+        return;
+      }
+      this.pexels.importing = photo.id; this.pexels.error = '';
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/import-pexels`, {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            full_url: photo.full_url,
+            photographer: photo.photographer,
+            src_page: photo.src_page,
+            alt: photo.alt,
+          }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+        const d = await res.json();
+        this.refs.push({id: d.id, url: d.url, source: 'pexels'});
+      } catch (e) {
+        this.pexels.error = e.message || String(e);
+      } finally {
+        this.pexels.importing = null;
       }
     },
 

@@ -1038,10 +1038,14 @@ async def project_outhan_topic(request: Request, video_id: str):
     from pipeline import outhan_meta as _outhan_meta
     from pipeline import outhan_storage as _outhan_storage
     data = _outhan_meta.get_outhan_data(video_id)
-    refs = [
-        {"id": a["id"], "url": f"/api/outhan/{video_id}/asset/{a['id']}"}
-        for a in _outhan_storage.list_assets(video_id, "reference")
-    ]
+    refs = []
+    for a in _outhan_storage.list_assets(video_id, "reference"):
+        meta = a.get("metadata") or {}
+        refs.append({
+            "id": a["id"],
+            "url": f"/api/outhan/{video_id}/asset/{a['id']}",
+            "source": meta.get("source") or "upload",  # upload | pexels
+        })
     candidates = []
     for a in _outhan_storage.list_assets(video_id, "first_frame"):
         meta = a.get("metadata") or {}
@@ -1349,25 +1353,124 @@ async def api_outhan_summarize_video(video_id: str, request: Request):
 # 注：GET /first-frame 已被 project_outhan_first_frame_legacy（topic 那块）重定向；
 # 首帧生成 API 仍独立保留，由合并后的 topic 页面调用。
 
+# [AI-NOTE] 2026-05-08: Pexels 搜图 + 导入为参考图（步骤 1 首帧用）。
+# 搜图本身不带 video_id（全局通用），导入时才落到具体项目的 reference 资产。
+
+@app.get("/api/outhan/pexels-search")
+async def api_outhan_pexels_search(q: str = "", per_page: int = 12):
+    from pipeline.tools import pexels_client as _pexels
+    if not _pexels.is_configured():
+        return JSONResponse(
+            {"error": "PEXELS_API_KEY 未配置 — 请到 pexels.com/api 注册后填进 config/.env"},
+            status_code=400,
+        )
+    res = await _pexels.search_async(q, per_page=per_page)
+    if not res.get("ok"):
+        return JSONResponse({"error": res.get("error", "搜图失败")}, status_code=502)
+    return JSONResponse({"photos": res["photos"], "total": res.get("total", 0)})
+
+
+@app.post("/api/outhan/{video_id}/import-pexels")
+async def api_outhan_import_pexels(video_id: str, request: Request):
+    """下载用户选中的 Pexels 图到本地，落 type=reference 资产。"""
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    body = await request.json()
+    full_url = (body.get("full_url") or "").strip()
+    if not full_url:
+        return JSONResponse({"error": "缺 full_url"}, status_code=400)
+    photographer = (body.get("photographer") or "").strip()
+    src_page = (body.get("src_page") or "").strip()
+    alt = (body.get("alt") or "").strip()
+
+    from pipeline.tools import pexels_client as _pexels
+    from pipeline import outhan_storage as _outhan_storage
+    dl = await _pexels.download_async(full_url)
+    if not dl.get("ok"):
+        return JSONResponse({"error": dl.get("error", "下载失败")}, status_code=502)
+    saved = _outhan_storage.save_asset(
+        video_id,
+        "reference",
+        dl["data"],
+        ext=".jpg",
+        base_name=f"pexels-{int(__import__('time').time())}",
+        metadata={
+            "source": "pexels",
+            "source_url": full_url,
+            "photographer": photographer,
+            "src_page": src_page,
+            "alt": alt,
+            "size_bytes": len(dl["data"]),
+        },
+    )
+    return JSONResponse({
+        "id": saved["id"],
+        "url": saved["url"],
+        "photographer": photographer,
+        "src_page": src_page,
+    })
+
+
 @app.post("/api/outhan/{video_id}/generate-first-frame")
 async def api_outhan_generate_first_frame(video_id: str, request: Request):
+    """[AI-NOTE] 2026-05-08 重构：参考图 + 主题 + 用户描述 → Gemini 多模态融合 prompt → Seedream 出图。
+
+    Body:
+      reference_asset_ids: list[str]   最多 5 张已上传/已搜来的参考图资产 id
+      user_desc:           str         用户对首帧的补充描述（可空，空则完全跟主题）
+      size:                str         Seedream 输出尺寸（默认 2K）
+      prompt:              str         （旧字段）若给了，跳过融合直接用此 prompt + 旧 enhancer 走纯文本路径
+    """
+    import base64 as _b64
     proj = _state.get_video(video_id)
     if not proj:
         return JSONResponse({"error": "项目不存在"}, status_code=404)
     body = await request.json()
     from pipeline import outhan_meta as _outhan_meta
     from pipeline import outhan_storage as _outhan_storage
+    from pipeline import outhan_prompt_enhancer as _enhancer
     data = _outhan_meta.get_outhan_data(video_id)
-    user_prompt = (body.get("prompt") or "").strip()
-    if not user_prompt:
-        # [AI-NOTE] 2026-05-08: style 字段在 step 1 合并后已废弃，主题文本应自带风格描述。
-        user_prompt = (data.get("theme") or "").strip() or proj.title
+    theme = (data.get("theme") or "").strip() or proj.title
+    user_desc = (body.get("user_desc") or "").strip()
+    legacy_prompt = (body.get("prompt") or "").strip()
+    ref_ids = body.get("reference_asset_ids") or []
+    if not isinstance(ref_ids, list):
+        ref_ids = []
+    ref_ids = [str(x) for x in ref_ids if x][:5]  # 上限 5 张
     size = body.get("size") or "2K"
 
-    # [AI-NOTE] 2026-05-07: Gemini 自动按 Seedream 偏好改写；失败静默回退原 prompt
-    from pipeline import outhan_prompt_enhancer as _enhancer
-    enhanced = _enhancer.enhance("seedream", user_prompt)
-    actual_prompt = enhanced or user_prompt
+    # 加载参考图为 base64 inline
+    ref_media: list[dict[str, str]] = []
+    for rid in ref_ids:
+        a = _outhan_storage.get_asset(video_id, rid)
+        if not a:
+            continue
+        try:
+            raw = _outhan_storage.read_asset_bytes(a)
+            ext = (a.get("path") or "").lower().rsplit(".", 1)[-1]
+            mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                    "webp": "image/webp"}.get(ext, "image/jpeg")
+            ref_media.append({"mimeType": mime, "data": _b64.b64encode(raw).decode("ascii")})
+        except Exception:
+            continue
+
+    # 决定最终 prompt
+    fused_prompt: str | None = None
+    if legacy_prompt:
+        # 旧路径：用户已经手写好 prompt（覆盖一切）
+        actual_prompt = legacy_prompt
+    elif ref_media:
+        # 新路径：参考图 + 主题 + 用户描述 → Gemini 多模态融合
+        fused_prompt = _enhancer.fuse_first_frame_prompt(theme, user_desc, ref_media)
+        actual_prompt = fused_prompt or (
+            f"{theme}。{user_desc}".rstrip("。") if user_desc else theme
+        )
+    else:
+        # 无参考图：fallback 到旧的纯文本 enhancer
+        base_text = f"{theme}。{user_desc}".rstrip("。") if user_desc else theme
+        fused_prompt = _enhancer.enhance("seedream", base_text)
+        actual_prompt = fused_prompt or base_text
 
     res = _ark_client.generate_image(prompt=actual_prompt, size=size, watermark=False)
     if not res.get("ok"):
@@ -1375,28 +1478,44 @@ async def api_outhan_generate_first_frame(video_id: str, request: Request):
     url = res.get("url")
     if not url:
         return JSONResponse({"error": "Seedream 返回空 url"}, status_code=502)
-    # stub 模式 url 是 placeholder，无法下载；直接落 stub URL 字符串作 path
     if res.get("provider") == "stub":
         return JSONResponse({"error": "ARK_API_KEY 未配置（当前是 stub 占位图）"}, status_code=400)
-    # 下载图
+    # [AI-NOTE] 2026-05-08: Volces 出图 URL 偶尔 SSL EOF（防火墙/握手抖动），3 次退避重试
     import urllib.request as _ur
-    try:
-        with _ur.urlopen(url, timeout=60) as r:
-            img = r.read()
-    except Exception as e:
-        return JSONResponse({"error": f"下载图失败：{e}"}, status_code=502)
+    import time as _time_dl
+    img: bytes | None = None
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            with _ur.urlopen(url, timeout=60) as r:
+                img = r.read()
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                _time_dl.sleep(2 + attempt * 3)  # 2s, 5s
+    if img is None:
+        return JSONResponse({"error": f"下载图失败（3 次重试后）：{last_err}"}, status_code=502)
     saved = _outhan_storage.save_asset(
         video_id, "first_frame", img,
         base_name=f"first-{int(__import__('time').time())}",
-        metadata={"prompt": user_prompt, "size": size, "source_url": url},
+        metadata={
+            "prompt": actual_prompt,
+            "user_desc": user_desc,
+            "size": size,
+            "source_url": url,
+            "reference_count": len(ref_media),
+            "fused_via_gemini": fused_prompt is not None,
+        },
     )
     _outhan_meta.update_outhan_data(
-        video_id, first_frame_asset_id=saved["id"], first_frame_prompt=user_prompt
+        video_id, first_frame_asset_id=saved["id"], first_frame_prompt=actual_prompt
     )
     return JSONResponse({
         "asset_id": saved["id"],
         "url": saved["url"],
-        "enhanced_prompt": enhanced,  # 让前端可展示 Gemini 改写后的版本
+        "fused_prompt": fused_prompt,        # 让前端展示 Gemini 融合后的 prompt
+        "reference_count": len(ref_media),
     })
 
 
