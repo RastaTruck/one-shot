@@ -129,6 +129,10 @@
                   <span class="text-[10px] px-2 py-0.5 rounded font-bold border"
                         :class="t.kind === 'silent' ? 'bg-ink-100 text-ink-600 border-ink-200' : 'bg-blue-50 text-blue-700 border-blue-200'"
                         x-text="t.kind === 'silent' ? '🎬 纯画面' : '📢 有对白'"></span>
+                  <span x-show="t._source === 'yierbubu'" x-cloak
+                        class="text-[10px] px-2 py-0.5 rounded font-bold bg-violet-50 text-violet-700 border border-violet-200">
+                    💼 金融
+                  </span>
                 </div>
                 <h5 class="font-bold text-[14px] text-ink-900 mb-1" x-text="t.title"></h5>
                 <p class="text-[12px] text-ink-500 mb-2 italic" x-text="`「${t.hook}」`"></p>

@@ -918,10 +918,104 @@ async def project_outhan_workflow(video_id: str):
 
 # ==================== Outhan 步骤 1：选题 ====================
 
-# [AI-NOTE] 2026-05-08: Outhan 专用题材库（短视频形态友好），不复用 /api/topic_library
-# （那是一二布布的金融题材库）。
+# [AI-NOTE] 2026-05-08: Outhan 步骤 1 头脑风暴页签的题材库 = Outhan 自家 5 domain（短视频形态）
+# + 同事金融知识库 1 domain（schema 转换后）。两套合并，前端只调一个 endpoint。
 _OUTHAN_TOPIC_LIB_PATH = Path(__file__).resolve().parents[1] / "config" / "outhan_topic_library.json"
+_YIERBUBU_TOPIC_LIB_PATH = Path(__file__).resolve().parents[1] / "config" / "topic_library.json"
 _OUTHAN_TOPIC_LIB_CACHE: dict | None = None
+
+
+def _convert_yierbubu_topic_to_outhan(t: dict) -> dict:
+    """[AI-NOTE] 2026-05-08: 同事金融题材 → Outhan schema。
+    字段映射：
+      - title / hook / level / angles：直接复用
+      - intent / audience / keywords → 拼进 theme_full（让台本生成器读到完整上下文）
+      - kind：金融科普全是讲解型 → 默认 dialogue
+      - _source: 'yierbubu' 让前端显示来源徽章
+    """
+    intent_hint = {
+        "搞懂概念": "用通俗类比把概念讲清楚",
+        "探讨影响": "讨论这件事如何影响普通人的生活",
+        "学会操作": "给出可操作的步骤建议",
+        "引发共鸣": "戳中观众生活里的真实情绪",
+    }.get(t.get("intent", ""), "")
+    audience_hint = {
+        "完全小白": "面向零基础观众，多用类比少术语",
+        "有点基础": "面向有点基础的观众，可以引入一些专业概念",
+        "进阶用户": "面向进阶用户，可深入技术细节",
+    }.get(t.get("audience", ""), "")
+
+    parts: list[str] = []
+    if t.get("hook"):
+        parts.append(t["hook"])
+    if intent_hint:
+        parts.append(intent_hint)
+    if audience_hint:
+        parts.append(audience_hint)
+    if t.get("keywords"):
+        parts.append(f"关键词：{t['keywords']}")
+    theme_full = "。".join(parts)
+
+    return {
+        "title": t.get("title", ""),
+        "hook": t.get("hook", ""),
+        "level": t.get("level", "人人能懂"),
+        "kind": "dialogue",  # 金融科普 ≈ 讲解型
+        "angles": t.get("angles", []),
+        "theme_full": theme_full,
+        "_source": "yierbubu",
+    }
+
+
+def _convert_yierbubu_domain_to_outhan(d: dict) -> dict:
+    """同事 domain schema 转 Outhan：domain 级补 emoji，每个 concept 的 topics 转字段。"""
+    converted_concepts = []
+    for c in d.get("concepts", []):
+        converted_concepts.append({
+            "id": c.get("id"),
+            "name": c.get("name"),
+            "emoji": c.get("emoji") or "📊",
+            "one_liner": c.get("one_liner", ""),
+            "scenes": c.get("scenes", []),
+            "topics": [_convert_yierbubu_topic_to_outhan(t) for t in (c.get("topics") or [])],
+        })
+    return {
+        "id": d.get("id", "yierbubu_finance"),
+        "name": d.get("name") or "金融知识",
+        "emoji": "💼",  # 同事金融库统一标识
+        "active": True,
+        "concepts": converted_concepts,
+    }
+
+
+def _load_combined_topic_library() -> dict:
+    """合并 Outhan 自家库 + 同事金融库，做一份缓存。任意一份失败仅记录警告，不影响另一份。"""
+    import json as _json
+    domains: list[dict] = []
+    # 1. Outhan 自家
+    try:
+        outhan_data = _json.loads(_OUTHAN_TOPIC_LIB_PATH.read_text(encoding="utf-8"))
+        # Outhan 自家 topic 加 _source 标记
+        for d in outhan_data.get("domains", []):
+            for c in d.get("concepts", []):
+                for t in c.get("topics", []):
+                    t.setdefault("_source", "outhan")
+            domains.append(d)
+    except Exception as e:
+        print(f"[outhan] load outhan_topic_library failed: {e}")
+    # 2. 同事金融
+    try:
+        yierbubu_data = _json.loads(_YIERBUBU_TOPIC_LIB_PATH.read_text(encoding="utf-8"))
+        for d in yierbubu_data.get("domains", []):
+            if d.get("active") is False:
+                continue
+            domains.append(_convert_yierbubu_domain_to_outhan(d))
+    except Exception as e:
+        print(f"[outhan] load yierbubu topic_library failed: {e}")
+    return {
+        "version": 2,
+        "domains": domains,
+    }
 
 
 @app.get("/api/outhan/topic-library")
@@ -929,10 +1023,7 @@ async def api_outhan_topic_library():
     global _OUTHAN_TOPIC_LIB_CACHE
     if _OUTHAN_TOPIC_LIB_CACHE is None:
         try:
-            import json as _json
-            _OUTHAN_TOPIC_LIB_CACHE = _json.loads(
-                _OUTHAN_TOPIC_LIB_PATH.read_text(encoding="utf-8")
-            )
+            _OUTHAN_TOPIC_LIB_CACHE = _load_combined_topic_library()
         except Exception as e:
             return JSONResponse({"error": f"加载题材库失败：{e}"}, status_code=500)
     return JSONResponse(_OUTHAN_TOPIC_LIB_CACHE)
