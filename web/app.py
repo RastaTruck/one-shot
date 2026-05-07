@@ -918,6 +918,26 @@ async def project_outhan_workflow(video_id: str):
 
 # ==================== Outhan 步骤 1：选题 ====================
 
+# [AI-NOTE] 2026-05-08: Outhan 专用题材库（短视频形态友好），不复用 /api/topic_library
+# （那是一二布布的金融题材库）。
+_OUTHAN_TOPIC_LIB_PATH = Path(__file__).resolve().parents[1] / "config" / "outhan_topic_library.json"
+_OUTHAN_TOPIC_LIB_CACHE: dict | None = None
+
+
+@app.get("/api/outhan/topic-library")
+async def api_outhan_topic_library():
+    global _OUTHAN_TOPIC_LIB_CACHE
+    if _OUTHAN_TOPIC_LIB_CACHE is None:
+        try:
+            import json as _json
+            _OUTHAN_TOPIC_LIB_CACHE = _json.loads(
+                _OUTHAN_TOPIC_LIB_PATH.read_text(encoding="utf-8")
+            )
+        except Exception as e:
+            return JSONResponse({"error": f"加载题材库失败：{e}"}, status_code=500)
+    return JSONResponse(_OUTHAN_TOPIC_LIB_CACHE)
+
+
 @app.get("/project/{video_id}/outhan/topic", response_class=HTMLResponse)
 async def project_outhan_topic(request: Request, video_id: str):
     """[AI-NOTE] 2026-05-08: 步骤 1 = 选题 + 首帧（合并）"""

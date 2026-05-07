@@ -2,53 +2,200 @@
 {% block page_title %}选题 + 首帧 · {{ outhan_title or video_id }}{% endblock %}
 
 {% block outhan_step_content %}
-<div x-data="outhanTopicAndFirstFrame()" class="space-y-6">
+<div x-data="outhanTopicAndFirstFrame()" x-init="init()" class="space-y-6">
 
-  <!-- ==================== 选题信息（上半） ==================== -->
+  <!-- ==================== 选题 · Tab 容器 ==================== -->
   <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
-    <div class="mb-5">
+    <div class="mb-3">
       <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 1 · 选题 + 首帧</h2>
       <p class="mt-1 text-[13px] text-ink-500">
-        填主题决定故事走向；下方上传一张图直接当首帧，或让 AI 按主题画一张。
+        没想法？逛<strong>头脑风暴</strong>选一条。已经想好？切到<strong>自定义输入</strong>直接写。
       </p>
     </div>
 
-    <!-- 标题 -->
-    <div class="mb-4">
-      <label class="block text-[12px] font-bold text-ink-700 mb-1">标题</label>
-      <input type="text" x-model="form.title" @blur="autoSaveTopic()"
-             class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]">
+    <!-- Tab 切换 -->
+    <div class="flex gap-1 border-b border-ink-200 mb-5">
+      <button @click="switchTab('brainstorm')"
+              :class="activeTab === 'brainstorm' ? 'border-blue-500 text-blue-700' : 'border-transparent text-ink-500 hover:text-ink-700'"
+              class="px-4 py-2 -mb-px border-b-2 text-[13px] font-bold transition">
+        💡 头脑风暴
+      </button>
+      <button @click="switchTab('custom')"
+              :class="activeTab === 'custom' ? 'border-blue-500 text-blue-700' : 'border-transparent text-ink-500 hover:text-ink-700'"
+              class="px-4 py-2 -mb-px border-b-2 text-[13px] font-bold transition">
+        ✏️ 自定义输入
+      </button>
     </div>
 
-    <!-- 主题 -->
-    <div class="mb-4">
-      <label class="block text-[12px] font-bold text-ink-700 mb-1">
-        主题（一句话讲清要讲什么 · 顺手把风格也写进去：「写意水墨风的橘猫散步」）
-      </label>
-      <textarea x-model="form.theme" @blur="autoSaveTopic()" rows="3"
-                placeholder="例：电影感暖调下，一只橘猫在春日里散步、追蝴蝶、最后停在花丛边"
-                class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]"></textarea>
-
-      <div class="mt-2 flex items-center gap-3 flex-wrap">
-        <label class="inline-block">
-          <input type="file" accept="video/*" class="hidden"
-                 @change="summarizeVideo($event.target.files)" :disabled="summarizing">
-          <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-[12px] font-bold cursor-pointer transition border border-amber-200"
-                :class="summarizing ? 'opacity-50 cursor-wait' : ''">
-            <i data-lucide="film" class="w-3.5 h-3.5"></i>
-            <span x-text="summarizing ? 'Gemini 看视频中（约 15-60 秒）...' : '📹 上传参考视频，Gemini 自动总结主题'"></span>
-          </span>
-        </label>
-        <span x-show="summarizedFrom" class="text-[11px] text-ink-500" x-cloak>
-          ✓ 来自 <code x-text="summarizedFrom"></code>，可继续编辑
-        </span>
+    <!-- ============ Tab A: 头脑风暴 ============ -->
+    <div x-show="activeTab === 'brainstorm'" x-cloak class="space-y-4">
+      <!-- 加载中 -->
+      <div x-show="libLoading" x-cloak class="text-center py-8 text-[13px] text-ink-500">
+        加载题材库中...
       </div>
-      <p class="mt-1 text-[11px] text-ink-400">
-        视频限 19MB（约 1-3 分钟 720p）；将来会接入选题板块直接喂纯文本。
-      </p>
+      <!-- 错误 -->
+      <div x-show="libError" x-cloak class="p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
+        题材库加载失败：<span x-text="libError"></span>
+        <button @click="loadLib()" class="ml-2 underline">重试</button>
+      </div>
+
+      <!-- 视图 A：concept 网格（无选中 concept 时） -->
+      <template x-if="libLoaded && !libActiveConceptId">
+        <div>
+          <p class="text-[12px] text-ink-500 mb-3">挑一个概念深入看 →</p>
+          <template x-for="d in libDomains" :key="d.id">
+            <div class="mb-5">
+              <div class="text-[12px] font-bold text-ink-700 mb-2 flex items-center gap-1">
+                <span x-text="d.emoji"></span>
+                <span x-text="d.name"></span>
+                <span class="text-[10px] text-ink-400 font-normal" x-text="`(${(d.concepts||[]).length} 个概念)`"></span>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <template x-for="c in (d.concepts || [])" :key="c.id">
+                  <button @click="libSelectConcept(c.id)"
+                          class="text-left rounded-lg border border-ink-200 hover:border-blue-400 hover:bg-blue-50/40 hover:-translate-y-0.5 p-3 transition">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="text-[20px]" x-text="c.emoji"></span>
+                      <span class="font-bold text-[13px] text-ink-900" x-text="c.name"></span>
+                    </div>
+                    <p class="text-[11px] text-ink-500 line-clamp-2" x-text="c.one_liner"></p>
+                    <div class="mt-2 flex items-center gap-2 text-[10px] text-ink-400">
+                      <span x-text="`${(c.topics||[]).length} 条选题`"></span>
+                      <span>·</span>
+                      <span x-text="`${(c.scenes||[]).length} 个场景`"></span>
+                    </div>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- 视图 B：concept 详情页（选中 concept 后） -->
+      <template x-if="libLoaded && libActiveConceptId">
+        <div>
+          <button @click="libBackToConcepts()"
+                  class="text-[12px] text-blue-600 hover:underline mb-3">
+            ← 返回所有概念
+          </button>
+
+          <div class="mb-4 flex items-start gap-3">
+            <span class="text-[28px]" x-text="libActiveConcept()?.emoji"></span>
+            <div>
+              <div class="font-display text-[18px] font-semibold text-ink-900" x-text="libActiveConcept()?.name"></div>
+              <p class="text-[12px] text-ink-500 mt-0.5" x-text="libActiveConcept()?.one_liner"></p>
+            </div>
+          </div>
+
+          <!-- 场景筛选 -->
+          <div class="flex items-center gap-2 flex-wrap mb-2">
+            <span class="text-[11px] text-ink-500 font-bold">场景：</span>
+            <template x-for="s in (libActiveConcept()?.scenes || [])" :key="s">
+              <button @click="libToggleScene(s)"
+                      :class="libSceneFilter === s ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-ink-700 border-ink-200 hover:border-blue-400'"
+                      class="text-[11px] px-2.5 py-1 rounded-full border transition"
+                      x-text="s"></button>
+            </template>
+            <button x-show="libSceneFilter" x-cloak @click="libSceneFilter = null"
+                    class="text-[11px] text-ink-400 hover:text-ink-600 ml-1">清除</button>
+          </div>
+
+          <!-- 难度筛选 -->
+          <div class="flex items-center gap-2 flex-wrap mb-4">
+            <span class="text-[11px] text-ink-500 font-bold">难度：</span>
+            <template x-for="l in ['人人能懂', '需要点底子', '专业向']" :key="l">
+              <button @click="libToggleLevel(l)"
+                      :class="libLevelFilter === l ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-ink-700 border-ink-200 hover:border-blue-400'"
+                      class="text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1">
+                <span x-text="libLevelEmoji(l)"></span>
+                <span x-text="l"></span>
+              </button>
+            </template>
+            <button x-show="libLevelFilter" x-cloak @click="libLevelFilter = null"
+                    class="text-[11px] text-ink-400 hover:text-ink-600 ml-1">清除</button>
+          </div>
+
+          <!-- 选题列表 -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <template x-for="t in libFilteredTopics()" :key="t.title">
+              <button @click="pickTopic(t)"
+                      class="text-left rounded-lg border-2 border-ink-200 hover:border-blue-400 hover:-translate-y-0.5 p-4 transition">
+                <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                  <span class="text-[10px] px-2 py-0.5 rounded font-bold" :class="libLevelClass(t.level)">
+                    <span x-text="libLevelEmoji(t.level)"></span>
+                    <span x-text="t.level"></span>
+                  </span>
+                  <span class="text-[10px] px-2 py-0.5 rounded font-bold border"
+                        :class="t.kind === 'silent' ? 'bg-ink-100 text-ink-600 border-ink-200' : 'bg-blue-50 text-blue-700 border-blue-200'"
+                        x-text="t.kind === 'silent' ? '🎬 纯画面' : '📢 有对白'"></span>
+                </div>
+                <h5 class="font-bold text-[14px] text-ink-900 mb-1" x-text="t.title"></h5>
+                <p class="text-[12px] text-ink-500 mb-2 italic" x-text="`「${t.hook}」`"></p>
+                <p class="text-[11px] text-ink-400 line-clamp-3" x-text="t.theme_full"></p>
+                <div class="mt-2 text-right">
+                  <span class="text-[11px] text-blue-600 font-bold">点选 → 自动填入 →</span>
+                </div>
+              </button>
+            </template>
+          </div>
+
+          <p x-show="libFilteredTopics().length === 0" x-cloak
+             class="text-center py-6 text-[12px] text-ink-400">
+            当前筛选下没有匹配选题，试试清除筛选条件。
+          </p>
+        </div>
+      </template>
     </div>
 
-    <!-- 视频类型（决定有没有配音） -->
+    <!-- ============ Tab B: 自定义输入 ============ -->
+    <div x-show="activeTab === 'custom'" x-cloak class="space-y-4">
+      <!-- 头脑风暴回填提示 -->
+      <div x-show="brainstormPickedTitle" x-cloak
+           class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800">
+        ✓ 已从头脑风暴填入「<strong x-text="brainstormPickedTitle"></strong>」，下方可继续编辑。
+      </div>
+
+      <!-- 标题 -->
+      <div>
+        <label class="block text-[12px] font-bold text-ink-700 mb-1">标题</label>
+        <input type="text" x-model="form.title" @blur="autoSaveTopic()"
+               class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]">
+      </div>
+
+      <!-- 主题 -->
+      <div>
+        <label class="block text-[12px] font-bold text-ink-700 mb-1">
+          主题（一句话讲清要讲什么 · 顺手把风格也写进去：「写意水墨风的橘猫散步」）
+        </label>
+        <textarea x-model="form.theme" @blur="autoSaveTopic()" rows="4"
+                  placeholder="例：电影感暖调下，一只橘猫在春日里散步、追蝴蝶、最后停在花丛边"
+                  class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]"></textarea>
+
+        <div class="mt-2 flex items-center gap-3 flex-wrap">
+          <label class="inline-block">
+            <input type="file" accept="video/*" class="hidden"
+                   @change="summarizeVideo($event.target.files)" :disabled="summarizing">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-[12px] font-bold cursor-pointer transition border border-amber-200"
+                  :class="summarizing ? 'opacity-50 cursor-wait' : ''">
+              <i data-lucide="film" class="w-3.5 h-3.5"></i>
+              <span x-text="summarizing ? 'Gemini 看视频中（约 15-60 秒）...' : '📹 上传参考视频，Gemini 自动总结主题'"></span>
+            </span>
+          </label>
+          <span x-show="summarizedFrom" class="text-[11px] text-ink-500" x-cloak>
+            ✓ 来自 <code x-text="summarizedFrom"></code>，可继续编辑
+          </span>
+        </div>
+        <p class="mt-1 text-[11px] text-ink-400">视频限 19MB（约 1-3 分钟 720p）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 共用区：项目设置（视频类型 / 时长 / 引擎） ==================== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <h3 class="font-display text-[16px] font-semibold text-ink-900 mb-3">项目设置</h3>
+
+    <!-- 视频类型 -->
     <div class="mb-4">
       <label class="block text-[12px] font-bold text-ink-700 mb-1">视频类型</label>
       <div class="grid grid-cols-2 gap-3">
@@ -214,6 +361,118 @@ function outhanTopicAndFirstFrame() {
     saving: false,
     error: null,
 
+    // ===== 头脑风暴页签状态 =====
+    activeTab: 'custom',           // init() 决定
+    brainstormPickedTitle: '',
+    libLoading: false,
+    libLoaded: false,
+    libError: null,
+    libDomains: [],
+    libActiveConceptId: null,
+    libSceneFilter: null,
+    libLevelFilter: null,
+
+    init() {
+      // 已经填过主题 → 默认进自定义编辑（不打扰）
+      // 全新项目 → 默认进头脑风暴（鼓励先逛一圈）
+      this.activeTab = (this.form.theme && this.form.theme.trim()) ? 'custom' : 'brainstorm';
+      if (this.activeTab === 'brainstorm') this.loadLib();
+    },
+
+    switchTab(tab) {
+      this.activeTab = tab;
+      if (tab === 'brainstorm' && !this.libLoaded && !this.libLoading) this.loadLib();
+      // lucide 图标在新出现的 DOM 上重新渲染
+      this.$nextTick(() => { if (window.lucide) lucide.createIcons(); });
+    },
+
+    async loadLib() {
+      if (this.libLoading) return;
+      this.libLoading = true;
+      this.libError = null;
+      try {
+        const res = await fetch('/api/outhan/topic-library');
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        this.libDomains = (data.domains || []).filter(d => d.active !== false);
+        this.libLoaded = true;
+      } catch (e) {
+        this.libError = e.message || String(e);
+      } finally {
+        this.libLoading = false;
+      }
+    },
+
+    libActiveConcept() {
+      if (!this.libActiveConceptId) return null;
+      for (const d of this.libDomains) {
+        const c = (d.concepts || []).find(x => x.id === this.libActiveConceptId);
+        if (c) return c;
+      }
+      return null;
+    },
+
+    libSelectConcept(id) {
+      this.libActiveConceptId = id;
+      this.libSceneFilter = null;
+      this.libLevelFilter = null;
+    },
+
+    libBackToConcepts() {
+      this.libActiveConceptId = null;
+      this.libSceneFilter = null;
+      this.libLevelFilter = null;
+    },
+
+    libToggleScene(s) { this.libSceneFilter = (this.libSceneFilter === s) ? null : s; },
+    libToggleLevel(l) { this.libLevelFilter = (this.libLevelFilter === l) ? null : l; },
+
+    libFilteredTopics() {
+      const c = this.libActiveConcept();
+      if (!c) return [];
+      let topics = c.topics || [];
+      if (this.libSceneFilter) topics = topics.filter(t => (t.angles || []).includes(this.libSceneFilter));
+      if (this.libLevelFilter) topics = topics.filter(t => t.level === this.libLevelFilter);
+      const lvlOrder = {'人人能懂': 0, '需要点底子': 1, '专业向': 2};
+      return [...topics].sort((a, b) => (lvlOrder[a.level] || 9) - (lvlOrder[b.level] || 9));
+    },
+
+    libLevelClass(l) {
+      return ({
+        '人人能懂': 'bg-emerald-50 text-emerald-700',
+        '需要点底子': 'bg-amber-50 text-amber-700',
+        '专业向': 'bg-violet-50 text-violet-700',
+      })[l] || 'bg-ink-50 text-ink-700';
+    },
+
+    libLevelEmoji(l) {
+      return ({'人人能懂': '🌱', '需要点底子': '🔥', '专业向': '🚀'})[l] || '·';
+    },
+
+    pickTopic(t) {
+      // 标题：保留用户已起的非默认名；空或仍是「未命名项目 V0xxx」才覆盖
+      const cur = (this.form.title || '').trim();
+      if (!cur || cur.startsWith('未命名项目')) {
+        this.form.title = t.title;
+      }
+      // 主题：用 theme_full（题材库已写好成片描述）；fallback 拼 hook+title
+      this.form.theme = t.theme_full || `${t.hook || ''}。${t.title || ''}`.replace(/^。/, '');
+      // 视频类型：题材库的 kind 提示
+      if (t.kind === 'silent' || t.kind === 'dialogue') {
+        this.form.video_kind = t.kind;
+      }
+      this.brainstormPickedTitle = t.title;
+      this.autoSaveTopic();
+      this.activeTab = 'custom';
+      this.libBackToConcepts();
+      this.$nextTick(() => { if (window.lucide) lucide.createIcons(); });
+    },
+
+    // ===== 现有方法 =====
+
     get canGenerate() { return this.form.title.trim() && this.form.theme.trim(); },
     get hasCurrent() { return this.candidates.some(c => c.is_current); },
     get hasAiCandidate() { return this.candidates.some(c => c.source !== 'upload'); },
@@ -246,7 +505,6 @@ function outhanTopicAndFirstFrame() {
           throw new Error(data.error || `HTTP ${res.status}`);
         }
         const data = await res.json();
-        // 上传的图自动设为当前首帧；其他取消选中
         this.candidates.forEach(c => c.is_current = false);
         this.candidates.unshift({
           id: data.id,
