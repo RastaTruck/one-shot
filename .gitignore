@@ -24,6 +24,8 @@ data/outputs/
 data/voice_samples/
 data/shot_tables/
 data/audit_snapshots/
+# Outhan 项目素材（refs/frames/segments/audio/scripts），运行时产生，不入库
+data/projects/
 
 # BGM 二进制（mp3，按 user 决定走外置 OSS，不入 git）
 bgm/*.mp3

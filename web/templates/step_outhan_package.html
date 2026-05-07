@@ -3,11 +3,18 @@
 
 {% block outhan_step_content %}
 <div x-data="outhanPackage()" class="space-y-6">
+
+  <!-- 检查清单 -->
   <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
-    <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 6 · 打包下载</h2>
-    <p class="mt-1 text-[13px] text-ink-500">
-      把所有素材打成一个 zip：<code class="text-xs">references/ frames/ segments/ audio/ scripts/ manifest.md</code>
-      ——直接拖进剪辑软件就能开干。
+    <div class="flex items-center justify-between mb-1">
+      <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 5 · 打包下载</h2>
+      <span class="px-2 py-0.5 rounded-full text-[11px] font-bold border"
+            :class="videoKind === 'dialogue' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-ink-100 text-ink-600 border-ink-200'"
+            x-text="videoKind === 'dialogue' ? '📢 有对白' : '🎬 纯画面'"></span>
+    </div>
+    <p class="text-[13px] text-ink-500">
+      <span x-show="videoKind === 'dialogue'" x-cloak>把所有段视频用 Fish 音频替换音轨后串起 → 直接拿成片；或下原素材 zip 进剪辑软件精修。</span>
+      <span x-show="videoKind === 'silent'" x-cloak>纯画面视频：直接把所有段视频拼成成片（无音轨）；或下原素材 zip。</span>
     </p>
 
     <div class="mt-4 space-y-2">
@@ -29,27 +36,79 @@
               x-text="stats.with_video === stats.total && stats.total > 0 ? '✓' : '—'"></span>
         <span class="text-[13px]">分段视频 <span x-text="stats.with_video"></span>/<span x-text="stats.total"></span></span>
       </div>
-      <div class="flex items-center gap-3">
+      <div x-show="videoKind === 'dialogue'" x-cloak class="flex items-center gap-3">
         <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
               :class="stats.with_audio === stats.total && stats.total > 0 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink-100 text-ink-400 border-ink-200'"
               x-text="stats.with_audio === stats.total && stats.total > 0 ? '✓' : '—'"></span>
         <span class="text-[13px]">合成音频 <span x-text="stats.with_audio"></span>/<span x-text="stats.total"></span></span>
       </div>
+      <div class="flex items-center gap-3">
+        <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
+              :class="finalAssetId ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink-100 text-ink-400 border-ink-200'"
+              x-text="finalAssetId ? '✓' : '—'"></span>
+        <span class="text-[13px]">🎬 成片 mp4 已合成</span>
+      </div>
     </div>
 
-    <button @click="download()" :disabled="downloading || stats.total === 0"
-            class="mt-5 px-6 py-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[14px] transition disabled:opacity-50">
-      <span x-text="downloading ? '打包中...' : '📦 生成 zip 并下载'"></span>
-    </button>
+    <div class="mt-5 flex flex-wrap gap-3">
+      <button @click="assemble()" :disabled="assembling || downloading || !canAssemble"
+              class="px-6 py-3 rounded-full bg-amber-500 hover:bg-amber-600 text-white font-bold text-[14px] transition disabled:opacity-50">
+        <span x-text="assembling ? '🎬 合成中（约 1-3 分钟）...' : (finalAssetId ? '🔄 重新合成成片' : '🎬 一键合成成片 MP4')"></span>
+      </button>
+      <button @click="download()" :disabled="downloading || assembling || stats.total === 0"
+              class="px-6 py-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[14px] transition disabled:opacity-50">
+        <span x-text="downloading ? '打包中...' : '📦 生成 zip 并下载'"></span>
+      </button>
+    </div>
+
+    <div x-show="!canAssemble && stats.total > 0" x-cloak
+         class="mt-3 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
+      <template x-if="videoKind === 'dialogue'">
+        <span>所有段都得有视频和配音才能合成成片（当前
+          视频 <span x-text="stats.with_video"></span>/<span x-text="stats.total"></span>，
+          音频 <span x-text="stats.with_audio"></span>/<span x-text="stats.total"></span>）</span>
+      </template>
+      <template x-if="videoKind === 'silent'">
+        <span>所有段都得有视频才能合成成片（当前
+          视频 <span x-text="stats.with_video"></span>/<span x-text="stats.total"></span>）</span>
+      </template>
+    </div>
 
     <div x-show="error" x-cloak class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700"
          x-text="error"></div>
+
+    <div x-show="assembleLog.length > 0" x-cloak class="mt-3">
+      <details class="text-[12px]">
+        <summary class="cursor-pointer text-ink-500 hover:text-ink-700 font-bold">
+          ▸ 合成日志（<span x-text="assembleLog.length"></span> 条）
+        </summary>
+        <pre class="mt-2 p-3 bg-ink-50 border border-ink-200 rounded-lg whitespace-pre-wrap font-mono text-[11px]"
+             x-text="assembleLog.join('\n')"></pre>
+      </details>
+    </div>
+  </div>
+
+  <!-- 成片预览 -->
+  <div x-show="finalAssetId" x-cloak class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <h3 class="font-display text-[16px] font-semibold text-ink-900 mb-3">成片预览</h3>
+    <video controls
+           :src="`/api/outhan/${videoId}/asset/${finalAssetId}`"
+           class="w-full rounded-lg border border-ink-200"></video>
+    <div class="mt-3 flex items-center gap-3 text-[12px] text-ink-500">
+      <a :href="`/api/outhan/${videoId}/asset/${finalAssetId}`"
+         :download="(safeTitle || videoId) + '-final.mp4'"
+         class="px-3 py-1.5 rounded-full bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 font-bold text-ink-700 inline-flex items-center gap-1">
+        <i data-lucide="download" class="w-3.5 h-3.5"></i>
+        下载成片 MP4
+      </a>
+      <span x-show="finalDuration > 0" x-cloak>总时长 <strong x-text="finalDuration.toFixed(1)"></strong> 秒</span>
+    </div>
   </div>
 
   <div class="flex justify-between gap-3">
     <a href="/project/{{ video_id }}/outhan/audio"
        class="px-4 py-2 rounded-full border border-ink-200 hover:border-blue-400 text-[13px] font-bold text-ink-700">
-      ← 步骤 5 · 配音
+      ← 步骤 4 · 配音
     </a>
   </div>
 </div>
@@ -60,8 +119,37 @@ function outhanPackage() {
     videoId: {{ video_id|tojson }},
     checks: {{ checks|tojson }},
     stats: {{ stats|tojson }},
+    videoKind: {{ outhan_data.get('video_kind', 'dialogue')|tojson }},
+    finalAssetId: {{ (outhan_data.get('final_video_asset_id') or '')|tojson }},
+    finalDuration: 0,
+    safeTitle: ({{ outhan_title|tojson }} || '{{ video_id }}').replace(/[\\/:*?"<>|]/g, '_'),
+    assembling: false,
     downloading: false,
     error: null,
+    assembleLog: [],
+
+    get canAssemble() {
+      const baseOk = this.stats.total > 0 &&
+                     this.stats.with_video === this.stats.total;
+      if (this.videoKind === 'silent') return baseOk;
+      return baseOk && this.stats.with_audio === this.stats.total;
+    },
+
+    async assemble() {
+      if (!this.canAssemble) return;
+      this.assembling = true; this.error = null; this.assembleLog = [];
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/assemble-mp4`, {method:'POST'});
+        const d = await res.json().catch(()=>({}));
+        this.assembleLog = d.log || [];
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+        this.finalAssetId = d.asset_id;
+        this.finalDuration = d.duration || 0;
+        // 让 lucide 图标重新渲染
+        this.$nextTick(() => { if (window.lucide) lucide.createIcons(); });
+      } catch (e) { this.error = e.message || String(e); }
+      finally { this.assembling = false; }
+    },
 
     async download() {
       this.downloading = true; this.error = null;
@@ -72,7 +160,7 @@ function outhanPackage() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = (`{{ outhan_title|default('outhan') }}` || this.videoId).replace(/[\\/:*?"<>|]/g, '_') + '.zip';
+        a.download = this.safeTitle + '.zip';
         document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
       } catch (e) { this.error = e.message || String(e); }

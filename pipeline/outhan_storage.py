@@ -77,7 +77,10 @@ def save_asset(
     ensure_project_dirs(project_id)
     sub_default, ext_default = SUBDIR_BY_TYPE.get(asset_type, ("refs", ".bin"))
     final_ext = ext or ext_default
-    base = base_name or uuid.uuid4().hex
+    # [AI-NOTE] 2026-05-08: 防御性 —— 即使将来谁手贱把用户输入当 base_name 传进来，
+    # 也不能逃出 project_dir。Path(...).name 取最后一段，剥掉所有 / \ ../。
+    raw_base = base_name or uuid.uuid4().hex
+    base = Path(raw_base).name or uuid.uuid4().hex
     filename = f"{base}{final_ext}"
     full_path = project_dir(project_id) / sub_default / filename
     full_path.write_bytes(data)
@@ -124,9 +127,20 @@ def read_asset_bytes(asset: dict[str, Any]) -> bytes:
     return Path(asset["path"]).read_bytes()
 
 
-def mime_for_asset_type(asset_type: str) -> str:
-    return {
+def mime_for_asset_type(asset_type: str, path: str | None = None) -> str:
+    """[AI-NOTE] 2026-05-08: 优先按存盘扩展名嗅探（用户上传 jpg/webp 时返回正确 mime），
+    无 path 时回退到类型默认（保留旧调用兼容）。"""
+    explicit = {
         "segment_video": "video/mp4",
         "segment_audio": "audio/mpeg",
         "script": "text/markdown",
-    }.get(asset_type, "image/png")
+    }
+    if asset_type in explicit:
+        return explicit[asset_type]
+    if path:
+        ext = Path(path).suffix.lower()
+        return {
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".gif": "image/gif",
+        }.get(ext, "image/png")
+    return "image/png"

@@ -2,61 +2,133 @@
 {% block page_title %}配音 · {{ outhan_title or video_id }}{% endblock %}
 
 {% block outhan_step_content %}
-<div x-data="outhanAudio()" class="space-y-6">
-  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
-    <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 5 · 配音</h2>
-    <p class="mt-1 text-[13px] text-ink-500">
-      先用 Gemini 按段写 Fish S1 配音稿，再用 Fish 合成音频。S1 规范：<code class="text-xs">(情绪)</code> 标签必须放句首。
-    </p>
-    <div class="mt-4 flex gap-3 flex-wrap">
-      <button @click="generateScripts()" :disabled="genScripts || segments.length === 0"
-              class="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-bold transition disabled:opacity-50">
-        <span x-text="genScripts ? 'Gemini 写稿中...' : (allHaveScript ? '重新生成所有段配音稿' : '用 Gemini 写所有段配音稿')"></span>
-      </button>
-      <button x-show="allHaveScript" x-cloak @click="synthAll()" :disabled="synthing"
-              class="px-4 py-2 rounded-full bg-amber-500 hover:bg-amber-600 text-white text-[13px] font-bold transition disabled:opacity-50">
-        <span x-text="synthing ? '全部合成中...' : '▶ 全部合成（Fish S1）'"></span>
-      </button>
-    </div>
-    <div x-show="error" x-cloak class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700"
-         x-text="error"></div>
-  </div>
+<div x-data="outhanAudio()" x-init="loadVoices()" class="space-y-6">
 
-  <div class="space-y-3">
-    <template x-for="s in segments" :key="s.index">
-      <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
-        <div class="flex items-center justify-between mb-3">
-          <span class="font-bold text-[15px] text-ink-900">段 <span x-text="s.index + 1"></span></span>
-          <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
-                :class="s.audio_asset_id ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : (s.script ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-ink-100 text-ink-500 border-ink-200')"
-                x-text="s.audio_asset_id ? '已合成' : (s.script ? '有稿待合成' : '无稿')"></span>
-        </div>
-        <label class="block text-[11px] font-bold text-ink-700 mb-1">Fish S1 配音稿</label>
-        <textarea x-model="s.script" @blur="saveScript(s)" rows="3"
-                  placeholder="例：(开心) 春天来了，万物生长。"
-                  class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px] font-mono"></textarea>
-        <div class="mt-2 flex items-center gap-3">
-          <button @click="synthOne(s.index)"
-                  :disabled="synthing || !s.script || synthOneIdx === s.index"
-                  class="px-3 py-1 rounded-full bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-[12px] font-bold text-ink-700 disabled:opacity-50">
-            <span x-text="synthOneIdx === s.index ? '合成中...' : (s.audio_asset_id ? '重新合成' : '合成')"></span>
-          </button>
-          <audio x-show="s.audio_asset_id" x-cloak controls
-                 :src="`/api/outhan/${videoId}/asset/${s.audio_asset_id}`"
-                 class="flex-1 max-w-md"></audio>
-        </div>
+  <!-- silent 模式：直接显示跳过提示 -->
+  <template x-if="videoKind === 'silent'">
+    <div class="rounded-2xl bg-emerald-50 border border-emerald-200 p-6 shadow-soft">
+      <h2 class="font-display text-[20px] font-semibold text-emerald-900">步骤 4 · 配音（已跳过）</h2>
+      <p class="mt-2 text-[13px] text-emerald-800">
+        🎬 你在步骤 1 选了「<strong>纯画面（无配音）</strong>」类型，这一步无需操作。装配成片时直接拼视频，不会有语音轨。
+      </p>
+      <div class="mt-4 flex items-center gap-3">
+        <button @click="next()" :disabled="saving"
+                class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
+          直接进入步骤 5 · 打包 →
+        </button>
+        <a href="/project/{{ video_id }}/outhan/topic"
+           class="text-[12px] text-emerald-700 hover:underline">改主意？回步骤 1 切回「有对白」</a>
       </div>
-    </template>
-  </div>
+    </div>
+  </template>
+
+  <!-- dialogue 模式：配音流程 -->
+  <template x-if="videoKind === 'dialogue'">
+    <div class="space-y-6">
+
+      <!-- 项目默认音色 -->
+      <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+        <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 4 · 配音</h2>
+        <p class="mt-1 text-[13px] text-ink-500">
+          选择项目默认音色，所有段沿用；多角色场景下每段可单独切音色。
+        </p>
+
+        <div class="mt-4">
+          <label class="block text-[12px] font-bold text-ink-700 mb-2">🎙️ 项目默认音色</label>
+          <div class="flex gap-2 flex-wrap items-center">
+            <select x-model="projectVoice" @change="saveProjectVoice()"
+                    class="flex-1 min-w-64 h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px] font-bold bg-white">
+              <option value="">Fish S1 默认音色（无 reference，自然中性）</option>
+              <template x-for="v in voices" :key="v.id">
+                <option :value="v.id" x-text="`${v.name}（${v.desc}）${v.own ? ' · 自有' : ''}`"></option>
+              </template>
+            </select>
+            <button @click="previewVoice(projectVoice)"
+                    :disabled="!projectVoice || previewing === projectVoice"
+                    class="px-3 py-2 rounded-full bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-[12px] font-bold text-ink-700 disabled:opacity-50">
+              <span x-text="previewing === projectVoice ? '试听中...' : '🔊 试听'"></span>
+            </button>
+            <a href="https://fish.audio/zh-CN/discovery/" target="_blank"
+               class="text-[11px] text-blue-600 hover:underline">浏览更多音色 ↗</a>
+          </div>
+          <audio x-ref="previewAudio" class="hidden"></audio>
+          <p x-show="loadingVoices" x-cloak class="mt-2 text-[11px] text-ink-400">加载音色列表中...</p>
+        </div>
+
+        <div class="mt-4 flex gap-3 flex-wrap">
+          <button x-show="allHaveScript" x-cloak @click="synthAll()" :disabled="synthing"
+                  class="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-bold transition disabled:opacity-50">
+            <span x-text="synthing ? '全部合成中...' : '▶ 全部合成（应用当前音色）'"></span>
+          </button>
+          <button @click="generateScripts()" :disabled="genScripts || segments.length === 0"
+                  class="px-4 py-2 rounded-full bg-white border border-ink-200 hover:border-blue-400 text-ink-700 text-[13px] font-bold transition disabled:opacity-50">
+            <span x-text="genScripts ? 'Gemini 写稿中...' : '🔄 重新生成所有段配音稿'"></span>
+          </button>
+        </div>
+        <div x-show="error" x-cloak class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700"
+             x-text="error"></div>
+      </div>
+
+      <!-- 段卡片 -->
+      <div class="space-y-3">
+        <template x-for="s in segments" :key="s.index">
+          <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+            <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+              <span class="font-bold text-[15px] text-ink-900">段 <span x-text="s.index + 1"></span></span>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
+                      :class="s.audio_asset_id ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : (s.script ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-ink-100 text-ink-500 border-ink-200')"
+                      x-text="s.audio_asset_id ? '已合成' : (s.script ? '有稿待合成' : '无稿')"></span>
+              </div>
+            </div>
+
+            <!-- 段配音稿 -->
+            <label class="block text-[11px] font-bold text-ink-700 mb-1">Fish S1 配音稿</label>
+            <textarea x-model="s.script" @blur="saveScript(s)" rows="3"
+                      placeholder="例：(开心) 春天来了，万物生长。"
+                      class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px] font-mono"></textarea>
+
+            <!-- 段音色 + 合成按钮 -->
+            <div class="mt-3 grid md:grid-cols-[1fr_auto_auto] gap-2 items-center">
+              <select x-model="s.voice_id" @change="saveVoice(s)"
+                      class="h-9 px-2 rounded-md border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] font-bold bg-white">
+                <option value="">↪ 跟项目默认（<span x-text="projectVoiceLabel || 'S1 默认'"></span>）</option>
+                <template x-for="v in voices" :key="v.id">
+                  <option :value="v.id" x-text="`${v.name}（${v.desc}）`"></option>
+                </template>
+              </select>
+              <button @click="previewVoice(s.voice_id || projectVoice)"
+                      :disabled="!(s.voice_id || projectVoice)"
+                      class="h-9 px-3 rounded-md bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-[12px] font-bold text-ink-700 disabled:opacity-30">
+                🔊 试听
+              </button>
+              <button @click="synthOne(s.index)"
+                      :disabled="synthing || !s.script || synthOneIdx === s.index"
+                      class="h-9 px-3 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-bold transition disabled:opacity-50">
+                <span x-text="synthOneIdx === s.index ? '合成中...' : (s.audio_asset_id ? '重新合成' : '合成')"></span>
+              </button>
+            </div>
+
+            <!-- 已合成的音频预览 -->
+            <div x-show="s.audio_asset_id" x-cloak class="mt-2">
+              <audio controls
+                     :src="`/api/outhan/${videoId}/asset/${s.audio_asset_id}`"
+                     class="w-full max-w-md"></audio>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
 
   <div class="flex justify-between gap-3">
     <a href="/project/{{ video_id }}/outhan/video"
        class="px-4 py-2 rounded-full border border-ink-200 hover:border-blue-400 text-[13px] font-bold text-ink-700">
-      ← 步骤 4 · 分段视频
+      ← 步骤 3 · 分段视频
     </a>
-    <button @click="next()" :disabled="!allHaveAudio"
+    <button x-show="videoKind === 'dialogue'" x-cloak @click="next()" :disabled="!allHaveAudio"
             class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
-      进入步骤 6 · 打包 →
+      进入步骤 5 · 打包 →
     </button>
   </div>
 </div>
@@ -66,10 +138,36 @@ function outhanAudio() {
   return {
     videoId: {{ video_id|tojson }},
     segments: {{ segments|tojson }},
+    videoKind: {{ outhan_data.get('video_kind', 'dialogue')|tojson }},
+    projectVoice: {{ outhan_data.get('voice_id', '')|tojson }},
+    voices: [],
+    loadingVoices: false,
+    previewing: null,
     genScripts: false, synthing: false, synthOneIdx: null,
+    saving: false,
     error: null,
+
     get allHaveScript() { return this.segments.length > 0 && this.segments.every(s => !!(s.script && s.script.trim())); },
     get allHaveAudio() { return this.segments.length > 0 && this.segments.every(s => !!s.audio_asset_id); },
+    get projectVoiceLabel() {
+      if (!this.projectVoice) return '';
+      const v = this.voices.find(x => x.id === this.projectVoice);
+      return v ? v.name : this.projectVoice.slice(0, 8);
+    },
+
+    async loadVoices() {
+      this.loadingVoices = true;
+      try {
+        const res = await fetch('/api/outhan/voices');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        this.voices = d.voices || [];
+      } catch (e) {
+        this.error = `加载音色失败：${e.message || e}`;
+      } finally {
+        this.loadingVoices = false;
+      }
+    },
 
     async refresh() {
       try {
@@ -77,6 +175,40 @@ function outhanAudio() {
         if (!res.ok) return;
         const d = await res.json(); this.segments = d.segments;
       } catch {}
+    },
+
+    async saveProjectVoice() {
+      // [AI-NOTE] 2026-05-08: 改用专用 /save-voice 路由，避免顺手把 step 1 字段（用 jinja
+      // 渲染当时的旧值）覆盖回去。
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/save-voice`, {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({voice_id: this.projectVoice}),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(()=>({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+      } catch (e) { this.error = `保存项目音色失败：${e.message || e}`; }
+    },
+
+    async previewVoice(voiceId) {
+      if (!voiceId) return;
+      this.previewing = voiceId;
+      try {
+        const res = await fetch('/api/tts/preview', {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({voice_id: voiceId, provider: 'fish_audio'}),
+        });
+        if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || res.status); }
+        const d = await res.json();
+        const audio = this.$refs.previewAudio;
+        audio.src = d.url;
+        audio.play().catch(()=>{});
+      } catch (e) { this.error = `试听失败：${e.message || e}`; }
+      finally { this.previewing = null; }
     },
 
     async generateScripts() {
@@ -98,6 +230,15 @@ function outhanAudio() {
       } catch {}
     },
 
+    async saveVoice(s) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/segment/${s.index}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({voice_id: s.voice_id || ''}),
+        });
+      } catch {}
+    },
+
     async synthOne(idx) {
       this.synthOneIdx = idx; this.error = null;
       try {
@@ -112,7 +253,6 @@ function outhanAudio() {
     async synthAll() {
       this.synthing = true; this.error = null;
       try {
-        // 先存
         for (const s of this.segments) await this.saveScript(s);
         for (const s of this.segments) {
           if (!s.script || !s.script.trim()) continue;
@@ -125,12 +265,13 @@ function outhanAudio() {
     },
 
     async next() {
+      this.saving = true;
       try {
         await fetch(`/api/outhan/${this.videoId}/advance-step`, {
-          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({to: 6}),
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({to: 5}),
         });
         window.location.href = `/project/${this.videoId}/outhan/package`;
-      } catch (e) { this.error = e.message; }
+      } catch (e) { this.error = e.message; this.saving = false; }
     },
   };
 }

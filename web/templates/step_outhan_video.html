@@ -6,14 +6,19 @@
   <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
     <div class="flex items-start justify-between">
       <div>
-        <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 4 · 分段视频</h2>
+        <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 3 · 分段视频</h2>
         <p class="mt-1 text-[13px] text-ink-500">
           顺序生成每一段；每段完成后自动抽尾帧作为下段首帧（不用你手工传）。
         </p>
       </div>
-      <span class="px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-[12px] font-bold">
-        <span x-text="completed"></span>/<span x-text="segments.length"></span> 完成
-      </span>
+      <div class="flex items-center gap-2">
+        <span class="px-2 py-0.5 rounded-full text-[11px] font-bold border"
+              :class="videoKind === 'dialogue' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-ink-100 text-ink-600 border-ink-200'"
+              x-text="videoKind === 'dialogue' ? '📢 有对白' : '🎬 纯画面'"></span>
+        <span class="px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-[12px] font-bold">
+          <span x-text="completed"></span>/<span x-text="segments.length"></span> 完成
+        </span>
+      </div>
     </div>
 
     <div class="mt-4 flex gap-3 flex-wrap items-center">
@@ -102,11 +107,11 @@
   <div class="flex justify-between gap-3">
     <a href="/project/{{ video_id }}/outhan/script"
        class="px-4 py-2 rounded-full border border-ink-200 hover:border-blue-400 text-[13px] font-bold text-ink-700">
-      ← 步骤 3 · 台本
+      ← 步骤 2 · 台本
     </a>
     <button @click="next()" :disabled="completed !== segments.length || segments.length === 0"
             class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
-      进入步骤 5 · 配音 →
+      进入步骤 4 · 配音 →
     </button>
   </div>
 </div>
@@ -116,6 +121,7 @@ function outhanVideo() {
   return {
     videoId: {{ video_id|tojson }},
     segments: {{ segments|tojson }},
+    videoKind: {{ outhan_data.get('video_kind', 'dialogue')|tojson }},
     running: false,
     cancelFlag: false,
     error: null,
@@ -251,7 +257,7 @@ function outhanVideo() {
     async next() {
       try {
         await fetch(`/api/outhan/${this.videoId}/advance-step`, {
-          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({to: 5}),
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({to: 4}),
         });
         window.location.href = `/project/${this.videoId}/outhan/audio`;
       } catch (e) { this.error = e.message; }

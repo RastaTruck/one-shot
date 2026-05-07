@@ -1,16 +1,22 @@
 """Outhan 项目专属字段操作（存在 videos.meta_json 里）。
 
 [AI-NOTE] 2026-05-07: 不改 schema，所有 Outhan 特有字段塞 meta_json["outhan"] 子树。
+[AI-NOTE] 2026-05-08: 步骤 1 合并选题+首帧后，原"风格描述"字段（style）已废弃——主题文本
+应自带风格表达。此字段在 DEFAULT_OUTHAN 仅保留为向后兼容（老 meta_json 读出来空字符串）。
 schema 形态:
   meta_json = {
     "outhan": {
-      "theme": str,                        # 主题（用户文本 OR 视频总结的回填）
-      "style": str,                        # 风格描述
+      "theme": str,                        # 主题（用户文本 OR 视频总结的回填，含风格描述）
       "target_duration": int,              # 目标总时长（秒）
       "video_engine": "jimeng" | "vidu",   # 视频引擎默认
+      "video_kind": "dialogue" | "silent", # 有对白/旁白 vs 纯画面
+                                           #   dialogue → 台本同时出 prompt + script，配音步骤必走
+                                           #   silent   → 台本只出 prompt，配音步骤可跳过，装配时不替换音轨
+      "voice_id": str,                     # 项目默认 Fish Audio reference_id；空 → Fish S1 默认
       "first_frame_asset_id": str | null,  # 当前选定的首帧 asset id
       "first_frame_prompt": str | null,    # 生成首帧时的 prompt
-      "current_step": int,                 # 1-6 当前步骤
+      "final_video_asset_id": str | null,  # 步骤 5 装配后的成片 asset id
+      "current_step": int,                 # 1-5 当前步骤
     },
     "outhan_assets": [...]  # 见 outhan_storage.py
   }
@@ -26,11 +32,13 @@ from pipeline import state as _state
 
 DEFAULT_OUTHAN = {
     "theme": "",
-    "style": "",
     "target_duration": 60,
     "video_engine": "jimeng",
+    "video_kind": "dialogue",       # 默认有对白，老项目读出来也是它（兼容）
+    "voice_id": "",                 # 空 → 用 Fish S1 默认音色；段级 voice_id 可 override
     "first_frame_asset_id": None,
     "first_frame_prompt": None,
+    "final_video_asset_id": None,   # 装配后写入；让 update_outhan_data 不用绕底层
     "current_step": 1,
 }
 
@@ -72,12 +80,16 @@ def update_outhan_data(project_id: str, **fields: Any) -> dict[str, Any]:
 
 
 def set_current_step(project_id: str, step: int) -> None:
-    update_outhan_data(project_id, current_step=max(1, min(6, step)))
+    update_outhan_data(project_id, current_step=max(1, min(5, step)))
 
 
 def step_path(project_id: str, step: int) -> str:
-    """步骤号 → URL 路径段。"""
-    names = {1: "topic", 2: "first-frame", 3: "script", 4: "video", 5: "audio", 6: "package"}
+    """步骤号 → URL 路径段。
+
+    [AI-NOTE] 2026-05-08: 5 步模型——把选题+首帧合并成 step 1（选题信息直接驱动首帧）。
+    旧 6 步映射已废弃。
+    """
+    names = {1: "topic", 2: "script", 3: "video", 4: "audio", 5: "package"}
     return names.get(step, "topic")
 
 

@@ -920,6 +920,7 @@ async def project_outhan_workflow(video_id: str):
 
 @app.get("/project/{video_id}/outhan/topic", response_class=HTMLResponse)
 async def project_outhan_topic(request: Request, video_id: str):
+    """[AI-NOTE] 2026-05-08: 步骤 1 = 选题 + 首帧（合并）"""
     proj = _state.get_video(video_id)
     if not proj:
         return RedirectResponse(url="/", status_code=303)
@@ -930,6 +931,18 @@ async def project_outhan_topic(request: Request, video_id: str):
         {"id": a["id"], "url": f"/api/outhan/{video_id}/asset/{a['id']}"}
         for a in _outhan_storage.list_assets(video_id, "reference")
     ]
+    candidates = []
+    for a in _outhan_storage.list_assets(video_id, "first_frame"):
+        meta = a.get("metadata") or {}
+        candidates.append({
+            "id": a["id"],
+            "url": f"/api/outhan/{video_id}/asset/{a['id']}",
+            "is_current": a["id"] == data.get("first_frame_asset_id"),
+            "source": meta.get("source") or "ai",  # upload | ai
+            "ts": __import__("datetime").datetime.fromtimestamp(a["created_at"]).strftime("%Y-%m-%d %H:%M"),
+        })
+    # 最新的排前面，方便用户看到刚生成/上传的图
+    candidates.sort(key=lambda c: c["ts"], reverse=True)
     return TEMPLATES.TemplateResponse(
         "step_outhan_topic.html",
         {
@@ -938,14 +951,58 @@ async def project_outhan_topic(request: Request, video_id: str):
             "outhan_title": proj.title,
             "outhan_data": data,
             "refs": refs,
+            "candidates": candidates,
             "current_step": 1,
-            "reached_step": max(data["current_step"], 1),
+            "reached_step": data["current_step"],
         },
     )
 
 
+@app.get("/project/{video_id}/outhan/first-frame")
+async def project_outhan_first_frame_legacy(video_id: str):
+    """[AI-NOTE] 2026-05-08: 旧 6 步链接重定向到合并后的步骤 1（topic 页含首帧）。"""
+    return RedirectResponse(url=f"/project/{video_id}/outhan/topic", status_code=303)
+
+
+# [AI-NOTE] 2026-05-08: Fish Audio reference_id 只接 hex / 短 slug。校验防 SSRF / header injection。
+import re as _re_outhan
+_OUTHAN_VOICE_ID_RE = _re_outhan.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _outhan_strip_md_fence(content: str) -> str:
+    """[AI-NOTE] 2026-05-08: 健壮地剥 ```json ... ``` 围栏。
+    支持 Gemini 偶尔单行返回 ```json[...]``` 的情况（之前用 split("\\n",1) 会 IndexError）。
+    """
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = text[3:]
+        # 可能紧跟 lang 标签：json / javascript / py 等
+        for lang in ("json", "javascript", "js", "python", "py"):
+            if text.lower().startswith(lang):
+                text = text[len(lang):]
+                break
+        text = text.lstrip("\n").lstrip()
+        # 剥尾部 ```
+        if "```" in text:
+            text = text.rsplit("```", 1)[0]
+        text = text.strip()
+    return text
+
+
+def _outhan_validate_voice_id(v: str) -> tuple[bool, str]:
+    """返回 (ok, normalized_or_err). 空字符串视为合法（=用 S1 默认）。"""
+    v = (v or "").strip()
+    if not v:
+        return True, ""
+    if not _OUTHAN_VOICE_ID_RE.match(v):
+        return False, "voice_id 格式非法（只允许 1-64 位字母/数字/-/_）"
+    return True, v
+
+
 @app.post("/api/outhan/{video_id}/save-topic")
 async def api_outhan_save_topic(video_id: str, request: Request):
+    """[AI-NOTE] 2026-05-08: 仅更新 body 中显式给出的字段；voice_id 在 step 4 单独维护，
+    step 1 autoSave 不应清掉它，所以严格按 key in body 判断。"""
     proj = _state.get_video(video_id)
     if not proj:
         return JSONResponse({"error": "项目不存在"}, status_code=404)
@@ -954,17 +1011,80 @@ async def api_outhan_save_topic(video_id: str, request: Request):
     if not title:
         return JSONResponse({"error": "标题必填"}, status_code=400)
     from pipeline import outhan_meta as _outhan_meta
-    # 标题改 videos.title；其余字段进 outhan 子树
     _state.update_video_fields(video_id, title=title)
-    _outhan_meta.update_outhan_data(
-        video_id,
-        theme=(body.get("theme") or "").strip(),
-        style=(body.get("style") or "").strip(),
-        target_duration=int(body.get("target_duration") or 60),
-        video_engine=body.get("video_engine") or "jimeng",
-        current_step=max(_outhan_meta.get_outhan_data(video_id)["current_step"], 2),
-    )
+
+    fields: dict[str, object] = {}
+    if "theme" in body:
+        fields["theme"] = (body.get("theme") or "").strip()
+    if "target_duration" in body:
+        try:
+            fields["target_duration"] = int(body.get("target_duration") or 60)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "目标时长必须是数字"}, status_code=400)
+    if "video_engine" in body:
+        eng = (body.get("video_engine") or "jimeng").strip()
+        if eng not in ("jimeng", "vidu"):
+            eng = "jimeng"
+        fields["video_engine"] = eng
+    if "video_kind" in body:
+        kind = (body.get("video_kind") or "dialogue").strip()
+        if kind not in ("dialogue", "silent"):
+            kind = "dialogue"
+        fields["video_kind"] = kind
+    if "voice_id" in body:
+        ok, v = _outhan_validate_voice_id(str(body.get("voice_id") or ""))
+        if not ok:
+            return JSONResponse({"error": v}, status_code=400)
+        fields["voice_id"] = v
+    fields["current_step"] = max(_outhan_meta.get_outhan_data(video_id)["current_step"], 2)
+    _outhan_meta.update_outhan_data(video_id, **fields)
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/outhan/{video_id}/save-voice")
+async def api_outhan_save_voice(video_id: str, request: Request):
+    """[AI-NOTE] 2026-05-08: 项目默认音色专用路由（避免 step 4 保存音色顺手覆盖 step 1 字段）。"""
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    body = await request.json()
+    ok, v = _outhan_validate_voice_id(str(body.get("voice_id") or ""))
+    if not ok:
+        return JSONResponse({"error": v}, status_code=400)
+    from pipeline import outhan_meta as _outhan_meta
+    _outhan_meta.update_outhan_data(video_id, voice_id=v)
+    return JSONResponse({"ok": True, "voice_id": v})
+
+
+# [AI-NOTE] 2026-05-08: 图片上传统一限制：mime 白名单 + 10MB 上限。
+# 之前完全无校验，攻击面是任何文件都能落盘。
+_OUTHAN_IMG_MIME = {"image/png", "image/jpeg", "image/webp"}
+_OUTHAN_IMG_EXT_BY_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+_OUTHAN_IMG_MAX_BYTES = 10 * 1024 * 1024  # 10MB
+
+
+async def _outhan_read_image_upload(request: Request) -> tuple[bytes, str, str] | JSONResponse:
+    """共用上传校验：mime 白名单 + size 上限。返回 (data, ext, original_name)。"""
+    form = await request.form()
+    file = form.get("file")
+    if file is None or not hasattr(file, "read"):
+        return JSONResponse({"error": "缺 file"}, status_code=400)
+    mime = (getattr(file, "content_type", "") or "").lower()
+    if mime not in _OUTHAN_IMG_MIME:
+        return JSONResponse(
+            {"error": f"只支持 png/jpeg/webp 图片，收到 {mime or '(unknown)'}"},
+            status_code=400,
+        )
+    data = await file.read()
+    if len(data) > _OUTHAN_IMG_MAX_BYTES:
+        return JSONResponse(
+            {"error": f"图片过大（{len(data)//1024} KB），上限 {_OUTHAN_IMG_MAX_BYTES//1024} KB"},
+            status_code=400,
+        )
+    if not data:
+        return JSONResponse({"error": "图片为空"}, status_code=400)
+    ext = _OUTHAN_IMG_EXT_BY_MIME[mime]
+    return data, ext, (file.filename or "upload")
 
 
 @app.post("/api/outhan/{video_id}/upload-reference")
@@ -972,22 +1092,45 @@ async def api_outhan_upload_reference(video_id: str, request: Request):
     proj = _state.get_video(video_id)
     if not proj:
         return JSONResponse({"error": "项目不存在"}, status_code=404)
-    form = await request.form()
-    file = form.get("file")
-    if file is None or not hasattr(file, "read"):
-        return JSONResponse({"error": "缺 file"}, status_code=400)
-    data = await file.read()
-    ext_match = (file.filename or "").rsplit(".", 1)
-    ext = "." + ext_match[1].lower() if len(ext_match) == 2 else ".png"
+    parsed = await _outhan_read_image_upload(request)
+    if isinstance(parsed, JSONResponse):
+        return parsed
+    data, ext, original_name = parsed
     from pipeline import outhan_storage as _outhan_storage
     saved = _outhan_storage.save_asset(
         video_id,
         "reference",
         data,
         ext=ext,
-        metadata={"original_name": file.filename, "size_bytes": len(data)},
+        metadata={"original_name": original_name, "size_bytes": len(data)},
     )
     return JSONResponse({"id": saved["id"], "url": saved["url"]})
+
+
+# [AI-NOTE] 2026-05-08: 用户上传图片直接当首帧候选（不走 Seedream 生成）。
+# 落 type=first_frame，与 generate-first-frame 落同一种资产，自动进 candidates。
+@app.post("/api/outhan/{video_id}/upload-first-frame")
+async def api_outhan_upload_first_frame(video_id: str, request: Request):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    parsed = await _outhan_read_image_upload(request)
+    if isinstance(parsed, JSONResponse):
+        return parsed
+    data, ext, original_name = parsed
+    from pipeline import outhan_storage as _outhan_storage
+    from pipeline import outhan_meta as _outhan_meta
+    saved = _outhan_storage.save_asset(
+        video_id,
+        "first_frame",
+        data,
+        ext=ext,
+        base_name=f"upload-{int(__import__('time').time())}",
+        metadata={"original_name": original_name, "size_bytes": len(data), "source": "upload"},
+    )
+    # 上传即设为当前首帧（用户主动上传的，意图明确）
+    _outhan_meta.update_outhan_data(video_id, first_frame_asset_id=saved["id"])
+    return JSONResponse({"id": saved["id"], "url": saved["url"], "set_as_current": True})
 
 
 @app.delete("/api/outhan/{video_id}/asset/{asset_id}")
@@ -1030,7 +1173,7 @@ async def api_outhan_asset_serve(video_id: str, asset_id: str):
         body = _outhan_storage.read_asset_bytes(asset)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    mime = _outhan_storage.mime_for_asset_type(asset["type"])
+    mime = _outhan_storage.mime_for_asset_type(asset["type"], asset.get("path"))
     return _Response(content=body, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
 
 
@@ -1091,34 +1234,9 @@ async def api_outhan_summarize_video(video_id: str, request: Request):
     })
 
 
-# ==================== Outhan 步骤 2：首帧 ====================
-
-@app.get("/project/{video_id}/outhan/first-frame", response_class=HTMLResponse)
-async def project_outhan_first_frame(request: Request, video_id: str):
-    proj = _state.get_video(video_id)
-    if not proj:
-        return RedirectResponse(url="/", status_code=303)
-    from pipeline import outhan_meta as _outhan_meta
-    from pipeline import outhan_storage as _outhan_storage
-    data = _outhan_meta.get_outhan_data(video_id)
-    candidates = []
-    for a in _outhan_storage.list_assets(video_id, "first_frame"):
-        candidates.append({
-            "id": a["id"],
-            "url": f"/api/outhan/{video_id}/asset/{a['id']}",
-            "is_current": a["id"] == data.get("first_frame_asset_id"),
-            "ts": __import__("datetime").datetime.fromtimestamp(a["created_at"]).strftime("%Y-%m-%d %H:%M"),
-        })
-    return TEMPLATES.TemplateResponse(
-        "step_outhan_first_frame.html",
-        {
-            "request": request, "video_id": video_id,
-            "outhan_title": proj.title, "outhan_data": data,
-            "candidates": candidates,
-            "current_step": 2, "reached_step": max(data["current_step"], 2),
-        },
-    )
-
+# ==================== Outhan 步骤 1（合并）：首帧 API ====================
+# 注：GET /first-frame 已被 project_outhan_first_frame_legacy（topic 那块）重定向；
+# 首帧生成 API 仍独立保留，由合并后的 topic 页面调用。
 
 @app.post("/api/outhan/{video_id}/generate-first-frame")
 async def api_outhan_generate_first_frame(video_id: str, request: Request):
@@ -1131,8 +1249,8 @@ async def api_outhan_generate_first_frame(video_id: str, request: Request):
     data = _outhan_meta.get_outhan_data(video_id)
     user_prompt = (body.get("prompt") or "").strip()
     if not user_prompt:
-        parts = [data.get("theme") or "", data.get("style") or ""]
-        user_prompt = "，".join([p for p in parts if p]) or proj.title
+        # [AI-NOTE] 2026-05-08: style 字段在 step 1 合并后已废弃，主题文本应自带风格描述。
+        user_prompt = (data.get("theme") or "").strip() or proj.title
     size = body.get("size") or "2K"
 
     # [AI-NOTE] 2026-05-07: Gemini 自动按 Seedream 偏好改写；失败静默回退原 prompt
@@ -1190,7 +1308,7 @@ async def api_outhan_advance(video_id: str, request: Request):
     return JSONResponse({"ok": True})
 
 
-# ==================== Outhan 步骤 3：台本 ====================
+# ==================== Outhan 步骤 2：台本 ====================
 
 @app.get("/project/{video_id}/outhan/script", response_class=HTMLResponse)
 async def project_outhan_script(request: Request, video_id: str):
@@ -1206,15 +1324,33 @@ async def project_outhan_script(request: Request, video_id: str):
             "request": request, "video_id": video_id,
             "outhan_title": proj.title, "outhan_data": data,
             "segments": segments,
-            "current_step": 3, "reached_step": max(data["current_step"], 3),
+            "current_step": 2, "reached_step": data["current_step"],
         },
     )
 
 
-_OUTHAN_SCRIPT_SYSTEM = """你是视频分段台本作者。给定主题、首帧图、目标总时长，输出 N 段镜头描述。
+# [AI-NOTE] 2026-05-08: dialogue 类型的台本同时出画面 prompt + Fish S1 配音稿，
+# 让画面与配音同源，避免后续补配音时画面/语音不匹配。silent 类型只出画面 prompt。
+_OUTHAN_SCRIPT_SYSTEM_DIALOGUE = """你是视频分段台本作者，同时为 Fish S1 写配音稿。给定主题、首帧图、目标总时长，输出 N 段镜头 + 配音。
+
 要求：
 - 每段约 5 秒（按目标时长除 5 决定段数；3-12 段范围内）
-- 输出 JSON 数组，每元素：{"index": 0-based 数字, "scene": 中文场景描述, "videoPrompt": 中文视频提示词（含主体动作/镜头景别/镜头运动/光线/风格）, "transitionToNext": 与下段接力关系（最后段空字符串）}
+- 画面与配音同源：videoPrompt 描绘的动作/情绪要与 script 的台词配上
+- script 字段写 Fish S1 规范配音稿：
+  * 用圆括号 (...) 标注情绪标签放在句首：(开心) (平静) (温柔) (惊讶) (悲伤) (愤怒) (无奈) (坚定)
+  * 中文，字数与时长匹配（5 秒约 12-18 字）
+  * 例：(平静) 春天来了，万物悄悄苏醒。
+- 输出 JSON 数组，每元素：
+  {"index": 数字（0-based）, "scene": 中文场景描述, "videoPrompt": 中文视频提示词（主体动作/景别/运镜/光线/风格）, "script": "Fish S1 配音稿（情绪标签开头）", "transitionToNext": 与下段接力关系（最后段空字符串）}
+- 直接返回 JSON 数组，无前缀、解释、Markdown 围栏"""
+
+_OUTHAN_SCRIPT_SYSTEM_SILENT = """你是视频分段台本作者。给定主题、首帧图、目标总时长，输出 N 段镜头描述。
+
+这是纯画面无配音的视频，只关注画面本身的视觉叙事。
+
+要求：
+- 每段约 5 秒（按目标时长除 5 决定段数；3-12 段范围内）
+- 输出 JSON 数组，每元素：{"index": 数字（0-based）, "scene": 中文场景描述, "videoPrompt": 中文视频提示词（主体动作/景别/运镜/光线/风格）, "transitionToNext": 与下段接力关系（最后段空字符串）}
 - videoPrompt 要让模型一看就知道主体动作
 - 直接返回 JSON 数组，无前缀、解释、Markdown 围栏"""
 
@@ -1234,6 +1370,7 @@ async def api_outhan_generate_script(video_id: str):
     target_duration = data.get("target_duration") or 60
     per = 5
     seg_count = max(3, min(12, round(target_duration / per)))
+    kind = data.get("video_kind") or "dialogue"
 
     ff = _outhan_storage.get_asset(video_id, data["first_frame_asset_id"])
     media = []
@@ -1245,34 +1382,43 @@ async def api_outhan_generate_script(video_id: str):
         except Exception:
             pass
 
+    kind_hint = "（含对白/旁白配音稿）" if kind == "dialogue" else "（纯画面无配音）"
     user_prompt = f"""主题：{data.get("theme") or proj.title}
-风格：{data.get("style") or "（未指定）"}
 目标总时长：{target_duration} 秒
 段数：{seg_count}（每段约 {per} 秒）
+视频类型：{kind_hint}
 
 请基于主题与首帧图，输出 {seg_count} 段台本（JSON 数组）。"""
+    sys_prompt = _OUTHAN_SCRIPT_SYSTEM_DIALOGUE if kind == "dialogue" else _OUTHAN_SCRIPT_SYSTEM_SILENT
     result = _llm.call_gemini_multimodal_text(
-        _OUTHAN_SCRIPT_SYSTEM, user_prompt, media=media or None,
+        sys_prompt, user_prompt, media=media or None,
         model="gemini-2.5-pro", timeout=300,
     )
     if result is None:
         return JSONResponse({"error": "Gemini 多模态台本生成失败"}, status_code=502)
     content, _cost = result
-    # 容错：去 markdown fence
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        if text.startswith("json"):
-            text = text[4:].strip()
+    text = _outhan_strip_md_fence(content)
     try:
         parsed = _json.loads(text)
         if not isinstance(parsed, list):
             raise ValueError("非数组")
     except Exception as e:
         return JSONResponse({"error": f"Gemini 返回的不是合法 JSON 数组：{e}"}, status_code=502)
+    if len(parsed) < 2 or len(parsed) > 15:
+        return JSONResponse(
+            {"error": f"Gemini 输出段数异常（{len(parsed)}），期望 2-15 段"},
+            status_code=502,
+        )
+    # [AI-NOTE] 2026-05-08: Gemini 偶尔乱序输出，按它自己的 index 升序排好再 enumerate；
+    # 没给 index 的 fallback 0（保持原相对顺序）。
+    parsed = sorted(parsed, key=lambda x: x.get("index", 0) if isinstance(x, dict) else 0)
 
     segments = []
     for i, s in enumerate(parsed):
+        if not isinstance(s, dict):
+            continue
+        # dialogue 时让 Gemini 同时填 script；silent 时 script 为 None
+        seg_script = (s.get("script") or "").strip() if kind == "dialogue" else None
         segments.append({
             "index": i,
             "scene": s.get("scene") or s.get("sceneDescription") or "",
@@ -1283,7 +1429,8 @@ async def api_outhan_generate_script(video_id: str):
             "tail_frame_asset_id": None,
             "video_asset_id": None, "video_path": None,
             "task_id": None, "status": "pending",
-            "script": None, "audio_asset_id": None,
+            "script": seg_script or None, "audio_asset_id": None,
+            "voice_id": "",  # [AI-NOTE] 2026-05-08: 空 → 跟项目默认；多角色对话时段级可 override
             "transition_to_next": s.get("transitionToNext") or "",
         })
     _outhan_meta.replace_segments(video_id, segments)
@@ -1293,10 +1440,19 @@ async def api_outhan_generate_script(video_id: str):
 @app.patch("/api/outhan/{video_id}/segment/{index}")
 async def api_outhan_segment_patch(video_id: str, index: int, request: Request):
     body = await request.json()
-    allowed = {"prompt", "engine", "duration", "script", "scene", "first_frame_asset_id"}
+    allowed = {"prompt", "engine", "duration", "script", "scene", "first_frame_asset_id", "voice_id"}
     fields = {k: v for k, v in body.items() if k in allowed}
     if not fields:
         return JSONResponse({"error": "无可更新字段"}, status_code=400)
+    # 引擎白名单
+    if "engine" in fields and fields["engine"] not in ("jimeng", "vidu"):
+        return JSONResponse({"error": "engine 只能是 jimeng 或 vidu"}, status_code=400)
+    # voice_id 格式校验
+    if "voice_id" in fields:
+        ok, v = _outhan_validate_voice_id(str(fields["voice_id"] or ""))
+        if not ok:
+            return JSONResponse({"error": v}, status_code=400)
+        fields["voice_id"] = v
     from pipeline import outhan_meta as _outhan_meta
     res = _outhan_meta.update_segment(video_id, index, **fields)
     if res is None:
@@ -1310,7 +1466,7 @@ async def api_outhan_segments(video_id: str):
     return JSONResponse({"segments": _outhan_meta.get_segments(video_id)})
 
 
-# ==================== Outhan 步骤 4：分段视频 ====================
+# ==================== Outhan 步骤 3：分段视频 ====================
 
 @app.get("/project/{video_id}/outhan/video", response_class=HTMLResponse)
 async def project_outhan_video(request: Request, video_id: str):
@@ -1326,7 +1482,7 @@ async def project_outhan_video(request: Request, video_id: str):
             "request": request, "video_id": video_id,
             "outhan_title": proj.title, "outhan_data": data,
             "segments": segments,
-            "current_step": 4, "reached_step": max(data["current_step"], 4),
+            "current_step": 3, "reached_step": data["current_step"],
         },
     )
 
@@ -1511,7 +1667,7 @@ async def api_outhan_seg_poll(video_id: str, index: int):
     return JSONResponse({"status": "completed", "video_asset_id": saved["id"], "tail_asset_id": tail_asset_id})
 
 
-# ==================== Outhan 步骤 5：配音 ====================
+# ==================== Outhan 步骤 4：配音 ====================
 
 @app.get("/project/{video_id}/outhan/audio", response_class=HTMLResponse)
 async def project_outhan_audio(request: Request, video_id: str):
@@ -1527,7 +1683,7 @@ async def project_outhan_audio(request: Request, video_id: str):
             "request": request, "video_id": video_id,
             "outhan_title": proj.title, "outhan_data": data,
             "segments": segments,
-            "current_step": 5, "reached_step": max(data["current_step"], 5),
+            "current_step": 4, "reached_step": data["current_step"],
         },
     )
 
@@ -1554,6 +1710,11 @@ async def api_outhan_gen_all_scripts(video_id: str):
     from pipeline import outhan_meta as _outhan_meta
     from pipeline.tools import llm_client as _llm
     data = _outhan_meta.get_outhan_data(video_id)
+    if data.get("video_kind") == "silent":
+        return JSONResponse(
+            {"error": "纯画面项目不需要配音稿（去步骤 1 切换为「有对白」类型再来）"},
+            status_code=400,
+        )
     segs = _outhan_meta.get_segments(video_id)
     if not segs:
         return JSONResponse({"error": "还没有台本"}, status_code=400)
@@ -1564,7 +1725,6 @@ async def api_outhan_gen_all_scripts(video_id: str):
         for s in segs
     ]
     user_prompt = f"""项目主题：{data.get("theme") or proj.title}
-风格：{data.get("style") or "（未指定）"}
 
 各段：
 {_json.dumps(seg_inputs, ensure_ascii=False, indent=2)}
@@ -1574,11 +1734,7 @@ async def api_outhan_gen_all_scripts(video_id: str):
     if res is None:
         return JSONResponse({"error": "Gemini 配音稿生成失败"}, status_code=502)
     content, _cost = res
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        if text.startswith("json"):
-            text = text[4:].strip()
+    text = _outhan_strip_md_fence(content)
     try:
         parsed = _json.loads(text)
         if not isinstance(parsed, list):
@@ -1602,13 +1758,21 @@ async def api_outhan_seg_synth(video_id: str, index: int):
         return JSONResponse({"error": "段不存在"}, status_code=404)
     if not seg.get("script") or not seg["script"].strip():
         return JSONResponse({"error": "段没有配音稿"}, status_code=400)
+    # [AI-NOTE] 2026-05-08: 音色选择三级优先级——段 voice_id > 项目 voice_id > S1 默认（无 ref）
+    proj_data = _outhan_meta.get_outhan_data(video_id)
+    seg_voice = (seg.get("voice_id") or "").strip()
+    proj_voice = (proj_data.get("voice_id") or "").strip()
+    chosen_voice = seg_voice or proj_voice  # 空字符串 → 走 S1 默认
     try:
         out_dir = _outhan_storage.project_dir(video_id) / "audio"
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"seg-{index}-{int(__import__('time').time())}.mp3"
-        # [AI-NOTE] 2026-05-07: Outhan 用 S1 默认音色（无 reference_id），与一二布布的
-        # synthesize_async（必填 reference_id）走不同函数。
-        r = await _fish_audio.synthesize_s1_async(seg["script"], out_path)
+        if chosen_voice:
+            # 用指定音色（reference_id）
+            r = await _fish_audio.synthesize_async(seg["script"], chosen_voice, out_path)
+        else:
+            # 兜底：S1 默认音色
+            r = await _fish_audio.synthesize_s1_async(seg["script"], out_path)
         if not r.get("ok"):
             return JSONResponse(
                 {"error": f"Fish 合成失败：{r.get('error') or '未知错误'}"},
@@ -1625,10 +1789,20 @@ async def api_outhan_seg_synth(video_id: str, index: int):
     except Exception as e:
         return JSONResponse({"error": f"Fish 合成失败：{e}"}, status_code=502)
     _outhan_meta.update_segment(video_id, index, audio_asset_id=saved["id"])
-    return JSONResponse({"audio_asset_id": saved["id"], "url": saved["url"]})
+    return JSONResponse({
+        "audio_asset_id": saved["id"], "url": saved["url"],
+        "voice_used": chosen_voice or "(S1 默认)",
+    })
 
 
-# ==================== Outhan 步骤 6：打包 ====================
+# [AI-NOTE] 2026-05-08: 把全局 Fish 音色列表暴露给 Outhan 配音页。
+# _FISH_VOICE_PRESETS 在启动时已 list_voices_sync() 拉取（含项目自有声线 + 公共热门）。
+@app.get("/api/outhan/voices")
+async def api_outhan_voices():
+    return JSONResponse({"voices": _FISH_VOICE_PRESETS})
+
+
+# ==================== Outhan 步骤 5：打包 ====================
 
 @app.get("/project/{video_id}/outhan/package", response_class=HTMLResponse)
 async def project_outhan_package(request: Request, video_id: str):
@@ -1651,9 +1825,37 @@ async def project_outhan_package(request: Request, video_id: str):
             "request": request, "video_id": video_id,
             "outhan_title": proj.title, "outhan_data": data,
             "stats": stats, "checks": checks,
-            "current_step": 6, "reached_step": max(data["current_step"], 6),
+            "current_step": 5, "reached_step": data["current_step"],
         },
     )
+
+
+@app.post("/api/outhan/{video_id}/assemble-mp4")
+async def api_outhan_assemble_mp4(video_id: str):
+    """[AI-NOTE] 2026-05-07: 一键合成成片——每段视频用 Fish 音频替换音轨，N 段串接。
+
+    同步执行（5-12 段大约 1-3 分钟）。详细的 ffmpeg 调用在 pipeline/outhan_video_assembly.py。
+    """
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    from pipeline import outhan_video_assembly as _assembly
+    result = _assembly.assemble_mp4(video_id)
+    if not result.get("ok"):
+        # [AI-NOTE] 2026-05-08: assembly 模块返回 error_type ∈ {"input","ffmpeg"}；
+        # 缺素材 400，ffmpeg/系统错 502。之前用中文字符串匹配做分类，文案漂移会失效。
+        is_input_error = result.get("error_type") == "input"
+        return JSONResponse(
+            {"error": result.get("error", ""), "fail_index": result.get("fail_index"),
+             "log": result.get("log", [])},
+            status_code=400 if is_input_error else 502,
+        )
+    return JSONResponse({
+        "asset_id": result["asset_id"],
+        "url": f"/api/outhan/{video_id}/asset/{result['asset_id']}",
+        "duration": result.get("duration", 0),
+        "log": result.get("log", []),
+    })
 
 
 @app.post("/api/outhan/{video_id}/build-package")
@@ -1668,8 +1870,22 @@ async def api_outhan_build_package(video_id: str):
     data = _outhan_meta.get_outhan_data(video_id)
     segs = _outhan_meta.get_segments(video_id)
 
+    safe_title_for_file = (proj.title or video_id).translate(
+        str.maketrans({c: "_" for c in '\\/:*?"<>|'})
+    )[:60]
+
     buf = _io.BytesIO()
     with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        # 成片（如果有）—— 顶层，最显眼
+        final_asset_id = data.get("final_video_asset_id")
+        final_asset = None
+        if final_asset_id:
+            final_asset = _outhan_storage.get_asset(video_id, final_asset_id)
+            if final_asset:
+                try:
+                    zf.writestr(f"{safe_title_for_file}-final.mp4",
+                                _outhan_storage.read_asset_bytes(final_asset))
+                except Exception: pass
         # references
         for a in _outhan_storage.list_assets(video_id, "reference"):
             try:
@@ -1706,20 +1922,31 @@ async def api_outhan_build_package(video_id: str):
                 zf.writestr(f"scripts/segment-{idx}-script.txt", s["script"])
 
         # manifest
+        final_filename = f"{safe_title_for_file}-final.mp4" if final_asset else None
+        kind_label = "纯画面（无配音）" if data.get("video_kind") == "silent" else "有对白 / 旁白"
         lines = [
             f"# {proj.title}", "",
             f"**主题**：{data.get('theme') or '（未填）'}",
-            f"**风格**：{data.get('style') or '（未填）'}",
+            f"**视频类型**：{kind_label}",
             f"**目标总时长**：{data.get('target_duration')} 秒",
             f"**默认引擎**：{data.get('video_engine') or 'jimeng'}",
             f"**生成时间**：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
+        ]
+        if final_filename:
+            lines += [
+                f"## 🎬 成片：`{final_filename}`",
+                "",
+                "已通过一键合成（Fish 音频替换 + 段间 concat）。可直接发布；如需精修，下面 segments/audio 是分段原料。",
+                "",
+            ]
+        lines += [
             "## 文件夹结构",
             "- `references/` 用户上传的参考图",
             "- `frames/first.png` 项目首帧",
             "- `frames/segment-NN-tail.png` 各段尾帧",
-            "- `segments/segment-NN-<engine>.mp4` 各段视频",
-            "- `audio/segment-NN.mp3` 各段配音",
+            "- `segments/segment-NN-<engine>.mp4` 各段视频（原始，未替换音轨）",
+            "- `audio/segment-NN.mp3` 各段 Fish 配音",
             "- `scripts/segment-NN-script.txt` 各段 Fish S1 配音稿",
             "",
             "## 分段清单", "",

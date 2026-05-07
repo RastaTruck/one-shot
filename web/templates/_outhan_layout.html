@@ -26,12 +26,11 @@
   <!-- Stepper -->
   <div class="flex items-center gap-1 mb-8">
     {% set steps = [
-      (1, "topic", "选题", "lightbulb"),
-      (2, "first-frame", "首帧", "image"),
-      (3, "script", "台本", "list"),
-      (4, "video", "分段视频", "film"),
-      (5, "audio", "配音", "mic"),
-      (6, "package", "打包", "package")
+      (1, "topic", "选题 + 首帧", "lightbulb"),
+      (2, "script", "台本", "list"),
+      (3, "video", "分段视频", "film"),
+      (4, "audio", "配音", "mic"),
+      (5, "package", "打包", "package")
     ] %}
     {% for n, slug, label, icon in steps %}
       {% set done = n < current_step %}
@@ -57,7 +56,7 @@
         </div>
       {% if reachable %}</a>{% else %}</div>{% endif %}
 
-      {% if n < 6 %}
+      {% if n < 5 %}
         <div class="w-3 h-[2px] {% if n < current_step %}bg-emerald-300{% else %}bg-ink-200{% endif %}"></div>
       {% endif %}
     {% endfor %}

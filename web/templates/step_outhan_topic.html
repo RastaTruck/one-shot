@@ -1,32 +1,34 @@
 {% extends "_outhan_layout.html" %}
-{% block page_title %}选题 · {{ outhan_title or video_id }}{% endblock %}
+{% block page_title %}选题 + 首帧 · {{ outhan_title or video_id }}{% endblock %}
 
 {% block outhan_step_content %}
-<div x-data="outhanTopic()" class="space-y-6">
+<div x-data="outhanTopicAndFirstFrame()" class="space-y-6">
 
+  <!-- ==================== 选题信息（上半） ==================== -->
   <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
     <div class="mb-5">
-      <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 1 · 选题</h2>
+      <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 1 · 选题 + 首帧</h2>
       <p class="mt-1 text-[13px] text-ink-500">
-        填主题与风格、上传参考图、确定视频引擎；下一步生成首帧。
+        填主题决定故事走向；下方上传一张图直接当首帧，或让 AI 按主题画一张。
       </p>
     </div>
 
     <!-- 标题 -->
     <div class="mb-4">
       <label class="block text-[12px] font-bold text-ink-700 mb-1">标题</label>
-      <input type="text" x-model="form.title"
+      <input type="text" x-model="form.title" @blur="autoSaveTopic()"
              class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]">
     </div>
 
     <!-- 主题 -->
     <div class="mb-4">
-      <label class="block text-[12px] font-bold text-ink-700 mb-1">主题（一句话讲清这条视频要讲什么）</label>
-      <textarea x-model="form.theme" rows="3"
-                placeholder="例：一只橘猫在春日里散步、追蝴蝶、最后停在花丛边"
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">
+        主题（一句话讲清要讲什么 · 顺手把风格也写进去：「写意水墨风的橘猫散步」）
+      </label>
+      <textarea x-model="form.theme" @blur="autoSaveTopic()" rows="3"
+                placeholder="例：电影感暖调下，一只橘猫在春日里散步、追蝴蝶、最后停在花丛边"
                 class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]"></textarea>
 
-      <!-- 视频总结按钮 -->
       <div class="mt-2 flex items-center gap-3 flex-wrap">
         <label class="inline-block">
           <input type="file" accept="video/*" class="hidden"
@@ -38,7 +40,7 @@
           </span>
         </label>
         <span x-show="summarizedFrom" class="text-[11px] text-ink-500" x-cloak>
-          ✓ 来自 <code x-text="summarizedFrom"></code>，可继续编辑上方文本
+          ✓ 来自 <code x-text="summarizedFrom"></code>，可继续编辑
         </span>
       </div>
       <p class="mt-1 text-[11px] text-ink-400">
@@ -46,123 +48,217 @@
       </p>
     </div>
 
-    <!-- 风格 -->
+    <!-- 视频类型（决定有没有配音） -->
     <div class="mb-4">
-      <label class="block text-[12px] font-bold text-ink-700 mb-1">风格描述（可选）</label>
-      <textarea x-model="form.style" rows="2"
-                placeholder="例：电影感、暖色调、浅景深、写意水墨…"
-                class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]"></textarea>
-    </div>
-
-    <!-- 参考图 -->
-    <div class="mb-4">
-      <label class="block text-[12px] font-bold text-ink-700 mb-1">
-        参考图（可选 · 提示词增强会用到）
-      </label>
-      <div class="space-y-3">
-        <div class="flex gap-2 flex-wrap" x-show="refs.length > 0" x-cloak>
-          <template x-for="r in refs" :key="r.id">
-            <div class="relative w-24 h-24 rounded-lg overflow-hidden border-2 border-ink-200">
-              <img :src="r.url" class="w-full h-full object-cover">
-              <button @click="removeRef(r.id)"
-                      class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[12px] flex items-center justify-center">
-                ×
-              </button>
-            </div>
-          </template>
-        </div>
-        <label class="inline-block">
-          <input type="file" accept="image/*" multiple class="hidden"
-                 @change="uploadRefs($event.target.files)" :disabled="uploading">
-          <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-blue-50 text-ink-700 text-[12px] font-bold cursor-pointer transition border border-ink-200">
-            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-            <span x-text="uploading ? '上传中...' : '+ 上传参考图'"></span>
-          </span>
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">视频类型</label>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="flex flex-col p-3 rounded-lg border-2 cursor-pointer transition"
+               :class="form.video_kind === 'dialogue' ? 'border-blue-500 bg-blue-50' : 'border-ink-200 hover:border-blue-300'">
+          <div class="flex items-center gap-2">
+            <input type="radio" value="dialogue" x-model="form.video_kind" @change="autoSaveTopic()" class="w-4 h-4">
+            <span class="font-bold text-[13px] text-ink-900">📢 有对白 / 旁白</span>
+          </div>
+          <p class="mt-1 text-[11px] text-ink-500 leading-relaxed">
+            台本会一次出齐<strong>画面 + 配音稿</strong>（Fish S1 情绪标签），画面与语音同源匹配
+          </p>
+        </label>
+        <label class="flex flex-col p-3 rounded-lg border-2 cursor-pointer transition"
+               :class="form.video_kind === 'silent' ? 'border-blue-500 bg-blue-50' : 'border-ink-200 hover:border-blue-300'">
+          <div class="flex items-center gap-2">
+            <input type="radio" value="silent" x-model="form.video_kind" @change="autoSaveTopic()" class="w-4 h-4">
+            <span class="font-bold text-[13px] text-ink-900">🎬 纯画面（无配音）</span>
+          </div>
+          <p class="mt-1 text-[11px] text-ink-500 leading-relaxed">
+            只看画面叙事，<strong>跳过配音步骤</strong>，装配成片直接拼视频
+          </p>
         </label>
       </div>
     </div>
 
     <!-- 时长 + 引擎 -->
-    <div class="grid grid-cols-2 gap-4 mb-4">
+    <div class="grid grid-cols-2 gap-4">
       <div>
         <label class="block text-[12px] font-bold text-ink-700 mb-1">目标总时长（秒）</label>
         <input type="number" x-model.number="form.target_duration" min="15" max="600"
+               @blur="autoSaveTopic()"
                class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]">
       </div>
       <div>
         <label class="block text-[12px] font-bold text-ink-700 mb-1">视频引擎默认</label>
-        <select x-model="form.video_engine"
+        <select x-model="form.video_engine" @change="autoSaveTopic()"
                 class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px] font-bold bg-white">
           <option value="jimeng">即梦视频（Seedance）— 国内首选</option>
           <option value="vidu">Vidu 国内版（viduq3-pro）</option>
         </select>
-        <p class="text-[11px] text-ink-400 mt-0.5">到步骤 4 还能按段切换</p>
+        <p class="text-[11px] text-ink-400 mt-0.5">到分段视频步骤还能按段切换</p>
       </div>
     </div>
 
-    <!-- 错误 -->
-    <div x-show="error" x-cloak
-         class="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
-      <strong x-text="error"></strong>
+    <p class="mt-4 text-[11px] text-ink-400">
+      <span x-show="autoSaving" x-cloak class="text-blue-600">保存中...</span>
+      <span x-show="!autoSaving">字段会在失焦时自动保存。</span>
+    </p>
+  </div>
+
+  <!-- ==================== 首帧（合并：上传 + AI 生成） ==================== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <div class="mb-4">
+      <h3 class="font-display text-[18px] font-semibold text-ink-900">首帧</h3>
+      <p class="mt-1 text-[13px] text-ink-500">
+        两条入口：直接上传一张图当首帧（最快），或让 AI 按主题画一张。后续每段视频都从首帧延续。
+      </p>
     </div>
 
-    <!-- 操作 -->
-    <div class="flex justify-end gap-3 pt-2">
-      <button @click="saveAndNext()" :disabled="saving || !form.title || !form.theme"
-              class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50 flex items-center gap-2">
-        <span x-text="saving ? '保存中...' : '保存并进入步骤 2 · 首帧 →'"></span>
-      </button>
+    <!-- 两条入口并列 -->
+    <div class="grid md:grid-cols-2 gap-4">
+      <!-- A. 上传图当首帧 -->
+      <div class="rounded-xl border-2 border-dashed border-ink-200 hover:border-blue-300 p-4 transition">
+        <div class="text-[13px] font-bold text-ink-900 mb-1">📷 上传图当首帧</div>
+        <p class="text-[11px] text-ink-500 mb-3">手头已有想要的画面？直接传，落地即首帧。</p>
+        <label class="inline-block">
+          <input type="file" accept="image/*" class="hidden"
+                 @change="uploadAsFirstFrame($event.target.files)" :disabled="uploading">
+          <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold cursor-pointer transition"
+                :class="uploading ? 'opacity-50 cursor-wait' : ''">
+            <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+            <span x-text="uploading ? '上传中...' : '选图上传'"></span>
+          </span>
+        </label>
+      </div>
+
+      <!-- B. AI 生成首帧 -->
+      <div class="rounded-xl border-2 border-dashed border-ink-200 hover:border-blue-300 p-4 transition">
+        <div class="text-[13px] font-bold text-ink-900 mb-1">🎨 AI 画首帧</div>
+        <p class="text-[11px] text-ink-500 mb-3">即梦图（Seedream）按上方主题画；Gemini 自动改写成更出图的 prompt。</p>
+        <div class="space-y-2 mb-3">
+          <textarea x-model="ffForm.prompt" rows="2"
+                    placeholder="留空就用上方主题（推荐）"
+                    class="w-full px-2 py-1.5 rounded-md border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px]"></textarea>
+          <select x-model="ffForm.size"
+                  class="w-full h-8 px-2 rounded-md border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] bg-white">
+            <option value="2K">2K · 16:9 横屏（默认）</option>
+            <option value="4K">4K · 高清慢一些</option>
+            <option value="1024x1820">1024×1820 · 9:16 竖屏</option>
+            <option value="2048x2048">2048×2048 · 1:1 方形</option>
+          </select>
+        </div>
+        <button @click="generateFirstFrame()" :disabled="generating || !canGenerate"
+                class="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-bold transition disabled:opacity-50">
+          <span x-text="generating ? '生成中（约 5-15 秒）...' : (hasAiCandidate ? '再画一张候选' : '生成首帧')"></span>
+        </button>
+        <p x-show="!canGenerate" x-cloak class="mt-2 text-[11px] text-amber-700">
+          需先填标题与主题
+        </p>
+      </div>
     </div>
+
+    <div x-show="error" x-cloak
+         class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
+      <strong x-text="error"></strong>
+    </div>
+  </div>
+
+  <!-- 候选首帧（上传 + AI 都进这里） -->
+  <div x-show="candidates.length > 0" x-cloak class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <h3 class="font-display text-[16px] font-semibold text-ink-900 mb-1">候选首帧</h3>
+    <p class="text-[12px] text-ink-500 mb-4">点一张设为正式首帧（绿色边框 = 当前选中）</p>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <template x-for="c in candidates" :key="c.id">
+        <button @click="selectAsCurrent(c.id)"
+                class="block text-left rounded-lg overflow-hidden transition border-2"
+                :class="c.is_current ? 'border-emerald-500 shadow-medium' : 'border-ink-200 hover:border-blue-400 hover:-translate-y-0.5'">
+          <img :src="c.url" class="w-full block">
+          <div class="p-3">
+            <div class="flex items-center gap-1.5 mb-0.5">
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-bold"
+                    :class="c.source === 'upload' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
+                    x-text="c.source === 'upload' ? '📷 上传' : '🎨 AI 生成'"></span>
+              <span x-show="c.is_current" class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500 text-white font-bold">
+                ✓ 当前
+              </span>
+            </div>
+            <div class="text-[11px] text-ink-400" x-text="c.ts"></div>
+          </div>
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <!-- 进入下一步 -->
+  <div class="flex justify-end">
+    <button @click="next()" :disabled="!hasCurrent || saving || !canGenerate"
+            class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
+      进入步骤 2 · 台本 →
+    </button>
   </div>
 </div>
 
 <script>
-function outhanTopic() {
+function outhanTopicAndFirstFrame() {
   return {
     videoId: {{ video_id|tojson }},
     form: {
       title: {{ outhan_title|tojson }},
       theme: {{ outhan_data.theme|tojson }},
-      style: {{ outhan_data.style|tojson }},
       target_duration: {{ outhan_data.target_duration }},
       video_engine: {{ outhan_data.video_engine|tojson }},
+      video_kind: {{ outhan_data.get('video_kind', 'dialogue')|tojson }},
     },
-    refs: {{ refs|tojson }},
+    ffForm: { prompt: "", size: "2K" },
+    candidates: {{ candidates|tojson }},
     uploading: false,
     summarizing: false,
     summarizedFrom: null,
+    autoSaving: false,
+    generating: false,
     saving: false,
     error: null,
 
-    async uploadRefs(fileList) {
+    get canGenerate() { return this.form.title.trim() && this.form.theme.trim(); },
+    get hasCurrent() { return this.candidates.some(c => c.is_current); },
+    get hasAiCandidate() { return this.candidates.some(c => c.source !== 'upload'); },
+
+    async autoSaveTopic() {
+      if (!this.form.title.trim()) return;
+      this.autoSaving = true;
+      try {
+        await fetch(`/api/outhan/${this.videoId}/save-topic`, {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(this.form),
+        });
+      } catch {} finally {
+        this.autoSaving = false;
+      }
+    },
+
+    async uploadAsFirstFrame(fileList) {
       if (!fileList || fileList.length === 0) return;
       this.uploading = true;
       this.error = null;
       try {
-        for (const file of fileList) {
-          const fd = new FormData();
-          fd.append('file', file);
-          const res = await fetch(`/api/outhan/${this.videoId}/upload-reference`, {method:'POST', body: fd});
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            throw new Error(data.error || `HTTP ${res.status}`);
-          }
-          const data = await res.json();
-          this.refs.push({id: data.id, url: data.url});
+        const file = fileList[0];
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`/api/outhan/${this.videoId}/upload-first-frame`, {method:'POST', body: fd});
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
         }
+        const data = await res.json();
+        // 上传的图自动设为当前首帧；其他取消选中
+        this.candidates.forEach(c => c.is_current = false);
+        this.candidates.unshift({
+          id: data.id,
+          url: data.url,
+          is_current: true,
+          source: 'upload',
+          ts: new Date().toLocaleString('zh-CN'),
+        });
       } catch (e) {
         this.error = e.message || String(e);
       } finally {
         this.uploading = false;
-      }
-    },
-
-    async removeRef(assetId) {
-      try {
-        await fetch(`/api/outhan/${this.videoId}/asset/${assetId}`, {method:'DELETE'});
-        this.refs = this.refs.filter(r => r.id !== assetId);
-      } catch (e) {
-        this.error = e.message || String(e);
       }
     },
 
@@ -181,6 +277,7 @@ function outhanTopic() {
         const data = await res.json();
         this.form.theme = data.summary;
         this.summarizedFrom = data.source_file_name;
+        this.autoSaveTopic();
       } catch (e) {
         this.error = e.message || String(e);
       } finally {
@@ -188,24 +285,59 @@ function outhanTopic() {
       }
     },
 
-    async saveAndNext() {
-      if (!this.form.title.trim() || !this.form.theme.trim()) {
-        this.error = '标题和主题都必填';
+    async generateFirstFrame() {
+      await this.autoSaveTopic();
+      this.generating = true;
+      this.error = null;
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/generate-first-frame`, {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({prompt: this.ffForm.prompt, size: this.ffForm.size}),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+        const d = await res.json();
+        this.candidates.forEach(c => c.is_current = false);
+        this.candidates.unshift({
+          id: d.asset_id, url: d.url, is_current: true,
+          source: 'ai',
+          ts: new Date().toLocaleString('zh-CN'),
+        });
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.generating = false;
+      }
+    },
+
+    async selectAsCurrent(assetId) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/set-first-frame`, {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({asset_id: assetId}),
+        });
+        this.candidates.forEach(c => c.is_current = (c.id === assetId));
+      } catch (e) { this.error = e.message || String(e); }
+    },
+
+    async next() {
+      if (!this.hasCurrent) {
+        this.error = '请先选定一张首帧再进入下一步';
         return;
       }
       this.saving = true;
-      this.error = null;
       try {
-        const res = await fetch(`/api/outhan/${this.videoId}/save-topic`, {
+        await this.autoSaveTopic();
+        await fetch(`/api/outhan/${this.videoId}/advance-step`, {
           method:'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(this.form),
+          body: JSON.stringify({to: 2}),
         });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || `HTTP ${res.status}`);
-        }
-        window.location.href = `/project/${this.videoId}/outhan/first-frame`;
+        window.location.href = `/project/${this.videoId}/outhan/script`;
       } catch (e) {
         this.error = e.message || String(e);
         this.saving = false;
