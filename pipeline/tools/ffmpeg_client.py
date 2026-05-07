@@ -135,8 +135,12 @@ def probe_duration(media_path: str | Path) -> float:
 
 
 def _run_ffmpeg(args: list[str], *, timeout: int = 300) -> dict:
-    """跑一次 ffmpeg，返回 {ok, stderr, cmd}."""
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *args]
+    """跑一次 ffmpeg，返回 {ok, stderr, cmd}.
+
+    [AI-NOTE] 2026-05-07: 用 _ffmpeg_binary() 优先 imageio_ffmpeg 自带 binary，
+    不依赖系统 PATH（Windows 用户多数没装 ffmpeg）。
+    """
+    cmd = [_ffmpeg_binary(), "-hide_banner", "-loglevel", "error", "-y", *args]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return {
@@ -146,6 +150,8 @@ def _run_ffmpeg(args: list[str], *, timeout: int = 300) -> dict:
         }
     except subprocess.TimeoutExpired:
         return {"ok": False, "stderr": "ffmpeg timeout", "cmd": " ".join(cmd)}
+    except FileNotFoundError as e:
+        return {"ok": False, "stderr": f"ffmpeg 未找到：{e}", "cmd": " ".join(cmd)}
 
 
 # =========================================================================
