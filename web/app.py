@@ -1135,7 +1135,12 @@ async def api_outhan_generate_first_frame(video_id: str, request: Request):
         user_prompt = "，".join([p for p in parts if p]) or proj.title
     size = body.get("size") or "2K"
 
-    res = _ark_client.generate_image(prompt=user_prompt, size=size, watermark=False)
+    # [AI-NOTE] 2026-05-07: Gemini 自动按 Seedream 偏好改写；失败静默回退原 prompt
+    from pipeline import outhan_prompt_enhancer as _enhancer
+    enhanced = _enhancer.enhance("seedream", user_prompt)
+    actual_prompt = enhanced or user_prompt
+
+    res = _ark_client.generate_image(prompt=actual_prompt, size=size, watermark=False)
     if not res.get("ok"):
         return JSONResponse({"error": res.get("error") or "Seedream 生成失败"}, status_code=502)
     url = res.get("url")
@@ -1159,7 +1164,11 @@ async def api_outhan_generate_first_frame(video_id: str, request: Request):
     _outhan_meta.update_outhan_data(
         video_id, first_frame_asset_id=saved["id"], first_frame_prompt=user_prompt
     )
-    return JSONResponse({"asset_id": saved["id"], "url": saved["url"]})
+    return JSONResponse({
+        "asset_id": saved["id"],
+        "url": saved["url"],
+        "enhanced_prompt": enhanced,  # 让前端可展示 Gemini 改写后的版本
+    })
 
 
 @app.post("/api/outhan/{video_id}/set-first-frame")
@@ -1367,18 +1376,33 @@ async def api_outhan_seg_gen_video(video_id: str, index: int):
             except Exception:
                 pass
 
+    # [AI-NOTE] 2026-05-07: Gemini 自动按目标视频模型偏好改写 prompt（v0.2.5 特性）
+    from pipeline import outhan_prompt_enhancer as _enhancer
+    ref_image_part = None
+    if image_url and image_url.startswith("data:"):
+        try:
+            mime_part, b64_part = image_url.split(";base64,", 1)
+            ref_image_part = {"mimeType": mime_part[5:], "data": b64_part}
+        except Exception:
+            pass
+    target = "seedance" if engine == "jimeng" else "vidu"
+    enhanced = _enhancer.enhance(target, seg["prompt"], reference_image=ref_image_part)
+    actual_prompt = enhanced or seg["prompt"]
+    if enhanced and enhanced != seg["prompt"]:
+        _outhan_meta.update_segment(video_id, index, enhanced_prompt=enhanced)
+
     if engine == "jimeng":
         if not image_url:
             _outhan_meta.update_segment(video_id, index, status="failed")
             return JSONResponse({"error": "Seedance 需要首帧图"}, status_code=400)
         r = _ark_client.create_video_task(
-            image_url=image_url, motion_prompt=seg["prompt"],
+            image_url=image_url, motion_prompt=actual_prompt,
             duration=duration, resolution="720p", watermark=False,
         )
     else:
         from pipeline.tools import vidu_client as _vidu
         r = _vidu.vidu_create(
-            prompt=seg["prompt"], model="viduq3-pro",
+            prompt=actual_prompt, model="viduq3-pro",
             images=[image_url] if image_url else None,
             duration=duration, resolution="720p", watermark=False,
         )
