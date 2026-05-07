@@ -504,6 +504,7 @@ class VideoRecord:
     meta: dict[str, Any] = field(default_factory=dict)
     created_at: float = 0.0
     updated_at: float = 0.0
+    project_type: str = "yierbubu"  # 'yierbubu' | 'outhan'
 
 
 @dataclass
@@ -546,15 +547,35 @@ def get_conn() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _safe_alter(conn: sqlite3.Connection, sql: str) -> None:
+    """ALTER TABLE 容错——重复列等价于无操作。
+
+    [AI-NOTE] 2026-05-07: 渐进式 schema 迁移，避免因新增列导致已有 db 失效。
+    """
+    try:
+        conn.execute(sql)
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+
+
 def init_db() -> None:
     """建表。可重复调用。"""
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        # [AI-NOTE] 2026-05-07: project_type 区分管线模块——'yierbubu'（一二布布 IP 流程，默认）
+        # / 'outhan'（Outhan 通用单条视频流程，正在并入）。所有 NULL 旧项目按 yierbubu 处理。
+        _safe_alter(conn, "ALTER TABLE videos ADD COLUMN project_type TEXT DEFAULT 'yierbubu'")
 
 
 # ---------- videos 表 ----------
 
-def create_video(video_id: str, title: str, topic: str | None = None) -> VideoRecord:
+def create_video(
+    video_id: str,
+    title: str,
+    topic: str | None = None,
+    project_type: str = "yierbubu",
+) -> VideoRecord:
     now = time.time()
     record = VideoRecord(
         video_id=video_id,
@@ -563,12 +584,13 @@ def create_video(video_id: str, title: str, topic: str | None = None) -> VideoRe
         status=VideoStatus.DRAFT.value,
         created_at=now,
         updated_at=now,
+        project_type=project_type,
     )
     with get_conn() as conn:
         conn.execute(
-            """INSERT INTO videos (video_id, title, topic, status, meta_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (video_id, title, topic, record.status, "{}", now, now),
+            """INSERT INTO videos (video_id, title, topic, status, meta_json, project_type, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (video_id, title, topic, record.status, "{}", project_type, now, now),
         )
     return record
 
@@ -622,6 +644,11 @@ def list_videos(status: VideoStatus | str | None = None) -> list[VideoRecord]:
 
 
 def _row_to_video(row: sqlite3.Row) -> VideoRecord:
+    # [AI-NOTE] 2026-05-07: project_type 列在新版 schema 才有；老 db 缺列 → 默认 yierbubu
+    try:
+        project_type = row["project_type"] or "yierbubu"
+    except (IndexError, KeyError):
+        project_type = "yierbubu"
     return VideoRecord(
         video_id=row["video_id"],
         title=row["title"],
@@ -632,6 +659,7 @@ def _row_to_video(row: sqlite3.Row) -> VideoRecord:
         meta=json.loads(row["meta_json"] or "{}"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        project_type=project_type,
     )
 
 

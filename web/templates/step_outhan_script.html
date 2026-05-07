@@ -1,0 +1,118 @@
+{% extends "_outhan_layout.html" %}
+{% block page_title %}台本 · {{ outhan_title or video_id }}{% endblock %}
+
+{% block outhan_step_content %}
+<div x-data="outhanScript()" class="space-y-6">
+  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 3 · 台本</h2>
+        <p class="mt-1 text-[13px] text-ink-500">
+          Gemini 看你的首帧 + 主题，自动按目标时长 ÷ 5 秒分段。每段提示词可手编。
+        </p>
+      </div>
+      <span x-show="segments.length > 0" x-cloak class="text-[12px] text-ink-500">
+        共 <strong x-text="segments.length"></strong> 段
+      </span>
+    </div>
+
+    <button @click="generateScript()" :disabled="generating"
+            class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
+      <span x-text="generating ? 'Gemini 写台本中（约 10-30 秒）...' : (segments.length > 0 ? '重新生成台本（覆盖已有段）' : '用 Gemini 生成台本')"></span>
+    </button>
+
+    <div x-show="error" x-cloak
+         class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
+      <strong x-text="error"></strong>
+    </div>
+  </div>
+
+  <div x-show="segments.length > 0" x-cloak class="space-y-3">
+    <template x-for="s in segments" :key="s.index">
+      <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+        <div class="flex items-center justify-between mb-3">
+          <h4 class="font-bold text-[15px] text-ink-900">
+            段 <span x-text="s.index + 1"></span> · <span x-text="s.duration"></span>s
+          </h4>
+        </div>
+        <div x-show="s.scene" class="text-[12px] text-ink-500 mb-2">
+          <strong>场景：</strong><span x-text="s.scene"></span>
+        </div>
+        <label class="block text-[11px] font-bold text-ink-700 mb-1">视频提示词</label>
+        <textarea x-model="s.prompt" @blur="savePrompt(s)"
+                  rows="3"
+                  class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px]"></textarea>
+        <div x-show="s.transition_to_next" class="mt-2 text-[11px] text-ink-400">
+          <strong>与下段接力：</strong><span x-text="s.transition_to_next"></span>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <div class="flex justify-between gap-3">
+    <a href="/project/{{ video_id }}/outhan/first-frame"
+       class="px-4 py-2 rounded-full border border-ink-200 hover:border-blue-400 text-[13px] font-bold text-ink-700">
+      ← 步骤 2 · 首帧
+    </a>
+    <button @click="next()" :disabled="segments.length === 0 || saving"
+            class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
+      进入步骤 4 · 分段视频 →
+    </button>
+  </div>
+</div>
+
+<script>
+function outhanScript() {
+  return {
+    videoId: {{ video_id|tojson }},
+    segments: {{ segments|tojson }},
+    generating: false,
+    saving: false,
+    error: null,
+
+    async generateScript() {
+      this.generating = true;
+      this.error = null;
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/generate-script`, {method:'POST'});
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+        const d = await res.json();
+        this.segments = d.segments;
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.generating = false;
+      }
+    },
+
+    async savePrompt(s) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/segment/${s.index}`, {
+          method:'PATCH',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({prompt: s.prompt}),
+        });
+      } catch (e) { /* 静默 */ }
+    },
+
+    async next() {
+      this.saving = true;
+      try {
+        await fetch(`/api/outhan/${this.videoId}/advance-step`, {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({to: 4}),
+        });
+        window.location.href = `/project/${this.videoId}/outhan/video`;
+      } catch (e) {
+        this.error = e.message || String(e);
+        this.saving = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

@@ -89,6 +89,41 @@ def pad_audio_silence(
     ])
 
 
+def _ffmpeg_binary() -> str:
+    """优先用 imageio_ffmpeg 自带二进制；fallback 到系统 PATH 上的 ffmpeg。
+
+    [AI-NOTE] 2026-05-07: Windows 用户多数没装 ffmpeg；imageio-ffmpeg 是 pip 装得到
+    的自带 binary 包，让 Outhan 接力帧抽尾帧不依赖系统 PATH。
+    """
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"
+
+
+def extract_last_frame(video_path: str | Path, out_png: str | Path) -> dict:
+    """从视频抽最后一帧到 PNG。Outhan 接力帧用：上段尾帧 → 下段首帧。
+
+    [AI-NOTE] 2026-05-07: -sseof -0.5 避开末尾压缩花的几帧。专门用 imageio_ffmpeg
+    binary 跑（不走 _run_ffmpeg，那个写死 "ffmpeg" PATH lookup）。
+    """
+    bin_ = _ffmpeg_binary()
+    cmd = [bin_, "-hide_banner", "-loglevel", "error", "-y",
+           "-sseof", "-0.5",
+           "-i", str(video_path),
+           "-vframes", "1",
+           "-update", "1",
+           str(out_png)]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except FileNotFoundError as e:
+        return {"ok": False, "stderr": f"ffmpeg 未找到：{e}", "cmd": cmd}
+    if p.returncode != 0:
+        return {"ok": False, "stderr": p.stderr[:500], "cmd": cmd}
+    return {"ok": True, "stderr": "", "cmd": cmd}
+
+
 def probe_duration(media_path: str | Path) -> float:
     """ffprobe 读时长（秒）。"""
     p = subprocess.run(

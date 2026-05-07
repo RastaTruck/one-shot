@@ -41,6 +41,57 @@ def _http_post_json(url: str, headers: dict[str, str], payload: dict[str, Any], 
         return json.loads(resp.read().decode("utf-8"))
 
 
+# ==================== Gemini 多模态（图/视频 + 文本）====================
+
+def call_gemini_multimodal_text(
+    system: str,
+    user: str,
+    *,
+    media: list[dict[str, str]] | None = None,
+    model: str | None = None,
+    timeout: int = 300,
+) -> tuple[str, float] | None:
+    """Gemini 多模态调用，输入文本+inline 媒体（图/视频 base64），返回纯文本。
+
+    [AI-NOTE] 2026-05-07: Outhan 步骤 1 的"上传参考视频自动总结主题"用这个。
+    media: [{"mimeType": "video/mp4", "data": "<base64>"}]
+    """
+    _load_env_once()
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key or key.startswith("AIzaSy-xxx"):
+        return None
+    used_model = model or os.environ.get("GEMINI_MODEL_PRO", "gemini-2.5-pro").strip()
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta"
+        f"/models/{used_model}:generateContent?key={key}"
+    )
+    parts: list[dict[str, Any]] = [{"text": user}]
+    for m in (media or []):
+        parts.append({"inlineData": {"mimeType": m["mimeType"], "data": m["data"]}})
+    payload = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
+    }
+    try:
+        resp = _http_post_json(url, {}, payload, timeout=timeout)
+    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, OSError):
+        return None
+    try:
+        text_parts = resp["candidates"][0]["content"]["parts"]
+        content = "".join(p.get("text", "") for p in text_parts).strip()
+        if not content:
+            return None
+        usage = resp.get("usageMetadata", {})
+        in_tok = usage.get("promptTokenCount", 0)
+        out_tok = usage.get("candidatesTokenCount", 0)
+        # 2.5-pro 比 flash 贵约 8x；用 flash 价格估算 + 2x 安全缓冲
+        cost = (in_tok * 0.00216 + out_tok * 0.00864) / 1000
+        return content, round(cost, 6)
+    except (KeyError, IndexError):
+        return None
+
+
 # ==================== Gemini ====================
 
 def call_gemini_json(system: str, user: str, timeout: int = 240) -> tuple[str, float] | None:

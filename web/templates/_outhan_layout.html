@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block stepper %}{% endblock %}
+
+{% block topbar_right %}
+<a href="/" class="btn-ghost text-[13px] font-medium flex items-center gap-1">
+  <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
+  返回看板
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="px-8 py-6 max-w-[1080px] mx-auto">
+  <!-- 项目头 -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <div class="text-[11px] text-blue-600 font-medium tracking-wider uppercase">
+        Outhan · 通用单条视频流程
+      </div>
+      <h1 class="font-display text-[24px] font-semibold tracking-tight text-ink-900 mt-0.5">
+        {{ outhan_title or "未命名项目" }}
+      </h1>
+    </div>
+    <div class="text-[12px] text-ink-400 font-mono">{{ video_id }}</div>
+  </div>
+
+  <!-- Stepper -->
+  <div class="flex items-center gap-1 mb-8">
+    {% set steps = [
+      (1, "topic", "选题", "lightbulb"),
+      (2, "first-frame", "首帧", "image"),
+      (3, "script", "台本", "list"),
+      (4, "video", "分段视频", "film"),
+      (5, "audio", "配音", "mic"),
+      (6, "package", "打包", "package")
+    ] %}
+    {% for n, slug, label, icon in steps %}
+      {% set done = n < current_step %}
+      {% set active = n == current_step %}
+      {% set reachable = n <= reached_step %}
+      {% if reachable %}
+      <a href="/project/{{ video_id }}/outhan/{{ slug }}"
+         class="flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition
+                {% if active %}bg-white border-blue-500 shadow-medium
+                {% elif done %}bg-emerald-50 border-emerald-300
+                {% else %}bg-ink-50/60 border-ink-200 hover:border-blue-300{% endif %}">
+      {% else %}
+      <div class="flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 bg-ink-50/40 border-ink-200 opacity-60">
+      {% endif %}
+        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm
+                    {% if done %}bg-emerald-500 text-white
+                    {% elif active %}bg-blue-600 text-white
+                    {% else %}bg-white border border-ink-200 text-ink-400{% endif %}">
+          {% if done %}<i data-lucide="check" class="w-4 h-4"></i>{% else %}{{ n }}{% endif %}
+        </div>
+        <div class="text-[12px] font-bold {% if active %}text-blue-700{% elif done %}text-emerald-700{% else %}text-ink-500{% endif %}">
+          {{ label }}
+        </div>
+      {% if reachable %}</a>{% else %}</div>{% endif %}
+
+      {% if n < 6 %}
+        <div class="w-3 h-[2px] {% if n < current_step %}bg-emerald-300{% else %}bg-ink-200{% endif %}"></div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <!-- 子内容 -->
+  {% block outhan_step_content %}{% endblock %}
+</div>
+{% endblock %}

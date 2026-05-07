@@ -1,0 +1,262 @@
+{% extends "_outhan_layout.html" %}
+{% block page_title %}分段视频 · {{ outhan_title or video_id }}{% endblock %}
+
+{% block outhan_step_content %}
+<div x-data="outhanVideo()" x-init="startPolling()" class="space-y-6">
+  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <div class="flex items-start justify-between">
+      <div>
+        <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 4 · 分段视频</h2>
+        <p class="mt-1 text-[13px] text-ink-500">
+          顺序生成每一段；每段完成后自动抽尾帧作为下段首帧（不用你手工传）。
+        </p>
+      </div>
+      <span class="px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-[12px] font-bold">
+        <span x-text="completed"></span>/<span x-text="segments.length"></span> 完成
+      </span>
+    </div>
+
+    <div class="mt-4 flex gap-3 flex-wrap items-center">
+      <button @click="runAll()" :disabled="globalBusy || segments.length === 0"
+              class="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-bold transition disabled:opacity-50">
+        <span x-text="running ? '顺序生成中...' : '▶ 顺序生成全部段（自动接力）'"></span>
+      </button>
+      <button @click="resetAll()" :disabled="globalBusy || segments.length === 0"
+              class="px-4 py-2 rounded-full border-2 border-red-300 hover:bg-red-50 text-red-700 text-[13px] font-bold transition disabled:opacity-50">
+        🔄 全部重来
+      </button>
+      <button x-show="running" x-cloak @click="cancel()"
+              class="px-4 py-2 rounded-full border border-ink-200 hover:bg-ink-50 text-[13px] font-bold text-ink-700">
+        取消（停在当前段）
+      </button>
+      <span x-show="!running && busySegmentIdx !== null" x-cloak
+            class="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
+        段 <span x-text="busySegmentIdx + 1"></span> 正在生成中，等它完成再操作
+      </span>
+    </div>
+
+    <div x-show="error" x-cloak
+         class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
+      <strong x-text="error"></strong>
+    </div>
+  </div>
+
+  <!-- 段卡片 -->
+  <div class="space-y-3">
+    <template x-for="s in segments" :key="s.index">
+      <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-[15px] text-ink-900">段 <span x-text="s.index + 1"></span></span>
+            <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
+                  :class="badgeClass(s.status)" x-text="statusLabel(s.status)"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <select x-model="s.engine" @change="setEngine(s.index, s.engine)"
+                    :disabled="globalBusy"
+                    class="text-[11px] h-7 px-2 rounded-lg border border-ink-200 font-bold bg-white disabled:opacity-50">
+              <option value="jimeng">即梦</option>
+              <option value="vidu">Vidu</option>
+            </select>
+            <button @click="runOne(s.index)" :disabled="globalBusy"
+                    class="px-3 py-1 rounded-full bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-[12px] font-bold text-ink-700 disabled:opacity-50">
+              <span x-text="s.status === 'completed' ? '重新生成' : '生成'"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-[1fr_auto] gap-4">
+          <div>
+            <div class="text-[10px] text-ink-400 font-bold uppercase mb-1">提示词</div>
+            <div class="text-[13px] whitespace-pre-wrap" x-text="s.prompt"></div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <div>
+              <div class="text-[10px] text-ink-400 mb-1">首帧</div>
+              <div class="w-32 h-20 border border-ink-200 rounded-lg bg-ink-50 overflow-hidden flex items-center justify-center">
+                <template x-if="s.first_frame_asset_id">
+                  <img :src="`/api/outhan/${videoId}/asset/${s.first_frame_asset_id}`" class="w-full h-full object-cover">
+                </template>
+                <template x-if="!s.first_frame_asset_id">
+                  <span class="text-[11px] text-ink-400 text-center px-1"
+                        x-text="s.index === 0 ? '项目首帧' : '等上段尾帧'"></span>
+                </template>
+              </div>
+            </div>
+            <div x-show="s.tail_frame_asset_id" x-cloak>
+              <div class="text-[10px] text-ink-400 mb-1">尾帧 ↓</div>
+              <div class="w-32 h-20 border border-ink-200 rounded-lg overflow-hidden">
+                <img :src="`/api/outhan/${videoId}/asset/${s.tail_frame_asset_id}`" class="w-full h-full object-cover">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="s.video_asset_id" x-cloak class="mt-3">
+          <video controls :src="`/api/outhan/${videoId}/asset/${s.video_asset_id}`" class="w-full rounded-lg border border-ink-200"></video>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <div class="flex justify-between gap-3">
+    <a href="/project/{{ video_id }}/outhan/script"
+       class="px-4 py-2 rounded-full border border-ink-200 hover:border-blue-400 text-[13px] font-bold text-ink-700">
+      ← 步骤 3 · 台本
+    </a>
+    <button @click="next()" :disabled="completed !== segments.length || segments.length === 0"
+            class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
+      进入步骤 5 · 配音 →
+    </button>
+  </div>
+</div>
+
+<script>
+function outhanVideo() {
+  return {
+    videoId: {{ video_id|tojson }},
+    segments: {{ segments|tojson }},
+    running: false,
+    cancelFlag: false,
+    error: null,
+    pollHandle: null,
+
+    get completed() { return this.segments.filter(s => s.status === 'completed').length; },
+    get busySegmentIdx() {
+      const s = this.segments.find(x => ['creating','polling','extracting'].includes(x.status));
+      return s ? s.index : null;
+    },
+    get globalBusy() { return this.running || this.busySegmentIdx !== null; },
+
+    badgeClass(st) {
+      return ({
+        completed: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        failed: 'bg-red-100 text-red-700 border-red-200',
+        pending: 'bg-ink-100 text-ink-500 border-ink-200',
+      })[st] || 'bg-blue-100 text-blue-700 border-blue-200';
+    },
+    statusLabel(st) {
+      return ({pending:'待开始', creating:'创建中', polling:'生成中', extracting:'抽尾帧',
+               completed:'完成', failed:'失败'})[st] || st;
+    },
+
+    async startPolling() {
+      // 周期性刷新 segments（处理服务端轮询完成后的状态变更）
+      this.pollHandle = setInterval(() => {
+        if (this.segments.some(s => ['polling','creating','extracting'].includes(s.status))) {
+          this.refresh();
+        }
+      }, 5000);
+    },
+
+    async refresh() {
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/segments`);
+        if (!res.ok) return;
+        const d = await res.json();
+        this.segments = d.segments;
+      } catch {}
+    },
+
+    async setEngine(idx, engine) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/segment/${idx}`, {
+          method:'PATCH',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({engine}),
+        });
+      } catch {}
+    },
+
+    async runOne(idx) {
+      this.error = null;
+      this.running = true;
+      this.cancelFlag = false;
+      try {
+        await this.generateOne(idx);
+      } finally {
+        this.running = false;
+        await this.refresh();
+      }
+    },
+
+    async runAll() {
+      this.error = null;
+      this.running = true;
+      this.cancelFlag = false;
+      try {
+        await this.refresh();
+        for (const s of this.segments) {
+          if (this.cancelFlag) break;
+          if (s.status === 'completed') continue;
+          const ok = await this.generateOne(s.index);
+          if (!ok) break;
+        }
+      } finally {
+        this.running = false;
+        await this.refresh();
+      }
+    },
+
+    async generateOne(idx) {
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/segment/${idx}/generate-video`, {method:'POST'});
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          this.error = `段 ${idx+1}: ${d.error || res.status}`;
+          return false;
+        }
+      } catch (e) {
+        this.error = `段 ${idx+1}: ${e.message || e}`;
+        return false;
+      }
+      // 轮询
+      let fails = 0;
+      while (true) {
+        if (this.cancelFlag) return false;
+        await new Promise(r => setTimeout(r, 5000));
+        try {
+          const r = await fetch(`/api/outhan/${this.videoId}/segment/${idx}/poll-video`);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const d = await r.json();
+          fails = 0;
+          await this.refresh();
+          if (d.status === 'completed') return true;
+          if (d.status === 'failed') {
+            this.error = `段 ${idx+1}: 任务失败`;
+            return false;
+          }
+        } catch (e) {
+          fails++;
+          if (fails >= 3) {
+            this.error = `段 ${idx+1}: 连续 3 次轮询失败`;
+            return false;
+          }
+        }
+      }
+    },
+
+    cancel() { this.cancelFlag = true; },
+
+    async resetAll() {
+      if (!confirm('全部重来？所有段的视频/音频/尾帧/任务都会被清掉，prompts 和 scene 保留。')) return;
+      this.error = null;
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/reset-all-segments`, {method:'POST'});
+        if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || res.status); }
+        await this.refresh();
+      } catch (e) { this.error = e.message || String(e); }
+    },
+
+    async next() {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/advance-step`, {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({to: 5}),
+        });
+        window.location.href = `/project/${this.videoId}/outhan/audio`;
+      } catch (e) { this.error = e.message; }
+    },
+  };
+}
+</script>
+{% endblock %}

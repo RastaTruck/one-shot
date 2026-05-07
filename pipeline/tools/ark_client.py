@@ -65,6 +65,27 @@ def _api_key() -> str | None:
     return k
 
 
+def _retry_urlopen(req: urllib.request.Request, *, timeout: int) -> bytes:
+    """[AI-NOTE] 2026-05-07: Volces TLS 偶尔 SSL UNEXPECTED_EOF_WHILE_READING；
+    HTTP 4xx/5xx 不重试（这些是业务错误），只对网络级临时故障重试。"""
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError:
+            raise  # 业务错误，立刻抛
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(2 + attempt * 3)  # 2s, 5s
+                continue
+            raise
+    if last_err:
+        raise last_err
+    return b""
+
+
 def _http_post_json(url: str, key: str, payload: dict, timeout: int = 180) -> dict:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
@@ -73,14 +94,14 @@ def _http_post_json(url: str, key: str, payload: dict, timeout: int = 180) -> di
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    body = _retry_urlopen(req, timeout=timeout)
+    return json.loads(body.decode("utf-8"))
 
 
 def _http_get_json(url: str, key: str, timeout: int = 30) -> dict:
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"}, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    body = _retry_urlopen(req, timeout=timeout)
+    return json.loads(body.decode("utf-8"))
 
 
 def _err(e: Exception) -> str:

@@ -1,0 +1,217 @@
+{% extends "_outhan_layout.html" %}
+{% block page_title %}选题 · {{ outhan_title or video_id }}{% endblock %}
+
+{% block outhan_step_content %}
+<div x-data="outhanTopic()" class="space-y-6">
+
+  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <div class="mb-5">
+      <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 1 · 选题</h2>
+      <p class="mt-1 text-[13px] text-ink-500">
+        填主题与风格、上传参考图、确定视频引擎；下一步生成首帧。
+      </p>
+    </div>
+
+    <!-- 标题 -->
+    <div class="mb-4">
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">标题</label>
+      <input type="text" x-model="form.title"
+             class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]">
+    </div>
+
+    <!-- 主题 -->
+    <div class="mb-4">
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">主题（一句话讲清这条视频要讲什么）</label>
+      <textarea x-model="form.theme" rows="3"
+                placeholder="例：一只橘猫在春日里散步、追蝴蝶、最后停在花丛边"
+                class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]"></textarea>
+
+      <!-- 视频总结按钮 -->
+      <div class="mt-2 flex items-center gap-3 flex-wrap">
+        <label class="inline-block">
+          <input type="file" accept="video/*" class="hidden"
+                 @change="summarizeVideo($event.target.files)" :disabled="summarizing">
+          <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 text-[12px] font-bold cursor-pointer transition border border-amber-200"
+                :class="summarizing ? 'opacity-50 cursor-wait' : ''">
+            <i data-lucide="film" class="w-3.5 h-3.5"></i>
+            <span x-text="summarizing ? 'Gemini 看视频中（约 15-60 秒）...' : '📹 上传参考视频，Gemini 自动总结主题'"></span>
+          </span>
+        </label>
+        <span x-show="summarizedFrom" class="text-[11px] text-ink-500" x-cloak>
+          ✓ 来自 <code x-text="summarizedFrom"></code>，可继续编辑上方文本
+        </span>
+      </div>
+      <p class="mt-1 text-[11px] text-ink-400">
+        视频限 19MB（约 1-3 分钟 720p）；将来会接入选题板块直接喂纯文本。
+      </p>
+    </div>
+
+    <!-- 风格 -->
+    <div class="mb-4">
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">风格描述（可选）</label>
+      <textarea x-model="form.style" rows="2"
+                placeholder="例：电影感、暖色调、浅景深、写意水墨…"
+                class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]"></textarea>
+    </div>
+
+    <!-- 参考图 -->
+    <div class="mb-4">
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">
+        参考图（可选 · 提示词增强会用到）
+      </label>
+      <div class="space-y-3">
+        <div class="flex gap-2 flex-wrap" x-show="refs.length > 0" x-cloak>
+          <template x-for="r in refs" :key="r.id">
+            <div class="relative w-24 h-24 rounded-lg overflow-hidden border-2 border-ink-200">
+              <img :src="r.url" class="w-full h-full object-cover">
+              <button @click="removeRef(r.id)"
+                      class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[12px] flex items-center justify-center">
+                ×
+              </button>
+            </div>
+          </template>
+        </div>
+        <label class="inline-block">
+          <input type="file" accept="image/*" multiple class="hidden"
+                 @change="uploadRefs($event.target.files)" :disabled="uploading">
+          <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-blue-50 text-ink-700 text-[12px] font-bold cursor-pointer transition border border-ink-200">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span x-text="uploading ? '上传中...' : '+ 上传参考图'"></span>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 时长 + 引擎 -->
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <label class="block text-[12px] font-bold text-ink-700 mb-1">目标总时长（秒）</label>
+        <input type="number" x-model.number="form.target_duration" min="15" max="600"
+               class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px]">
+      </div>
+      <div>
+        <label class="block text-[12px] font-bold text-ink-700 mb-1">视频引擎默认</label>
+        <select x-model="form.video_engine"
+                class="w-full h-10 px-3 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[14px] font-bold bg-white">
+          <option value="jimeng">即梦视频（Seedance）— 国内首选</option>
+          <option value="vidu">Vidu 国内版（viduq3-pro）</option>
+        </select>
+        <p class="text-[11px] text-ink-400 mt-0.5">到步骤 4 还能按段切换</p>
+      </div>
+    </div>
+
+    <!-- 错误 -->
+    <div x-show="error" x-cloak
+         class="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
+      <strong x-text="error"></strong>
+    </div>
+
+    <!-- 操作 -->
+    <div class="flex justify-end gap-3 pt-2">
+      <button @click="saveAndNext()" :disabled="saving || !form.title || !form.theme"
+              class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50 flex items-center gap-2">
+        <span x-text="saving ? '保存中...' : '保存并进入步骤 2 · 首帧 →'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+function outhanTopic() {
+  return {
+    videoId: {{ video_id|tojson }},
+    form: {
+      title: {{ outhan_title|tojson }},
+      theme: {{ outhan_data.theme|tojson }},
+      style: {{ outhan_data.style|tojson }},
+      target_duration: {{ outhan_data.target_duration }},
+      video_engine: {{ outhan_data.video_engine|tojson }},
+    },
+    refs: {{ refs|tojson }},
+    uploading: false,
+    summarizing: false,
+    summarizedFrom: null,
+    saving: false,
+    error: null,
+
+    async uploadRefs(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      this.uploading = true;
+      this.error = null;
+      try {
+        for (const file of fileList) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await fetch(`/api/outhan/${this.videoId}/upload-reference`, {method:'POST', body: fd});
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          this.refs.push({id: data.id, url: data.url});
+        }
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.uploading = false;
+      }
+    },
+
+    async removeRef(assetId) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/asset/${assetId}`, {method:'DELETE'});
+        this.refs = this.refs.filter(r => r.id !== assetId);
+      } catch (e) {
+        this.error = e.message || String(e);
+      }
+    },
+
+    async summarizeVideo(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      this.summarizing = true;
+      this.error = null;
+      try {
+        const fd = new FormData();
+        fd.append('file', fileList[0]);
+        const res = await fetch(`/api/outhan/${this.videoId}/summarize-video`, {method:'POST', body: fd});
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        this.form.theme = data.summary;
+        this.summarizedFrom = data.source_file_name;
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.summarizing = false;
+      }
+    },
+
+    async saveAndNext() {
+      if (!this.form.title.trim() || !this.form.theme.trim()) {
+        this.error = '标题和主题都必填';
+        return;
+      }
+      this.saving = true;
+      this.error = null;
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/save-topic`, {
+          method:'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(this.form),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        window.location.href = `/project/${this.videoId}/outhan/first-frame`;
+      } catch (e) {
+        this.error = e.message || String(e);
+        this.saving = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

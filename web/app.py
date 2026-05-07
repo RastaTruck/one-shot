@@ -686,10 +686,34 @@ def _humanize_ago(ts: float | None) -> str:
 
 
 def _build_project_view(video_id: str) -> dict | None:
-    """从 DB 实体 + flow.compute_progress 构造项目视图字典。不命中返回 None。"""
+    """从 DB 实体 + flow.compute_progress 构造项目视图字典。不命中返回 None。
+
+    [AI-NOTE] 2026-05-07: Outhan 类型项目走另一条流程（无 progress / 无 shot_table），
+    给一个简化视图：next_step="outhan"，状态显示 "Outhan 通用"。
+    """
     db_video = _state.get_video(video_id)
     if db_video is None:
         return None
+    if db_video.project_type == "outhan":
+        return {
+            "video_id": video_id,
+            "title": db_video.title or video_id,
+            "hook": db_video.topic or "",
+            "category": "Outhan 通用",
+            "cover_emoji": "🎬",
+            "cover_bg": "linear-gradient(135deg, #2C5282 0%, #1A365D 60%, #0D0D0B 100%)",
+            "duration": "—",
+            "status_label": "Outhan",
+            "status_badge_class": "badge-brand",
+            "step_done": 0,
+            "current_step_icon": "film",
+            "current_step_label": "通用单条视频流程",
+            "updated_ago": _humanize_ago(db_video.updated_at),
+            "next_step": "outhan",
+            "from_db": True,
+            "is_demo": False,
+            "project_type": "outhan",
+        }
     progress = _flow.compute_progress(video_id, _DATA_DIR / "outputs")
     label, badge, current_label = _status_for(progress)
     done_count = sum(1 for sv in progress.steps_view if sv.done)
@@ -859,10 +883,857 @@ async def dashboard(request: Request):
 
 
 @app.get("/project/new")
-async def project_new():
+async def project_new(type: str = "yierbubu"):
+    """新建项目入口。
+
+    [AI-NOTE] 2026-05-07: 通过 ?type 参数区分管线模块——
+      - yierbubu（默认/原一二布布 IP 流程）→ /project/{id}/topic
+      - outhan（Outhan 通用单条视频流程，迁移中）→ /project/{id}/outhan
+    """
+    if type not in ("yierbubu", "outhan"):
+        type = "yierbubu"
     new_id = _next_video_id()
-    _state.create_video(new_id, title=f"未命名项目 {new_id}", topic=None)
+    _state.create_video(
+        new_id,
+        title=f"未命名项目 {new_id}",
+        topic=None,
+        project_type=type,
+    )
+    if type == "outhan":
+        return RedirectResponse(url=f"/project/{new_id}/outhan", status_code=303)
     return RedirectResponse(url=f"/project/{new_id}/topic", status_code=303)
+
+
+@app.get("/project/{video_id}/outhan", response_class=HTMLResponse)
+async def project_outhan_workflow(video_id: str):
+    """Outhan 流程根入口——重定向到当前步骤。"""
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import outhan_meta as _outhan_meta
+    data = _outhan_meta.get_outhan_data(video_id)
+    slug = _outhan_meta.step_path(video_id, data["current_step"])
+    return RedirectResponse(url=f"/project/{video_id}/outhan/{slug}", status_code=303)
+
+
+# ==================== Outhan 步骤 1：选题 ====================
+
+@app.get("/project/{video_id}/outhan/topic", response_class=HTMLResponse)
+async def project_outhan_topic(request: Request, video_id: str):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    data = _outhan_meta.get_outhan_data(video_id)
+    refs = [
+        {"id": a["id"], "url": f"/api/outhan/{video_id}/asset/{a['id']}"}
+        for a in _outhan_storage.list_assets(video_id, "reference")
+    ]
+    return TEMPLATES.TemplateResponse(
+        "step_outhan_topic.html",
+        {
+            "request": request,
+            "video_id": video_id,
+            "outhan_title": proj.title,
+            "outhan_data": data,
+            "refs": refs,
+            "current_step": 1,
+            "reached_step": max(data["current_step"], 1),
+        },
+    )
+
+
+@app.post("/api/outhan/{video_id}/save-topic")
+async def api_outhan_save_topic(video_id: str, request: Request):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    if not title:
+        return JSONResponse({"error": "标题必填"}, status_code=400)
+    from pipeline import outhan_meta as _outhan_meta
+    # 标题改 videos.title；其余字段进 outhan 子树
+    _state.update_video_fields(video_id, title=title)
+    _outhan_meta.update_outhan_data(
+        video_id,
+        theme=(body.get("theme") or "").strip(),
+        style=(body.get("style") or "").strip(),
+        target_duration=int(body.get("target_duration") or 60),
+        video_engine=body.get("video_engine") or "jimeng",
+        current_step=max(_outhan_meta.get_outhan_data(video_id)["current_step"], 2),
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/outhan/{video_id}/upload-reference")
+async def api_outhan_upload_reference(video_id: str, request: Request):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    form = await request.form()
+    file = form.get("file")
+    if file is None or not hasattr(file, "read"):
+        return JSONResponse({"error": "缺 file"}, status_code=400)
+    data = await file.read()
+    ext_match = (file.filename or "").rsplit(".", 1)
+    ext = "." + ext_match[1].lower() if len(ext_match) == 2 else ".png"
+    from pipeline import outhan_storage as _outhan_storage
+    saved = _outhan_storage.save_asset(
+        video_id,
+        "reference",
+        data,
+        ext=ext,
+        metadata={"original_name": file.filename, "size_bytes": len(data)},
+    )
+    return JSONResponse({"id": saved["id"], "url": saved["url"]})
+
+
+@app.delete("/api/outhan/{video_id}/asset/{asset_id}")
+async def api_outhan_asset_delete(video_id: str, asset_id: str):
+    from pipeline import outhan_storage as _outhan_storage
+    asset = _outhan_storage.get_asset(video_id, asset_id)
+    if not asset:
+        return JSONResponse({"error": "asset 不存在"}, status_code=404)
+    # 从 meta 列表里移除（文件本身懒删——保留以备后续可能引用）
+    from pipeline import state as _st
+    rec = _st.get_video(video_id)
+    if rec is None:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    meta = dict(rec.meta) if rec.meta else {}
+    meta["outhan_assets"] = [a for a in meta.get("outhan_assets", []) if a.get("id") != asset_id]
+    import json as _json
+    import time as _time
+    with _st.get_conn() as conn:
+        conn.execute(
+            "UPDATE videos SET meta_json = ?, updated_at = ? WHERE video_id = ?",
+            (_json.dumps(meta, ensure_ascii=False), _time.time(), video_id),
+        )
+    # 顺手删文件
+    try:
+        from pathlib import Path as _Path
+        _Path(asset["path"]).unlink(missing_ok=True)
+    except Exception:
+        pass
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/outhan/{video_id}/asset/{asset_id}")
+async def api_outhan_asset_serve(video_id: str, asset_id: str):
+    from fastapi.responses import Response as _Response
+    from pipeline import outhan_storage as _outhan_storage
+    asset = _outhan_storage.get_asset(video_id, asset_id)
+    if not asset:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        body = _outhan_storage.read_asset_bytes(asset)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    mime = _outhan_storage.mime_for_asset_type(asset["type"])
+    return _Response(content=body, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
+
+
+_VIDEO_SUMMARY_MAX_BYTES = 19 * 1024 * 1024
+_VIDEO_SUMMARY_MIMES = {
+    "video/mp4", "video/quicktime", "video/webm", "video/x-msvideo",
+    "video/mpeg", "video/x-matroska",
+}
+_VIDEO_SUMMARY_SYSTEM = """你是 AI 视频选题分析师。看完一段参考视频，提炼成"下一条新视频的主题参考"。
+
+要求：
+- 中文输出，100-200 字
+- 必须包含：参考视频的核心主题（讲什么）、风格特点（写实/电影感/动画/写意/纪录等）、节奏（快/慢/中）、画面氛围与色调倾向
+- 是"借鉴而非照搬"：抽出值得参考的元素，不要逐镜头复述
+- 直接输出主题描述本身，不要前缀、引号、Markdown、解释"""
+
+
+@app.post("/api/outhan/{video_id}/summarize-video")
+async def api_outhan_summarize_video(video_id: str, request: Request):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    form = await request.form()
+    file = form.get("file")
+    if file is None or not hasattr(file, "read"):
+        return JSONResponse({"error": "缺 file"}, status_code=400)
+    mime = file.content_type or "video/mp4"
+    if mime not in _VIDEO_SUMMARY_MIMES:
+        return JSONResponse(
+            {"error": f"不支持的视频格式：{mime}。支持：mp4/mov/webm/avi/mpeg/mkv"},
+            status_code=400,
+        )
+    data = await file.read()
+    if len(data) > _VIDEO_SUMMARY_MAX_BYTES:
+        return JSONResponse(
+            {"error": f"视频太大（{len(data)/1024/1024:.1f}MB > 19MB）。请截短或压缩。"},
+            status_code=400,
+        )
+    import base64 as _base64
+    b64 = _base64.b64encode(data).decode("ascii")
+    from pipeline.tools import llm_client as _llm
+    result = _llm.call_gemini_multimodal_text(
+        _VIDEO_SUMMARY_SYSTEM,
+        "请根据这段参考视频，输出新视频的主题参考描述。",
+        media=[{"mimeType": mime, "data": b64}],
+        timeout=300,
+    )
+    if result is None:
+        return JSONResponse(
+            {"error": "Gemini 多模态调用失败（密钥未配置 / 网络 / 内容审核）"},
+            status_code=502,
+        )
+    summary, _cost = result
+    return JSONResponse({
+        "summary": summary,
+        "source_file_name": file.filename,
+        "source_size_bytes": len(data),
+    })
+
+
+# ==================== Outhan 步骤 2：首帧 ====================
+
+@app.get("/project/{video_id}/outhan/first-frame", response_class=HTMLResponse)
+async def project_outhan_first_frame(request: Request, video_id: str):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    data = _outhan_meta.get_outhan_data(video_id)
+    candidates = []
+    for a in _outhan_storage.list_assets(video_id, "first_frame"):
+        candidates.append({
+            "id": a["id"],
+            "url": f"/api/outhan/{video_id}/asset/{a['id']}",
+            "is_current": a["id"] == data.get("first_frame_asset_id"),
+            "ts": __import__("datetime").datetime.fromtimestamp(a["created_at"]).strftime("%Y-%m-%d %H:%M"),
+        })
+    return TEMPLATES.TemplateResponse(
+        "step_outhan_first_frame.html",
+        {
+            "request": request, "video_id": video_id,
+            "outhan_title": proj.title, "outhan_data": data,
+            "candidates": candidates,
+            "current_step": 2, "reached_step": max(data["current_step"], 2),
+        },
+    )
+
+
+@app.post("/api/outhan/{video_id}/generate-first-frame")
+async def api_outhan_generate_first_frame(video_id: str, request: Request):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    body = await request.json()
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    data = _outhan_meta.get_outhan_data(video_id)
+    user_prompt = (body.get("prompt") or "").strip()
+    if not user_prompt:
+        parts = [data.get("theme") or "", data.get("style") or ""]
+        user_prompt = "，".join([p for p in parts if p]) or proj.title
+    size = body.get("size") or "2K"
+
+    res = _ark_client.generate_image(prompt=user_prompt, size=size, watermark=False)
+    if not res.get("ok"):
+        return JSONResponse({"error": res.get("error") or "Seedream 生成失败"}, status_code=502)
+    url = res.get("url")
+    if not url:
+        return JSONResponse({"error": "Seedream 返回空 url"}, status_code=502)
+    # stub 模式 url 是 placeholder，无法下载；直接落 stub URL 字符串作 path
+    if res.get("provider") == "stub":
+        return JSONResponse({"error": "ARK_API_KEY 未配置（当前是 stub 占位图）"}, status_code=400)
+    # 下载图
+    import urllib.request as _ur
+    try:
+        with _ur.urlopen(url, timeout=60) as r:
+            img = r.read()
+    except Exception as e:
+        return JSONResponse({"error": f"下载图失败：{e}"}, status_code=502)
+    saved = _outhan_storage.save_asset(
+        video_id, "first_frame", img,
+        base_name=f"first-{int(__import__('time').time())}",
+        metadata={"prompt": user_prompt, "size": size, "source_url": url},
+    )
+    _outhan_meta.update_outhan_data(
+        video_id, first_frame_asset_id=saved["id"], first_frame_prompt=user_prompt
+    )
+    return JSONResponse({"asset_id": saved["id"], "url": saved["url"]})
+
+
+@app.post("/api/outhan/{video_id}/set-first-frame")
+async def api_outhan_set_first_frame(video_id: str, request: Request):
+    body = await request.json()
+    from pipeline import outhan_meta as _outhan_meta
+    _outhan_meta.update_outhan_data(video_id, first_frame_asset_id=body.get("asset_id"))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/outhan/{video_id}/advance-step")
+async def api_outhan_advance(video_id: str, request: Request):
+    body = await request.json()
+    to = int(body.get("to") or 1)
+    from pipeline import outhan_meta as _outhan_meta
+    cur = _outhan_meta.get_outhan_data(video_id)["current_step"]
+    if to > cur:
+        _outhan_meta.set_current_step(video_id, to)
+    return JSONResponse({"ok": True})
+
+
+# ==================== Outhan 步骤 3：台本 ====================
+
+@app.get("/project/{video_id}/outhan/script", response_class=HTMLResponse)
+async def project_outhan_script(request: Request, video_id: str):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import outhan_meta as _outhan_meta
+    data = _outhan_meta.get_outhan_data(video_id)
+    segments = _outhan_meta.get_segments(video_id)
+    return TEMPLATES.TemplateResponse(
+        "step_outhan_script.html",
+        {
+            "request": request, "video_id": video_id,
+            "outhan_title": proj.title, "outhan_data": data,
+            "segments": segments,
+            "current_step": 3, "reached_step": max(data["current_step"], 3),
+        },
+    )
+
+
+_OUTHAN_SCRIPT_SYSTEM = """你是视频分段台本作者。给定主题、首帧图、目标总时长，输出 N 段镜头描述。
+要求：
+- 每段约 5 秒（按目标时长除 5 决定段数；3-12 段范围内）
+- 输出 JSON 数组，每元素：{"index": 0-based 数字, "scene": 中文场景描述, "videoPrompt": 中文视频提示词（含主体动作/镜头景别/镜头运动/光线/风格）, "transitionToNext": 与下段接力关系（最后段空字符串）}
+- videoPrompt 要让模型一看就知道主体动作
+- 直接返回 JSON 数组，无前缀、解释、Markdown 围栏"""
+
+
+@app.post("/api/outhan/{video_id}/generate-script")
+async def api_outhan_generate_script(video_id: str):
+    import json as _json
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    from pipeline.tools import llm_client as _llm
+    data = _outhan_meta.get_outhan_data(video_id)
+    if not data.get("first_frame_asset_id"):
+        return JSONResponse({"error": "请先在步骤 2 选定首帧"}, status_code=400)
+    target_duration = data.get("target_duration") or 60
+    per = 5
+    seg_count = max(3, min(12, round(target_duration / per)))
+
+    ff = _outhan_storage.get_asset(video_id, data["first_frame_asset_id"])
+    media = []
+    if ff:
+        try:
+            import base64 as _b64
+            png = _outhan_storage.read_asset_bytes(ff)
+            media.append({"mimeType": "image/png", "data": _b64.b64encode(png).decode("ascii")})
+        except Exception:
+            pass
+
+    user_prompt = f"""主题：{data.get("theme") or proj.title}
+风格：{data.get("style") or "（未指定）"}
+目标总时长：{target_duration} 秒
+段数：{seg_count}（每段约 {per} 秒）
+
+请基于主题与首帧图，输出 {seg_count} 段台本（JSON 数组）。"""
+    result = _llm.call_gemini_multimodal_text(
+        _OUTHAN_SCRIPT_SYSTEM, user_prompt, media=media or None,
+        model="gemini-2.5-pro", timeout=300,
+    )
+    if result is None:
+        return JSONResponse({"error": "Gemini 多模态台本生成失败"}, status_code=502)
+    content, _cost = result
+    # 容错：去 markdown fence
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
+    try:
+        parsed = _json.loads(text)
+        if not isinstance(parsed, list):
+            raise ValueError("非数组")
+    except Exception as e:
+        return JSONResponse({"error": f"Gemini 返回的不是合法 JSON 数组：{e}"}, status_code=502)
+
+    segments = []
+    for i, s in enumerate(parsed):
+        segments.append({
+            "index": i,
+            "scene": s.get("scene") or s.get("sceneDescription") or "",
+            "prompt": s.get("videoPrompt") or s.get("prompt") or "",
+            "duration": per,
+            "engine": data.get("video_engine") or "jimeng",
+            "first_frame_asset_id": data["first_frame_asset_id"] if i == 0 else None,
+            "tail_frame_asset_id": None,
+            "video_asset_id": None, "video_path": None,
+            "task_id": None, "status": "pending",
+            "script": None, "audio_asset_id": None,
+            "transition_to_next": s.get("transitionToNext") or "",
+        })
+    _outhan_meta.replace_segments(video_id, segments)
+    return JSONResponse({"count": len(segments), "segments": segments})
+
+
+@app.patch("/api/outhan/{video_id}/segment/{index}")
+async def api_outhan_segment_patch(video_id: str, index: int, request: Request):
+    body = await request.json()
+    allowed = {"prompt", "engine", "duration", "script", "scene", "first_frame_asset_id"}
+    fields = {k: v for k, v in body.items() if k in allowed}
+    if not fields:
+        return JSONResponse({"error": "无可更新字段"}, status_code=400)
+    from pipeline import outhan_meta as _outhan_meta
+    res = _outhan_meta.update_segment(video_id, index, **fields)
+    if res is None:
+        return JSONResponse({"error": "段不存在"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/outhan/{video_id}/segments")
+async def api_outhan_segments(video_id: str):
+    from pipeline import outhan_meta as _outhan_meta
+    return JSONResponse({"segments": _outhan_meta.get_segments(video_id)})
+
+
+# ==================== Outhan 步骤 4：分段视频 ====================
+
+@app.get("/project/{video_id}/outhan/video", response_class=HTMLResponse)
+async def project_outhan_video(request: Request, video_id: str):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import outhan_meta as _outhan_meta
+    data = _outhan_meta.get_outhan_data(video_id)
+    segments = _outhan_meta.get_segments(video_id)
+    return TEMPLATES.TemplateResponse(
+        "step_outhan_video.html",
+        {
+            "request": request, "video_id": video_id,
+            "outhan_title": proj.title, "outhan_data": data,
+            "segments": segments,
+            "current_step": 4, "reached_step": max(data["current_step"], 4),
+        },
+    )
+
+
+@app.post("/api/outhan/{video_id}/reset-all-segments")
+async def api_outhan_reset_all_segments(video_id: str):
+    """全部重来：清所有段视频/音频/尾帧/任务，第 0 段首帧恢复项目首帧。"""
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    from pipeline import outhan_meta as _outhan_meta
+    _outhan_meta.reset_all_segments(video_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/outhan/{video_id}/segment/{index}/generate-video")
+async def api_outhan_seg_gen_video(video_id: str, index: int):
+    import time as _time
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    seg = next((s for s in _outhan_meta.get_segments(video_id) if s.get("index") == index), None)
+    if not seg:
+        return JSONResponse({"error": "段不存在"}, status_code=404)
+    if not seg.get("prompt"):
+        return JSONResponse({"error": "段没有提示词"}, status_code=400)
+
+    # 级联重置 N+1+
+    _outhan_meta.cascade_reset_after(video_id, index)
+    _outhan_meta.update_segment(video_id, index, status="creating", task_id=None)
+
+    engine = seg.get("engine") or "jimeng"
+    duration = seg.get("duration") or 5
+
+    # 拿首帧 dataUrl 或 url
+    ff_id = seg.get("first_frame_asset_id")
+    if not ff_id:
+        # 兜底：用项目首帧
+        ff_id = _outhan_meta.get_outhan_data(video_id).get("first_frame_asset_id")
+    image_url = None
+    if ff_id:
+        ff_asset = _outhan_storage.get_asset(video_id, ff_id)
+        if ff_asset:
+            try:
+                import base64 as _b64
+                img = _outhan_storage.read_asset_bytes(ff_asset)
+                image_url = f"data:image/png;base64,{_b64.b64encode(img).decode('ascii')}"
+            except Exception:
+                pass
+
+    if engine == "jimeng":
+        if not image_url:
+            _outhan_meta.update_segment(video_id, index, status="failed")
+            return JSONResponse({"error": "Seedance 需要首帧图"}, status_code=400)
+        r = _ark_client.create_video_task(
+            image_url=image_url, motion_prompt=seg["prompt"],
+            duration=duration, resolution="720p", watermark=False,
+        )
+    else:
+        from pipeline.tools import vidu_client as _vidu
+        r = _vidu.vidu_create(
+            prompt=seg["prompt"], model="viduq3-pro",
+            images=[image_url] if image_url else None,
+            duration=duration, resolution="720p", watermark=False,
+        )
+    if not r.get("ok"):
+        _outhan_meta.update_segment(video_id, index, status="failed")
+        return JSONResponse({"error": r.get("error") or "创建任务失败"}, status_code=502)
+    _outhan_meta.update_segment(video_id, index, status="polling", task_id=r["task_id"])
+    return JSONResponse({"task_id": r["task_id"], "engine": engine})
+
+
+@app.get("/api/outhan/{video_id}/segment/{index}/poll-video")
+async def api_outhan_seg_poll(video_id: str, index: int):
+    import urllib.request as _ur
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    seg = next((s for s in _outhan_meta.get_segments(video_id) if s.get("index") == index), None)
+    if not seg:
+        return JSONResponse({"error": "段不存在"}, status_code=404)
+    if seg.get("status") == "completed":
+        return JSONResponse({"status": "completed"})
+    task_id = seg.get("task_id")
+    if not task_id:
+        return JSONResponse({"error": "段没有 task_id"}, status_code=400)
+    engine = seg.get("engine") or "jimeng"
+
+    if engine == "jimeng":
+        r = _ark_client.get_video_task(task_id)
+        state = r.get("status")
+        url = r.get("video_url")
+        is_done = state == "succeeded"
+        is_fail = state in ("failed", "cancelled")
+    else:
+        from pipeline.tools import vidu_client as _vidu
+        r = _vidu.vidu_query(task_id)
+        state = r.get("state")
+        url = r.get("video_url")
+        is_done = state == "success"
+        is_fail = state == "failed"
+
+    if is_fail:
+        _outhan_meta.update_segment(video_id, index, status="failed")
+        return JSONResponse({"status": "failed", "task_state": state, "error": r.get("error")})
+    if not is_done or not url:
+        return JSONResponse({"status": seg.get("status"), "task_state": state})
+
+    # 下载视频（[AI-NOTE] 2026-05-07: 三次重试，应对 SSL UNEXPECTED_EOF / 临时网络断流）
+    _outhan_meta.update_segment(video_id, index, status="extracting")
+    import time as _time2
+    video_bytes: bytes | None = None
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            with _ur.urlopen(url, timeout=180) as resp:
+                video_bytes = resp.read()
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                _time2.sleep(2 + attempt * 3)  # 2s, 5s
+    if video_bytes is None:
+        _outhan_meta.update_segment(video_id, index, status="failed")
+        return JSONResponse(
+            {"error": f"下载视频失败（已重试 3 次）：{last_err}"},
+            status_code=502,
+        )
+
+    saved = _outhan_storage.save_asset(
+        video_id, "segment_video", video_bytes,
+        base_name=f"seg-{index}-{engine}-{int(__import__('time').time())}",
+        segment_index=index,
+        metadata={"source_url": url},
+    )
+
+    # 抽尾帧
+    from pipeline.tools import ffmpeg_client as _ffmpeg
+    from pathlib import Path as _Path
+    import tempfile as _tempfile
+    tail_asset_id = None
+    try:
+        tmp_png = _Path(_tempfile.gettempdir()) / f"outhan_tail_{video_id}_{index}.png"
+        rr = _ffmpeg.extract_last_frame(saved["path"], tmp_png)
+        if rr.get("ok"):
+            png_bytes = tmp_png.read_bytes()
+            tail = _outhan_storage.save_asset(
+                video_id, "tail_frame", png_bytes,
+                base_name=f"seg-{index}-tail",
+                segment_index=index,
+            )
+            tail_asset_id = tail["id"]
+            try: tmp_png.unlink(missing_ok=True)
+            except Exception: pass
+    except Exception:
+        pass
+
+    _outhan_meta.update_segment(
+        video_id, index,
+        status="completed",
+        video_asset_id=saved["id"],
+        video_path=saved["path"],
+        tail_frame_asset_id=tail_asset_id,
+    )
+    if tail_asset_id:
+        # 把尾帧设为 N+1 段的首帧
+        _outhan_meta.update_segment(video_id, index + 1, first_frame_asset_id=tail_asset_id)
+
+    return JSONResponse({"status": "completed", "video_asset_id": saved["id"], "tail_asset_id": tail_asset_id})
+
+
+# ==================== Outhan 步骤 5：配音 ====================
+
+@app.get("/project/{video_id}/outhan/audio", response_class=HTMLResponse)
+async def project_outhan_audio(request: Request, video_id: str):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import outhan_meta as _outhan_meta
+    data = _outhan_meta.get_outhan_data(video_id)
+    segments = _outhan_meta.get_segments(video_id)
+    return TEMPLATES.TemplateResponse(
+        "step_outhan_audio.html",
+        {
+            "request": request, "video_id": video_id,
+            "outhan_title": proj.title, "outhan_data": data,
+            "segments": segments,
+            "current_step": 5, "reached_step": max(data["current_step"], 5),
+        },
+    )
+
+
+_OUTHAN_AUDIO_SYSTEM = """你为视频生成 Fish S1 配音稿。
+
+S1 规范：
+- 用圆括号 (...) 标注情绪标签
+- 情感标签必须放在句首
+- 例：(开心)今天真是好日子！(平静)我慢慢往前走。
+- 只用常见情绪：开心/平静/温柔/惊讶/悲伤/愤怒/无奈/坚定 等
+
+任务：根据每段镜头描述，写一段配音稿（中文，与时长匹配）。
+输出 JSON 数组，每元素：{"segmentIndex": 数字, "script": "S1 规范配音稿"}
+直接输出 JSON 数组，无前缀、解释、Markdown。"""
+
+
+@app.post("/api/outhan/{video_id}/generate-all-scripts")
+async def api_outhan_gen_all_scripts(video_id: str):
+    import json as _json
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline.tools import llm_client as _llm
+    data = _outhan_meta.get_outhan_data(video_id)
+    segs = _outhan_meta.get_segments(video_id)
+    if not segs:
+        return JSONResponse({"error": "还没有台本"}, status_code=400)
+
+    seg_inputs = [
+        {"segmentIndex": s["index"], "duration": s.get("duration") or 5,
+         "scene": s.get("scene") or s.get("prompt") or ""}
+        for s in segs
+    ]
+    user_prompt = f"""项目主题：{data.get("theme") or proj.title}
+风格：{data.get("style") or "（未指定）"}
+
+各段：
+{_json.dumps(seg_inputs, ensure_ascii=False, indent=2)}
+
+请输出 Fish S1 配音稿（JSON 数组）。"""
+    res = _llm.call_gemini_json(_OUTHAN_AUDIO_SYSTEM, user_prompt, timeout=240)
+    if res is None:
+        return JSONResponse({"error": "Gemini 配音稿生成失败"}, status_code=502)
+    content, _cost = res
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
+    try:
+        parsed = _json.loads(text)
+        if not isinstance(parsed, list):
+            raise ValueError("非数组")
+    except Exception as e:
+        return JSONResponse({"error": f"Gemini 返回非 JSON 数组：{e}"}, status_code=502)
+    for item in parsed:
+        idx = item.get("segmentIndex")
+        scr = item.get("script") or ""
+        if isinstance(idx, int):
+            _outhan_meta.update_segment(video_id, idx, script=scr)
+    return JSONResponse({"count": len(parsed)})
+
+
+@app.post("/api/outhan/{video_id}/segment/{index}/synthesize")
+async def api_outhan_seg_synth(video_id: str, index: int):
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    seg = next((s for s in _outhan_meta.get_segments(video_id) if s.get("index") == index), None)
+    if not seg:
+        return JSONResponse({"error": "段不存在"}, status_code=404)
+    if not seg.get("script") or not seg["script"].strip():
+        return JSONResponse({"error": "段没有配音稿"}, status_code=400)
+    try:
+        out_dir = _outhan_storage.project_dir(video_id) / "audio"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"seg-{index}-{int(__import__('time').time())}.mp3"
+        # [AI-NOTE] 2026-05-07: Outhan 用 S1 默认音色（无 reference_id），与一二布布的
+        # synthesize_async（必填 reference_id）走不同函数。
+        r = await _fish_audio.synthesize_s1_async(seg["script"], out_path)
+        if not r.get("ok"):
+            return JSONResponse(
+                {"error": f"Fish 合成失败：{r.get('error') or '未知错误'}"},
+                status_code=502,
+            )
+        audio_bytes = out_path.read_bytes()
+        saved = _outhan_storage.save_asset(
+            video_id, "segment_audio", audio_bytes,
+            base_name=f"seg-{index}-final-{int(__import__('time').time())}",
+            segment_index=index,
+        )
+        try: out_path.unlink(missing_ok=True)
+        except Exception: pass
+    except Exception as e:
+        return JSONResponse({"error": f"Fish 合成失败：{e}"}, status_code=502)
+    _outhan_meta.update_segment(video_id, index, audio_asset_id=saved["id"])
+    return JSONResponse({"audio_asset_id": saved["id"], "url": saved["url"]})
+
+
+# ==================== Outhan 步骤 6：打包 ====================
+
+@app.get("/project/{video_id}/outhan/package", response_class=HTMLResponse)
+async def project_outhan_package(request: Request, video_id: str):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import outhan_meta as _outhan_meta
+    data = _outhan_meta.get_outhan_data(video_id)
+    segs = _outhan_meta.get_segments(video_id)
+    stats = {
+        "total": len(segs),
+        "with_video": sum(1 for s in segs if s.get("video_asset_id")),
+        "with_audio": sum(1 for s in segs if s.get("audio_asset_id")),
+        "with_script": sum(1 for s in segs if s.get("script")),
+    }
+    checks = {"first_frame": bool(data.get("first_frame_asset_id"))}
+    return TEMPLATES.TemplateResponse(
+        "step_outhan_package.html",
+        {
+            "request": request, "video_id": video_id,
+            "outhan_title": proj.title, "outhan_data": data,
+            "stats": stats, "checks": checks,
+            "current_step": 6, "reached_step": max(data["current_step"], 6),
+        },
+    )
+
+
+@app.post("/api/outhan/{video_id}/build-package")
+async def api_outhan_build_package(video_id: str):
+    import io as _io
+    import zipfile as _zipfile
+    proj = _state.get_video(video_id)
+    if not proj:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    from pipeline import outhan_meta as _outhan_meta
+    from pipeline import outhan_storage as _outhan_storage
+    data = _outhan_meta.get_outhan_data(video_id)
+    segs = _outhan_meta.get_segments(video_id)
+
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        # references
+        for a in _outhan_storage.list_assets(video_id, "reference"):
+            try:
+                zf.writestr(f"references/{__import__('os').path.basename(a['path'])}",
+                            _outhan_storage.read_asset_bytes(a))
+            except Exception: pass
+        # first frame
+        if data.get("first_frame_asset_id"):
+            ff = _outhan_storage.get_asset(video_id, data["first_frame_asset_id"])
+            if ff:
+                try: zf.writestr("frames/first.png", _outhan_storage.read_asset_bytes(ff))
+                except Exception: pass
+        # segments
+        for s in segs:
+            idx = f"{s['index']:02d}"
+            if s.get("video_asset_id"):
+                a = _outhan_storage.get_asset(video_id, s["video_asset_id"])
+                if a:
+                    try:
+                        zf.writestr(f"segments/segment-{idx}-{s.get('engine','jimeng')}.mp4",
+                                    _outhan_storage.read_asset_bytes(a))
+                    except Exception: pass
+            if s.get("tail_frame_asset_id"):
+                a = _outhan_storage.get_asset(video_id, s["tail_frame_asset_id"])
+                if a:
+                    try: zf.writestr(f"frames/segment-{idx}-tail.png", _outhan_storage.read_asset_bytes(a))
+                    except Exception: pass
+            if s.get("audio_asset_id"):
+                a = _outhan_storage.get_asset(video_id, s["audio_asset_id"])
+                if a:
+                    try: zf.writestr(f"audio/segment-{idx}.mp3", _outhan_storage.read_asset_bytes(a))
+                    except Exception: pass
+            if s.get("script"):
+                zf.writestr(f"scripts/segment-{idx}-script.txt", s["script"])
+
+        # manifest
+        lines = [
+            f"# {proj.title}", "",
+            f"**主题**：{data.get('theme') or '（未填）'}",
+            f"**风格**：{data.get('style') or '（未填）'}",
+            f"**目标总时长**：{data.get('target_duration')} 秒",
+            f"**默认引擎**：{data.get('video_engine') or 'jimeng'}",
+            f"**生成时间**：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "## 文件夹结构",
+            "- `references/` 用户上传的参考图",
+            "- `frames/first.png` 项目首帧",
+            "- `frames/segment-NN-tail.png` 各段尾帧",
+            "- `segments/segment-NN-<engine>.mp4` 各段视频",
+            "- `audio/segment-NN.mp3` 各段配音",
+            "- `scripts/segment-NN-script.txt` 各段 Fish S1 配音稿",
+            "",
+            "## 分段清单", "",
+        ]
+        for s in segs:
+            idx = f"{s['index']:02d}"
+            lines.append(f"### 段 {idx}（{s.get('engine','jimeng')} · {s.get('duration',5)}s）")
+            if s.get("scene"): lines.append(f"**场景**：{s['scene']}")
+            if s.get("prompt"): lines.append(f"**提示词**：{s['prompt']}")
+            if s.get("script"): lines.append(f"**配音稿**：{s['script']}")
+            lines.append(f"**视频**：{'segments/segment-' + idx + '-' + s.get('engine','jimeng') + '.mp4' if s.get('video_asset_id') else '（未生成）'}")
+            lines.append(f"**音频**：{'audio/segment-' + idx + '.mp3' if s.get('audio_asset_id') else '（未生成）'}")
+            lines.append("")
+        lines += ["## 进剪辑前检查", "",
+                  "- [ ] 所有段视频齐全",
+                  "- [ ] 所有段音频齐全（或决定纯素材）",
+                  "- [ ] 段顺序按文件名排好",
+                  "- [ ] 接力帧衔接自然",
+                  "", "---", "", "由 Outhan（one-shot 集成版）自动生成。"]
+        zf.writestr("manifest.md", "\n".join(lines))
+
+    safe_name = (proj.title or video_id).translate(str.maketrans({c: "_" for c in '\\/:*?"<>|'}))[:60]
+    # [AI-NOTE] 2026-05-07: 中文文件名走 RFC 5987 filename*=UTF-8''xxx 格式；
+    # 同时保留 ASCII 兜底 filename= 给老浏览器（用 video_id）。
+    import urllib.parse as _urlp
+    encoded_name = _urlp.quote(f"{safe_name}.zip", safe="")
+    fallback_name = f"{video_id}.zip"
+    from fastapi.responses import Response as _R
+    return _R(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{fallback_name}"; '
+                f"filename*=UTF-8''{encoded_name}"
+            )
+        },
+    )
 
 
 @app.delete("/api/project/{video_id}")

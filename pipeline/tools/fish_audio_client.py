@@ -147,6 +147,45 @@ def voice_exists(voice_id: str, presets: list[dict]) -> bool:
     return any(v["id"] == voice_id for v in presets)
 
 
+async def synthesize_s1_async(
+    text: str, out_path: str | Path, *, normalize: bool = True
+) -> dict:
+    """[AI-NOTE] 2026-05-07: Outhan 步骤 5 用——S1 模型 + 默认音色（无 reference_id）。
+    与一二布布的 synthesize_async（reference_id 必填）共存。
+    """
+    key = _api_key()
+    if not key:
+        return {"ok": False, "error": "FISH_AUDIO_API_KEY not set"}
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if not text.strip():
+        return {"ok": False, "error": "empty text"}
+    try:
+        async with httpx.AsyncClient(timeout=_SYNTH_TIMEOUT) as client:
+            r = await client.post(
+                f"{BASE_URL}/v1/tts",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "model": "s1",
+                },
+                json={
+                    "text": text,
+                    "format": "mp3",
+                    "normalize": normalize,
+                    "mp3_bitrate": 128,
+                    "streaming": False,
+                },
+            )
+            r.raise_for_status()
+            out.write_bytes(r.content)
+            return {"ok": True, "path": str(out), "bytes": out.stat().st_size}
+    except httpx.HTTPStatusError as e:
+        return {"ok": False, "error": f"HTTP {e.response.status_code}: {e.response.text[:300]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 async def synthesize_async(text: str, reference_id: str, out_path: str | Path) -> dict:
     """异步合成一段配音 mp3，成功返回 {ok, path, bytes}。"""
     key = _api_key()

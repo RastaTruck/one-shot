@@ -1,0 +1,84 @@
+{% extends "_outhan_layout.html" %}
+{% block page_title %}打包 · {{ outhan_title or video_id }}{% endblock %}
+
+{% block outhan_step_content %}
+<div x-data="outhanPackage()" class="space-y-6">
+  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 6 · 打包下载</h2>
+    <p class="mt-1 text-[13px] text-ink-500">
+      把所有素材打成一个 zip：<code class="text-xs">references/ frames/ segments/ audio/ scripts/ manifest.md</code>
+      ——直接拖进剪辑软件就能开干。
+    </p>
+
+    <div class="mt-4 space-y-2">
+      <div class="flex items-center gap-3">
+        <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
+              :class="checks.first_frame ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink-100 text-ink-400 border-ink-200'"
+              x-text="checks.first_frame ? '✓' : '—'"></span>
+        <span class="text-[13px]">首帧已选</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
+              :class="stats.total > 0 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink-100 text-ink-400 border-ink-200'"
+              x-text="stats.total > 0 ? '✓' : '—'"></span>
+        <span class="text-[13px]">已生成台本 <strong x-text="stats.total"></strong> 段</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
+              :class="stats.with_video === stats.total && stats.total > 0 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink-100 text-ink-400 border-ink-200'"
+              x-text="stats.with_video === stats.total && stats.total > 0 ? '✓' : '—'"></span>
+        <span class="text-[13px]">分段视频 <span x-text="stats.with_video"></span>/<span x-text="stats.total"></span></span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
+              :class="stats.with_audio === stats.total && stats.total > 0 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-ink-100 text-ink-400 border-ink-200'"
+              x-text="stats.with_audio === stats.total && stats.total > 0 ? '✓' : '—'"></span>
+        <span class="text-[13px]">合成音频 <span x-text="stats.with_audio"></span>/<span x-text="stats.total"></span></span>
+      </div>
+    </div>
+
+    <button @click="download()" :disabled="downloading || stats.total === 0"
+            class="mt-5 px-6 py-3 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[14px] transition disabled:opacity-50">
+      <span x-text="downloading ? '打包中...' : '📦 生成 zip 并下载'"></span>
+    </button>
+
+    <div x-show="error" x-cloak class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700"
+         x-text="error"></div>
+  </div>
+
+  <div class="flex justify-between gap-3">
+    <a href="/project/{{ video_id }}/outhan/audio"
+       class="px-4 py-2 rounded-full border border-ink-200 hover:border-blue-400 text-[13px] font-bold text-ink-700">
+      ← 步骤 5 · 配音
+    </a>
+  </div>
+</div>
+
+<script>
+function outhanPackage() {
+  return {
+    videoId: {{ video_id|tojson }},
+    checks: {{ checks|tojson }},
+    stats: {{ stats|tojson }},
+    downloading: false,
+    error: null,
+
+    async download() {
+      this.downloading = true; this.error = null;
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/build-package`, {method:'POST'});
+        if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || res.status); }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (`{{ outhan_title|default('outhan') }}` || this.videoId).replace(/[\\/:*?"<>|]/g, '_') + '.zip';
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) { this.error = e.message || String(e); }
+      finally { this.downloading = false; }
+    },
+  };
+}
+</script>
+{% endblock %}
