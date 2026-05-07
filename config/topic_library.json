@@ -1,0 +1,318 @@
+{
+  "version": 2,
+  "updated_at": "2026-05-07",
+  "schema": {
+    "level": ["人人能懂", "需要点底子", "专业向"],
+    "intent": ["搞懂概念", "探讨影响", "学会操作", "引发共鸣"],
+    "audience": ["完全小白", "有点基础", "进阶用户"]
+  },
+  "domains": [
+    {
+      "id": "economy",
+      "name": "经济财富",
+      "emoji": "💰",
+      "active": true,
+      "concepts": [
+        {
+          "id": "rate",
+          "name": "利率",
+          "emoji": "💰",
+          "one_liner": "钱的价格 — 借钱用钱的成本",
+          "scenes": ["房贷", "存款", "股市", "汇率", "央行", "消费"],
+          "topics": [
+            {"title": "利率到底是什么 一分钟说清楚", "hook": "你以为是利息 其实是钱的价格", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["存款", "房贷"], "keywords": "利率, 利息, 借贷成本"},
+            {"title": "央行加息你的房贷为什么反而变贵了", "hook": "利率是房价的隐形开关", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["房贷", "央行"], "keywords": "加息, 房贷, LPR, 央行政策"},
+            {"title": "美联储加息全球资产为什么跟着抖", "hook": "美元利率是全球资金的总闸门", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["汇率", "股市"], "keywords": "美联储, 资本流动, 全球市场"},
+            {"title": "0% 利率到底谁在受益", "hook": "利率是穷人的税 富人的红利", "level": "需要点底子", "intent": "引发共鸣", "audience": "有点基础", "angles": ["央行"], "keywords": "零利率, 货币政策, 财富分化"},
+            {"title": "利率倒挂为什么是衰退的预警信号", "hook": "短期利率高于长期 市场在打什么算盘", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["股市"], "keywords": "利率倒挂, 收益率曲线, 衰退"},
+            {"title": "银行存款利率为什么降到一字头了", "hook": "钱多得没地方放才是真理由", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["存款"], "keywords": "存款利率, 流动性, 降息"},
+            {"title": "加息真的能压住通胀吗 历史告诉你答案", "hook": "加息是把双刃剑 一边抗通胀一边砍经济", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["央行"], "keywords": "加息, 通胀, 央行政策"},
+            {"title": "房贷利率从 LPR 变成 LPR 加点的隐藏含义", "hook": "调控权悄悄从央行交给了银行", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["房贷"], "keywords": "LPR, 房贷利率, 加点"},
+            {"title": "利率怎么传导到你的生活 五个层级讲清楚", "hook": "央行一个动作 你的钱包发生五件事", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["央行", "房贷", "股市"], "keywords": "利率传导, 货币政策"},
+            {"title": "负利率国家的人怎么活的 日本欧洲实例", "hook": "把钱存银行倒贴利息这事真存在", "level": "需要点底子", "intent": "引发共鸣", "audience": "有点基础", "angles": ["存款", "汇率"], "keywords": "负利率, 日本, 欧洲"}
+          ]
+        },
+        {
+          "id": "inflation",
+          "name": "通胀",
+          "emoji": "📊",
+          "one_liner": "钱在变薄 你的购买力被悄悄偷走",
+          "scenes": ["工资", "存款", "房价", "消费", "汇率", "资产配置"],
+          "topics": [
+            {"title": "通胀真相为什么工资涨了你还是穷", "hook": "你拿到的不是涨薪 是货币贬值的折扣", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["工资"], "keywords": "通胀, 实际工资, 购买力"},
+            {"title": "CPI 不是你的真实物价 它在骗谁", "hook": "官方数据和你的菜价为什么对不上", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["消费"], "keywords": "CPI, 通胀指数"},
+            {"title": "通胀对穷人和富人到底谁更不公平", "hook": "通胀是只看财富不看身份的税", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["工资"], "keywords": "通胀, 财富分化"},
+            {"title": "钱躺银行就是慢性贬值 三十年算给你看", "hook": "你以为是保本 其实是慢性蒸发", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["存款"], "keywords": "通胀, 存款贬值"},
+            {"title": "恶性通胀是怎么发生的 委内瑞拉给你看", "hook": "印钞机一开 就回不了头", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["汇率"], "keywords": "恶性通胀, 货币崩溃"},
+            {"title": "通缩比通胀更可怕吗 日本失落三十年", "hook": "钱越来越值钱 经济越来越冷", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["消费"], "keywords": "通缩, 流动性陷阱"},
+            {"title": "抗通胀资产到底有哪些 黄金还是房子", "hook": "不是看名字 是看现金流", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["资产配置"], "keywords": "抗通胀, 资产配置"},
+            {"title": "滞胀这个词什么意思 七十年代美国教科书", "hook": "经济不长 通胀照涨 央行最怕这个", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["汇率"], "keywords": "滞胀, 经济周期"},
+            {"title": "工资涨幅跑不过通胀 是阴谋还是规律", "hook": "你以为是公司抠 其实是结构问题", "level": "需要点底子", "intent": "探讨影响", "audience": "完全小白", "angles": ["工资"], "keywords": "通胀, 实际工资"},
+            {"title": "房产是抗通胀神器吗 真相是看时机", "hook": "房子在通胀里的角色 比你想的复杂", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["房价", "资产配置"], "keywords": "通胀, 房产, 抗通胀"}
+          ]
+        },
+        {
+          "id": "monetary_policy",
+          "name": "货币政策",
+          "emoji": "🏦",
+          "one_liner": "央行如何用利率和印钞调节经济",
+          "scenes": ["加息", "降息", "QE", "汇率", "股市", "通胀"],
+          "topics": [
+            {"title": "央行到底怎么决定加息或降息的", "hook": "不是拍脑袋 看的是这五个数字", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["加息", "降息"], "keywords": "央行, 货币政策"},
+            {"title": "QE 量化宽松到底在干嘛 大白话讲明白", "hook": "央行直接下场买债 把钱印进市场", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["QE", "股市"], "keywords": "量化宽松, QE"},
+            {"title": "缩表是什么意思 为什么市场闻之色变", "hook": "央行把放出去的钱一点点收回来", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["股市"], "keywords": "缩表, 央行"},
+            {"title": "中国央行和美联储到底有什么不一样", "hook": "一个有外汇储备压力 一个掌握全球定价权", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["汇率"], "keywords": "央行, 美联储, 货币政策"},
+            {"title": "降准是什么意思 钱怎么就多了", "hook": "央行说你少存我点 银行就能多放贷", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["降息"], "keywords": "降准, 货币政策"},
+            {"title": "央行印钞通胀就来了吗 没那么简单", "hook": "印钞 ≠ 通胀 关键看钱去哪了", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["通胀"], "keywords": "印钞, 通胀, 货币流通"},
+            {"title": "货币政策为什么有滞后性 加息半年后才管用", "hook": "经济这艘船 调舵到转弯需要时间", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["加息"], "keywords": "货币政策, 滞后效应"},
+            {"title": "货币政策失灵财政政策能救场吗", "hook": "加息没用降息也没用的时候怎么办", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["QE"], "keywords": "货币政策, 财政政策, 流动性陷阱"},
+            {"title": "央行独立性这件事到底重要吗", "hook": "不被政府指挥 才能不被政治绑架", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["加息"], "keywords": "央行独立性, 制度设计"},
+            {"title": "美联储加息中国跟不跟 这道选择题不好做", "hook": "跟也错 不跟也错 选小错的那个", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["汇率", "加息"], "keywords": "中美利差, 货币政策"}
+          ]
+        },
+        {
+          "id": "leverage",
+          "name": "杠杆",
+          "emoji": "⚖️",
+          "one_liner": "借别人的钱放大自己的赚或亏",
+          "scenes": ["房贷", "股票融资", "信用卡", "企业", "爆仓", "国债"],
+          "topics": [
+            {"title": "杠杆到底是什么 一个比喻让你秒懂", "hook": "100 块当 1000 块用 赚也快亏也快", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["房贷"], "keywords": "杠杆, 借贷"},
+            {"title": "房贷其实就是最大的杠杆 你意识到了吗", "hook": "200 万房子首付 60 万 你已经 3 倍杠杆", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["房贷"], "keywords": "房贷, 杠杆"},
+            {"title": "为什么爆仓那么容易 杠杆数学告诉你", "hook": "5 倍杠杆 跌 20% 就归零", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["股票融资", "爆仓"], "keywords": "爆仓, 杠杆, 强平"},
+            {"title": "信用卡分期算不算高杠杆 算给你看", "hook": "实际年化 15% 起 这就是杠杆成本", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["信用卡"], "keywords": "信用卡分期, 实际年化"},
+            {"title": "企业并购为什么爱用 LBO 杠杆收购", "hook": "用目标公司未来的现金流去借钱买它", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["企业"], "keywords": "LBO, 杠杆收购"},
+            {"title": "国家也会加杠杆 政府债务多少算多", "hook": "美国日本中国谁家杠杆率最高", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["国债"], "keywords": "政府债务, 国家杠杆"},
+            {"title": "去杠杆为什么这么难 痛在哪里", "hook": "借钱时是糖 还钱时是命", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["房贷"], "keywords": "去杠杆, 债务危机"},
+            {"title": "散户为什么不该用融资融券炒股", "hook": "别人吃肉时你跟 别人爆仓时只剩你", "level": "需要点底子", "intent": "引发共鸣", "audience": "有点基础", "angles": ["股票融资"], "keywords": "融资融券, 散户"},
+            {"title": "期权期货的杠杆为什么是数十倍", "hook": "保证金交易 用 1 块控制 50 块", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["股票融资"], "keywords": "期货, 期权, 保证金"},
+            {"title": "个人怎么判断自己加多少杠杆才安全", "hook": "还款额不超过收入 30% 这个数怎么来的", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["房贷"], "keywords": "个人杠杆, 财务规划"}
+          ]
+        },
+        {
+          "id": "liquidity",
+          "name": "流动性",
+          "emoji": "🌊",
+          "one_liner": "市场上有多少钱能动 决定涨跌",
+          "scenes": ["牛熊", "资金面", "危机", "央行", "股市", "国债"],
+          "topics": [
+            {"title": "流动性到底是什么 不是钱多 是能花的钱多", "hook": "银行账上躺着不算 流到市场上才算", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["资金面"], "keywords": "流动性, 货币流通"},
+            {"title": "牛市真正的发动机不是好消息 是流动性", "hook": "钱多到没处去 才会冲进股市", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["牛熊", "股市"], "keywords": "牛市, 流动性"},
+            {"title": "流动性危机怎么发生的 雷曼倒闭那一天", "hook": "不是没资产 是没人愿意接盘", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["危机"], "keywords": "流动性危机, 金融危机"},
+            {"title": "央行放水到底是放给谁的水", "hook": "钱给了银行 不一定到你手里", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["央行"], "keywords": "流动性, 货币传导"},
+            {"title": "流动性陷阱 日本三十年的诅咒", "hook": "利率到 0 钱还是不流动", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["央行", "危机"], "keywords": "流动性陷阱, 日本"},
+            {"title": "个人资产里现金占多少才合适", "hook": "流动性溢价是看不见的成本", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["资金面"], "keywords": "现金, 流动性"},
+            {"title": "股票成交量为什么这么重要", "hook": "没成交量的涨跌都是假象", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["股市"], "keywords": "成交量, 股票"},
+            {"title": "房产流动性差是它最大的风险吗", "hook": "急用钱时房子不能切片卖", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["资金面"], "keywords": "流动性, 房产"},
+            {"title": "国债收益率为什么是流动性的温度计", "hook": "资金紧国债跌 资金松国债涨", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["国债"], "keywords": "国债, 流动性"},
+            {"title": "隔夜利率突然飙升说明什么 银行间在恐慌", "hook": "这是金融危机的前哨", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["危机"], "keywords": "隔夜利率, 银行间"}
+          ]
+        },
+        {
+          "id": "valuation",
+          "name": "估值",
+          "emoji": "📈",
+          "one_liner": "给资产标个公平价格 也最容易扯皮",
+          "scenes": ["股票", "房产", "并购", "PE", "DCF", "大宗商品"],
+          "topics": [
+            {"title": "市盈率 PE 越低越好吗 这是最大误解", "hook": "便宜不是因为划算 是因为没人要", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["股票", "PE"], "keywords": "市盈率, 估值, PE"},
+            {"title": "一家公司值多少钱 三个估值方法对比", "hook": "PE 市净率 现金流折现 各有盲点", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["股票", "PE", "DCF"], "keywords": "估值, PE, DCF"},
+            {"title": "互联网公司常年亏损为什么估值还能上天", "hook": "大家买的不是利润 是想象空间", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["股票"], "keywords": "互联网估值, 成长股"},
+            {"title": "DCF 估值模型听起来高深 用奶茶店讲明白", "hook": "未来十年的钱折回今天值多少", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["DCF"], "keywords": "DCF, 现金流折现"},
+            {"title": "房产估值为什么从来没有标准答案", "hook": "同小区差 50 米 价差能 20%", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["房产"], "keywords": "房产估值, 房价"},
+            {"title": "黄金没有现金流为什么还能估值", "hook": "估值方式跟股票完全两套逻辑", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["大宗商品"], "keywords": "黄金, 估值"},
+            {"title": "估值高低决定了你这十年的回报率", "hook": "买在 30 倍 PE 还是 10 倍 结果差三倍", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["股票", "PE"], "keywords": "估值, 长期回报"},
+            {"title": "为什么不同行业合理 PE 差这么多", "hook": "银行只值 5 倍 白酒能 30 倍", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["股票", "PE"], "keywords": "行业估值, PE"},
+            {"title": "公司并购里的溢价 30% 是怎么来的", "hook": "不是随便定 是博弈和拍卖出来的", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["并购"], "keywords": "并购, 溢价"},
+            {"title": "散户最容易犯的估值错误 看股价高低", "hook": "100 块的股票不一定比 10 块的贵", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["股票"], "keywords": "估值, 股价误区"}
+          ]
+        },
+        {
+          "id": "compounding",
+          "name": "复利",
+          "emoji": "🔄",
+          "one_liner": "时间是最公平也最残酷的滤网",
+          "scenes": ["长期投资", "退休", "存款", "学习", "债务", "信用卡"],
+          "topics": [
+            {"title": "复利的魔法为什么对大多数人不灵", "hook": "你算过了 但你坚持不了", "level": "需要点底子", "intent": "引发共鸣", "audience": "完全小白", "angles": ["长期投资"], "keywords": "复利, 长期投资"},
+            {"title": "巴菲特 99% 财富是 50 岁以后赚的", "hook": "复利的爆发点永远在最后五年", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["长期投资"], "keywords": "巴菲特, 复利"},
+            {"title": "0 到 100 万和 100 万到 1 千万 哪个更难", "hook": "第一个台阶最陡 后面反而容易", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["长期投资"], "keywords": "复利, 财富积累"},
+            {"title": "70 法则 心算复利的捷径", "hook": "70 除以年化 等于本金翻倍年数", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["长期投资"], "keywords": "复利, 70法则"},
+            {"title": "信用卡欠款也是复利 反向毁了你", "hook": "利滚利 借得越久还得越多", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["信用卡", "债务"], "keywords": "复利, 债务"},
+            {"title": "复利不只是钱 学习也有复利", "hook": "每天 1% 进步 一年是 38 倍", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["学习"], "keywords": "复利, 学习"},
+            {"title": "70% 彩票得主 5 年内破产为什么", "hook": "复利只对耐得住的人友好", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["长期投资"], "keywords": "横财, 财富心态"},
+            {"title": "退休账户复利 早 10 年开始多赚一倍", "hook": "25 岁开始比 35 岁开始 退休时差一辆豪车", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["退休"], "keywords": "退休规划, 复利"},
+            {"title": "通胀也是复利 反向蚕食你的钱", "hook": "3% 通胀 20 年后购买力打 5.5 折", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["存款"], "keywords": "通胀, 复利"},
+            {"title": "复利的最大敌人不是利率低 是中断", "hook": "赎回过一次 整个曲线就被腰斩", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["长期投资"], "keywords": "复利, 长期投资"}
+          ]
+        },
+        {
+          "id": "risk_return",
+          "name": "风险与收益",
+          "emoji": "🎢",
+          "one_liner": "投资第一性原理 高收益必有高风险",
+          "scenes": ["资产配置", "止损", "期望值", "保险", "投机", "黑天鹅"],
+          "topics": [
+            {"title": "高收益必有高风险 听过就懂了吗 没那么简单", "hook": "风险和收益不是简单加号 是几何关系", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["资产配置"], "keywords": "风险收益"},
+            {"title": "期望值思维 学会算这个就赢了一半", "hook": "概率乘以收益 看的是长期不是最大值", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["期望值", "投机"], "keywords": "期望值, 概率"},
+            {"title": "为什么散户喜欢小赌大赢的资产", "hook": "他们买的不是收益 是希望", "level": "需要点底子", "intent": "引发共鸣", "audience": "完全小白", "angles": ["投机"], "keywords": "散户, 风险偏好"},
+            {"title": "风险厌恶和损失厌恶不是同一件事", "hook": "一个理性 一个感性 你大概率混了", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["期望值"], "keywords": "风险厌恶, 损失厌恶"},
+            {"title": "投资中最大的风险其实是不投资", "hook": "通胀面前 不动也是退步", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["资产配置"], "keywords": "通胀, 风险"},
+            {"title": "分散投资真的能降风险吗", "hook": "不是简单的鸡蛋多筐 是相关性的智慧", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["资产配置"], "keywords": "分散投资, 相关性"},
+            {"title": "60/40 经典资产配置法则还有效吗", "hook": "利率环境变了 老规则也得改", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["资产配置"], "keywords": "60/40, 资产配置"},
+            {"title": "止损为什么这么重要 但散户为什么做不到", "hook": "你的大脑天生抗拒认错", "level": "需要点底子", "intent": "引发共鸣", "audience": "完全小白", "angles": ["止损"], "keywords": "止损, 散户心理"},
+            {"title": "黑天鹅事件怎么提前防 不是预测是布防", "hook": "不知道什么时候来 但能提前买保险", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["保险", "黑天鹅"], "keywords": "黑天鹅, 风险管理"},
+            {"title": "收益是看出来的 风险是事后承认的", "hook": "有些风险 没暴露之前你以为不存在", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["黑天鹅"], "keywords": "风险, 投资心态"}
+          ]
+        },
+        {
+          "id": "behavioral_finance",
+          "name": "行为金融",
+          "emoji": "🧠",
+          "one_liner": "你以为是市场不理性 其实是你不理性",
+          "scenes": ["FOMO", "锚定", "羊群", "处置效应", "过度自信", "认知偏误"],
+          "topics": [
+            {"title": "FOMO 心态怎么把你变成接盘侠", "hook": "怕错过比真的错过更致命", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["FOMO"], "keywords": "FOMO, 追高"},
+            {"title": "锚定效应 你的心理价位是怎么被骗的", "hook": "买价不是真理 是回忆", "level": "人人能懂", "intent": "搞懂概念", "audience": "有点基础", "angles": ["锚定"], "keywords": "锚定效应, 心理价位"},
+            {"title": "损失厌恶 你为什么死扛亏损股不肯割", "hook": "亏 100 比赚 100 难受三倍", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["处置效应"], "keywords": "损失厌恶, 行为金融"},
+            {"title": "处置效应 散户为什么赚一点就跑亏一堆才走", "hook": "你卖错了 不是卖晚了", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["处置效应"], "keywords": "处置效应, 散户"},
+            {"title": "过度自信 牛市后期最危险的心理状态", "hook": "三次连胜你会觉得自己是股神", "level": "需要点底子", "intent": "引发共鸣", "audience": "有点基础", "angles": ["过度自信"], "keywords": "过度自信, 牛市"},
+            {"title": "羊群效应 为什么人多的地方一定要躲", "hook": "集体智商 = 个体智商 ÷ 人数", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["羊群"], "keywords": "羊群效应, 散户"},
+            {"title": "为什么 90% 的人赚不到认知之外的钱", "hook": "市场只奖赏看得懂的人", "level": "需要点底子", "intent": "引发共鸣", "audience": "有点基础", "angles": ["认知偏误"], "keywords": "认知, 投资心理"},
+            {"title": "确认偏误 你只看支持自己想法的信息", "hook": "这不是开放思维 这是回音壁", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["认知偏误"], "keywords": "确认偏误"},
+            {"title": "后视镜偏误 涨完了人人都说自己看到了", "hook": "事后诸葛亮是大脑默认设置", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["认知偏误"], "keywords": "后视镜偏误"},
+            {"title": "散户为什么总在山顶买在山底卖", "hook": "K 线图不是地图 是人性的镜子", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["FOMO", "处置效应"], "keywords": "散户, 追涨杀跌"}
+          ]
+        },
+        {
+          "id": "real_estate",
+          "name": "房地产经济",
+          "emoji": "🏠",
+          "one_liner": "中国家庭最大的资产坑也最大的财富",
+          "scenes": ["房贷", "限购", "土地财政", "租金", "投资", "房产税"],
+          "topics": [
+            {"title": "房贷三十年到底多还了多少利息", "hook": "买房送银行一套房", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["房贷"], "keywords": "房贷, 利息"},
+            {"title": "土地财政是什么 为什么地方政府离不开", "hook": "地方钱袋子 60% 来自卖地", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["土地财政"], "keywords": "土地财政, 地方政府"},
+            {"title": "限购为什么没让房价降反而越限越涨", "hook": "饥饿营销做到了极致", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["限购"], "keywords": "限购, 房价"},
+            {"title": "提前还房贷划不划算 不是省利息那么简单", "hook": "看的不是利率 是机会成本", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["房贷"], "keywords": "提前还贷, 机会成本"},
+            {"title": "公积金到底是福利还是给银行打工", "hook": "你的钱在帮别人贷款赚利息", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["房贷"], "keywords": "公积金"},
+            {"title": "大城市房租为什么永远赶不上房价", "hook": "房子是金融品 房租才是商品价", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["租金"], "keywords": "房租, 房价"},
+            {"title": "日本房价跌了 30 年 中国会一样吗", "hook": "人口利率政策 三个开关同时关", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["投资"], "keywords": "日本房产, 人口"},
+            {"title": "买房 vs 租房 30 年后谁更有钱", "hook": "数学不会骗人 前提是算对所有变量", "level": "人人能懂", "intent": "学会操作", "audience": "有点基础", "angles": ["投资", "租金"], "keywords": "买房租房"},
+            {"title": "房产税真的来了 普通家庭怎么办", "hook": "持有成本变了 多套房不再是稳赚", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["房产税", "投资"], "keywords": "房产税"},
+            {"title": "二三线城市的房子还能买吗 三个判断标准", "hook": "看人口流入 看产业 看政府债", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["投资"], "keywords": "三线城市, 房产投资"}
+          ]
+        },
+        {
+          "id": "money_essence",
+          "name": "货币本质",
+          "emoji": "💵",
+          "one_liner": "钱到底是什么 它怎么从黄金变成今天的样子",
+          "scenes": ["法币", "数字货币", "信用", "金本位", "央行", "稳定币"],
+          "topics": [
+            {"title": "钱到底是什么 货币演化简史", "hook": "从贝壳到比特币 钱越来越虚", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["信用"], "keywords": "货币, 货币史"},
+            {"title": "美元怎么成了世界货币 1971 年那场革命", "hook": "跟黄金脱钩之后 信用就成了一切", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["信用", "金本位"], "keywords": "美元, 布雷顿森林"},
+            {"title": "法币的本质就是国家信用 它能崩吗", "hook": "委内瑞拉津巴布韦给了答案", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["法币"], "keywords": "法币, 国家信用"},
+            {"title": "比特币是货币吗 还是另一种黄金", "hook": "它解决信任问题 但还没成为支付货币", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["数字货币"], "keywords": "比特币"},
+            {"title": "央行数字货币 CBDC 和支付宝有什么区别", "hook": "一个是法币本身 一个是法币的代金券", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["数字货币"], "keywords": "CBDC, 数字货币"},
+            {"title": "美元霸权怎么从黄金转到信用的", "hook": "1971 年是金融史的分水岭", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["信用", "金本位"], "keywords": "美元霸权, 布雷顿森林"},
+            {"title": "印钞为什么不会立刻通胀 钱去哪了", "hook": "M0 M1 M2 不在同一个池子", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["央行"], "keywords": "货币层次, M2"},
+            {"title": "稳定币 USDT 真的稳定吗", "hook": "它说锚定美元 但你不知道它真有美元", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["数字货币", "稳定币"], "keywords": "稳定币"},
+            {"title": "黄金还能不能当世界货币", "hook": "已经不是货币了 但还是央行的备胎", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["金本位"], "keywords": "黄金, 货币"},
+            {"title": "一种货币的崩溃是怎么发生的", "hook": "三个共振信号 谁中了都跑不掉", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["法币"], "keywords": "货币崩溃"}
+          ]
+        },
+        {
+          "id": "global_cycle",
+          "name": "全球经济周期",
+          "emoji": "🌍",
+          "one_liner": "资本在国家之间流动的潮汐表",
+          "scenes": ["美元周期", "贸易", "汇率", "新兴市场", "地缘", "出口"],
+          "topics": [
+            {"title": "美元加息全球新兴市场为什么先遭殃", "hook": "钱从弱国回美国 是历史规律", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["美元周期", "新兴市场"], "keywords": "美元周期, 新兴市场"},
+            {"title": "一个完整美元周期 7 到 10 年的潮汐", "hook": "强美元放贷 弱美元收割", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["美元周期"], "keywords": "美元周期"},
+            {"title": "中美贸易战为什么打不死中国", "hook": "全球供应链早已你中有我", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["贸易"], "keywords": "中美贸易战"},
+            {"title": "日元为什么是避险货币 反常识但有逻辑", "hook": "危机时全世界资金都先回日本", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["汇率"], "keywords": "日元, 避险"},
+            {"title": "拉美陷阱怎么形成的 三十年没翻身", "hook": "美元周期里的固定受害者", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["新兴市场", "美元周期"], "keywords": "拉美陷阱"},
+            {"title": "人民币国际化进展到哪一步了", "hook": "离世界货币还差三步 但已经在路上", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["汇率"], "keywords": "人民币国际化"},
+            {"title": "全球供应链转移 越南印度真能取代中国吗", "hook": "制造业升级不是搬家这么简单", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["贸易", "出口"], "keywords": "供应链转移"},
+            {"title": "地缘冲突一打 油价为什么飙", "hook": "战争溢价 三十年没变过", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["地缘"], "keywords": "油价, 地缘政治"},
+            {"title": "欧元为什么注定先天不足", "hook": "货币统一 财政各自为战 危机时就崩", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["汇率"], "keywords": "欧元"},
+            {"title": "一国货币贬值对老百姓到底意味着什么", "hook": "出口好 进口贵 你的工资被相对剪一刀", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["汇率", "出口"], "keywords": "货币贬值"}
+          ]
+        },
+        {
+          "id": "financial_crisis",
+          "name": "金融危机",
+          "emoji": "📉",
+          "one_liner": "历史上的崩盘机制 看清规律才能躲开",
+          "scenes": ["2008", "日本", "拉美", "亚洲", "次贷", "大萧条"],
+          "topics": [
+            {"title": "2008 金融危机到底怎么爆发的 三步讲明白", "hook": "房贷 衍生品 雷曼 一根多米诺", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["2008", "次贷"], "keywords": "2008金融危机"},
+            {"title": "雷曼为什么不被救 那一夜决定了世界", "hook": "救与不救都是错 但不救后果更大", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["2008"], "keywords": "雷曼兄弟"},
+            {"title": "次贷危机里的 CDO 到底是什么妖怪", "hook": "100 个垃圾贷款打包 评级居然 AAA", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["次贷"], "keywords": "CDO, 次贷危机"},
+            {"title": "日本失落三十年是怎么开始的", "hook": "1989 年那个圣诞节 全球泡沫之王", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["日本"], "keywords": "日本泡沫"},
+            {"title": "1997 亚洲金融风暴 索罗斯到底是不是元凶", "hook": "元凶不是他 但他是放火的人", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["亚洲"], "keywords": "亚洲金融危机, 索罗斯"},
+            {"title": "危机来之前总有 4 个共同信号", "hook": "利率倒挂 房价见顶 私募爆雷 流动性紧", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["2008", "日本"], "keywords": "金融危机, 预警信号"},
+            {"title": "1929 大萧条为什么打了十年", "hook": "那时候央行还不知道自己该印钞", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["大萧条"], "keywords": "大萧条"},
+            {"title": "拉美八十年代债务危机 美元强势那一刀", "hook": "借美元还美元 美元一涨债务翻倍", "level": "专业向", "intent": "探讨影响", "audience": "进阶用户", "angles": ["拉美"], "keywords": "拉美债务危机"},
+            {"title": "中国会不会爆发金融危机 三个安全垫", "hook": "资本管制 国有银行 高储蓄率", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["亚洲"], "keywords": "中国金融, 系统性风险"},
+            {"title": "危机里普通人怎么自救 三件事", "hook": "不加杠杆 不全押 留够现金", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["2008"], "keywords": "危机, 个人理财"}
+          ]
+        },
+        {
+          "id": "hedging",
+          "name": "保险与对冲",
+          "emoji": "🛡️",
+          "one_liner": "风险定价的另一面 不是赌赢是不输",
+          "scenes": ["重疾险", "期货", "期权", "外汇对冲", "国债", "黄金"],
+          "topics": [
+            {"title": "重疾险条款里 80% 的字 是为了不赔你", "hook": "销售只讲赔的部分 不讲不赔的部分", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["重疾险"], "keywords": "重疾险, 保险条款"},
+            {"title": "保险公司到底靠什么赚钱", "hook": "不是赚保费 是赚保费的投资收益", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["重疾险"], "keywords": "保险公司, 商业模式"},
+            {"title": "寿险定价的核心是什么 一个数学游戏", "hook": "大数法则 + 死亡率表 = 你的保费", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["重疾险"], "keywords": "寿险, 大数法则"},
+            {"title": "期货的本质是定价权 不是投机工具", "hook": "农民锁价格 工厂锁原料 谁都不亏", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["期货"], "keywords": "期货, 套保"},
+            {"title": "期权是怎么把风险拆开卖的", "hook": "你买的是权利不买的权利 听起来绕但实用", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["期权"], "keywords": "期权, 风险对冲"},
+            {"title": "跨国公司为什么要做外汇对冲", "hook": "不对冲一笔订单可能因汇率赔钱", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["外汇对冲"], "keywords": "外汇对冲"},
+            {"title": "国债为什么是无风险资产的代表", "hook": "因为它后面是国家信用", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["国债"], "keywords": "国债, 无风险"},
+            {"title": "重疾百万医疗意外三件套到底怎么配", "hook": "不是越多越好 是不重叠最重要", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["重疾险"], "keywords": "保险配置"},
+            {"title": "黄金期货才是黄金的真实价格", "hook": "实物 ETF 期货 其实在博弈一个数", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["期货", "黄金"], "keywords": "黄金期货"},
+            {"title": "CDS 信用违约掉期 谁在赔谁在赚", "hook": "它就是给债券买的保险", "level": "专业向", "intent": "搞懂概念", "audience": "进阶用户", "angles": ["期权"], "keywords": "CDS, 信用违约"}
+          ]
+        },
+        {
+          "id": "personal_finance",
+          "name": "个人财务",
+          "emoji": "💼",
+          "one_liner": "普通人的钱怎么管 才不会被生活割韭菜",
+          "scenes": ["攒钱", "记账", "退休", "税", "保险", "房贷"],
+          "topics": [
+            {"title": "月薪 1 万 35 岁攒到 100 万 数学算给你看", "hook": "不是省 是配置加复利", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["攒钱", "退休"], "keywords": "储蓄率, 复利"},
+            {"title": "三个账户法 应急钱投资钱花销钱", "hook": "一笔钱混着花是大多数人破产的开始", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["攒钱"], "keywords": "三账户法, 财务规划"},
+            {"title": "应急金到底要存多少才够", "hook": "看你的工作稳定性 不看你的资产", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["攒钱"], "keywords": "应急金"},
+            {"title": "个人所得税起征点之外的省税技巧", "hook": "专项附加扣除你都用了吗", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["税"], "keywords": "个税, 专项扣除"},
+            {"title": "普通人真的需要私人理财顾问吗", "hook": "1% 服务费 三十年吃掉你 30% 收益", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["攒钱"], "keywords": "理财顾问, 费用"},
+            {"title": "35 岁退休不是理想 是数学问题", "hook": "FIRE 算法 25 倍年支出就够了", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["退休"], "keywords": "FIRE, 退休规划"},
+            {"title": "记账的关键不是省钱 是看清钱去哪了", "hook": "80% 的人不知道自己每月花了什么", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["记账"], "keywords": "记账, 消费"},
+            {"title": "月供不该超过收入 30% 这数怎么来的", "hook": "留 70% 给意外才是健康财务", "level": "人人能懂", "intent": "学会操作", "audience": "完全小白", "angles": ["攒钱", "房贷"], "keywords": "月供, 财务规划"},
+            {"title": "给自己多发一份私人养老金靠谱吗", "hook": "个人养老金账户的税收优惠 用不用差很多", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["退休", "税"], "keywords": "个人养老金"},
+            {"title": "小孩教育金到底要不要单独存 怎么存", "hook": "时间长 利率重要 但流动性不能锁死", "level": "需要点底子", "intent": "学会操作", "audience": "有点基础", "angles": ["攒钱"], "keywords": "教育金"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "health",
+      "name": "健康（暂未开放）",
+      "emoji": "🩺",
+      "active": false,
+      "concepts": []
+    },
+    {
+      "id": "career",
+      "name": "职场（暂未开放）",
+      "emoji": "💼",
+      "active": false,
+      "concepts": []
+    }
+  ]
+}

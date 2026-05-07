@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import json as _json
 import sys as _sys
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in _sys.path:
@@ -1352,6 +1353,25 @@ async def api_topic_pool(video_id: str):
     pool = _state.load_project_topic_pool(video_id) or []
     picked = _state.load_project_topic(video_id)
     return JSONResponse({"pool": pool, "picked": picked})
+
+
+# ── 灵感市集 · 题材库 ──
+_TOPIC_LIB_PATH = Path(__file__).resolve().parent.parent / "config" / "topic_library.json"
+
+
+def _load_topic_library() -> dict:
+    """读取并返回题材库 JSON。文件不存在时返回空骨架。"""
+    if not _TOPIC_LIB_PATH.exists():
+        return {"version": 0, "domains": []}
+    try:
+        return _json.loads(_TOPIC_LIB_PATH.read_text(encoding="utf-8"))
+    except _json.JSONDecodeError:
+        return {"version": 0, "domains": [], "error": "topic_library.json 解析失败"}
+
+
+@app.get("/api/topic_library")
+async def api_topic_library():
+    return JSONResponse(_load_topic_library())
 
 
 @app.post("/api/topic/pick")
