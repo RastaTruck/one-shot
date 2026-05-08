@@ -14,26 +14,46 @@ from pipeline.tools import llm_client
 Target = Literal["seedream", "seedance", "vidu"]
 
 
-# [AI-NOTE] 2026-05-08: 首帧"参考图 + 主题 + 用户描述"三方融合的 system prompt，
-# 与单纯文本改写场景不同——这里要让 Gemini 真正"看"参考图（构图/色调/物体/光线），
-# 再融合主题和用户描述提炼一段 Seedream prompt。
-_FIRST_FRAME_FUSION_SYSTEM = """你是 AI 视频首帧的视觉总监 + 提示词专家。
+# [AI-NOTE] 2026-05-08 重构：参考图按角色分配（不再统一糅合）。
+# 每张图带一个 role 标签：content/texture/style/palette/composition
+# Gemini 按角色精确分解 → 只把该图的对应维度信号融进最终 prompt。
+_FIRST_FRAME_FUSION_SYSTEM = """你是 AI 视频首帧的视觉总监 + Doubao Seedream prompt 专家。
 
 输入会包含：
 1. 主题文本（视频的故事走向）
 2. 用户对首帧的补充描述（可能为空 → 完全跟随主题）
-3. N 张参考图（1-5 张，承载用户期待的视觉语言）
+3. N 张参考图（1-5 张），每张图都标注了一个明确的"角色"：
+   - 📐 content（内容）：决定主体是什么、在做什么。**保留主体形态**，不要换成别的物体。
+   - 🎨 texture（材质）：仅借用其表面材质质感（毛绒/瓷器/水晶/纸艺/金属/木质...），
+     应用到 content 主体上。**不要把这张图里的物体引入画面**。
+   - ✨ style（风格）：决定整体画风（写实/3D/插画/水墨/油画/像素风...）。
+     不要引入这张图里的具体物体或主体。
+   - 🌈 palette（色调）：仅借用主色调与光线方向。不引入物体。
+   - 📷 composition（构图）：仅借用镜头景别/视角/留白结构。不引入物体或风格。
 
-任务：把这三方融合成一段 Doubao Seedream 模型喜欢的中文图像提示词。
+任务：按每张图的角色精确分解，组合成一段中文 Seedream prompt。
 
-要求：
-- 先看参考图：提炼出共有的构图特征 / 色调氛围 / 主体特征 / 光线风格
-- 主题决定故事内容（画什么），参考图决定视觉风格（怎么画）
-- 用户的补充描述优先级最高（如有冲突，听用户的）
-- 输出一段 80-180 个汉字的中文 prompt，覆盖：主体特征 + 动作姿态 + 环境时空 + 光线氛围 + 构图视角 + 主色调 + 风格定位
-- 不要逐条列出"主体: xxx, 环境: xxx"，要写成自然流畅的画面描述
+关键规则：
+- 多张图各司其职：content 决定"画什么"，其他角色仅注入对应维度的信号
+- 例：图1=content（小熊和兔子），图2=texture（毛绒材质）→ prompt 里写
+  "毛绒玩偶质感的小熊和小兔子"，**不要**把图2 里的物体（比如面包）引进来
+- 主题文本决定故事走向，参考图角色决定视觉细节
+- 用户补充描述优先级最高（如有冲突，听用户的）
+
+输出要求：
+- 中文，80-180 个汉字
+- 自然流畅的画面描述，不要分条列"主体: xxx, 材质: xxx"
 - 直接输出 prompt 文本，无前缀/引号/解释
-- 不要写"参考图风格"这类元描述（描述视觉本身，不描述参考关系）"""
+- 不要写"参考图1""根据图2"等元描述——描述最终画面本身"""
+
+
+_ROLE_LABELS = {
+    "content":     ("📐 content", "决定主体是什么、做什么；保留主体形态"),
+    "texture":     ("🎨 texture", "借用表面材质质感，应用到 content 主体"),
+    "style":       ("✨ style",   "决定整体画风（不引入具体物体）"),
+    "palette":     ("🌈 palette", "借用主色调与光线方向（不引入物体）"),
+    "composition": ("📷 composition", "借用景别/视角/留白结构"),
+}
 
 
 SYSTEM_PROMPTS: dict[str, str] = {
@@ -102,16 +122,30 @@ def fuse_first_frame_prompt(
     theme: str,
     user_desc: str,
     reference_images: list[dict[str, str]],
+    *,
+    reference_roles: Optional[list[str]] = None,
 ) -> Optional[str]:
-    """[AI-NOTE] 2026-05-08: 首帧三方融合——看图 + 看主题 + 看用户描述 → 输出 Seedream prompt。
+    """[AI-NOTE] 2026-05-08: 首帧三方融合——按角色看图 + 看主题 + 看用户描述 → Seedream prompt。
 
     reference_images: 至多 5 张 [{"mimeType": "image/jpeg", "data": "<base64>"}, ...]
-    返回精准 prompt 文本；失败返回 None（调用方应 fallback）。
+    reference_roles : 与 reference_images 一一对应；不传或对应位 None 默认 'content'
+                       合法值：content / texture / style / palette / composition
+    返回精准 prompt 文本；失败返回 None（调用方 fallback）。
     """
     theme = (theme or "").strip()
     user_desc = (user_desc or "").strip()
     if not theme and not user_desc and not reference_images:
         return None
+
+    # 每张图的角色对齐
+    n = len(reference_images)
+    roles: list[str] = []
+    if reference_roles:
+        for i in range(n):
+            r = reference_roles[i] if i < len(reference_roles) else None
+            roles.append(r if r in _ROLE_LABELS else "content")
+    else:
+        roles = ["content"] * n
 
     parts = []
     if theme:
@@ -120,13 +154,18 @@ def fuse_first_frame_prompt(
         parts.append(f"【用户对首帧的补充描述】{user_desc}")
     else:
         parts.append("【用户对首帧的补充描述】（用户未填，请完全跟随主题）")
+
     if reference_images:
-        parts.append(f"【参考图】共 {len(reference_images)} 张，请结合它们的视觉语言。")
+        ref_lines = [f"【参考图】共 {n} 张，每张的角色见下："]
+        for i, role in enumerate(roles, start=1):
+            label, hint = _ROLE_LABELS[role]
+            ref_lines.append(f"  · 图{i} 角色={label}（{hint}）")
+        parts.append("\n".join(ref_lines))
     else:
         parts.append("【参考图】无（请仅按主题想象画面）。")
-    user_msg = "\n\n".join(parts) + "\n\n请输出 Seedream 首帧 prompt："
 
-    # Pro 模型对多图融合理解更强，但响应也慢一点；这里用 Pro 因为首帧出图本就慢，多 3-5s 可接受
+    user_msg = "\n\n".join(parts) + "\n\n请按上面每张图的角色精确分配它们的影响范围，输出 Seedream 首帧 prompt："
+
     result = llm_client.call_gemini_multimodal_text(
         _FIRST_FRAME_FUSION_SYSTEM,
         user_msg,

@@ -276,17 +276,30 @@
     <!-- 参考图区 -->
     <div class="mb-4">
       <label class="block text-[12px] font-bold text-ink-700 mb-2">
-        参考图 <span class="text-ink-400 font-normal">（最多 5 张，Gemini 会综合所有图的视觉语言）</span>
+        参考图 <span class="text-ink-400 font-normal">（最多 5 张 · 给每张图选个角色，Gemini 按角色分别使用：内容=画什么 / 材质=用什么质感 / 风格=画风 / 色调 / 构图）</span>
       </label>
 
-      <div class="flex gap-2 flex-wrap mb-3" x-show="refs.length > 0" x-cloak>
-        <template x-for="r in refs" :key="r.id">
-          <div class="relative group">
-            <div class="w-24 h-24 rounded-lg overflow-hidden border-2 border-ink-200">
-              <img :src="r.url" class="w-full h-full object-cover">
+      <div class="flex gap-3 flex-wrap mb-3" x-show="refs.length > 0" x-cloak>
+        <template x-for="(r, idx) in refs" :key="r.id">
+          <div class="flex flex-col items-center">
+            <div class="relative">
+              <div class="w-24 h-24 rounded-lg overflow-hidden border-2 border-ink-200">
+                <img :src="r.url" class="w-full h-full object-cover">
+              </div>
+              <span class="absolute top-0.5 left-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-ink-900/70 text-white">
+                图<span x-text="idx + 1"></span>
+              </span>
+              <button @click="removeRef(r.id)"
+                      class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[12px] font-bold flex items-center justify-center shadow">×</button>
             </div>
-            <button @click="removeRef(r.id)"
-                    class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[12px] font-bold flex items-center justify-center shadow">×</button>
+            <select x-model="r.role" @change="saveRefRole(r)"
+                    class="mt-1.5 w-24 px-1 py-0.5 rounded border border-ink-200 focus:border-blue-400 focus:outline-none text-[11px] font-bold bg-white">
+              <option value="content">📐 内容</option>
+              <option value="texture">🎨 材质</option>
+              <option value="style">✨ 风格</option>
+              <option value="palette">🌈 色调</option>
+              <option value="composition">📷 构图</option>
+            </select>
           </div>
         </template>
       </div>
@@ -647,7 +660,7 @@ function outhanTopicAndFirstFrame() {
           throw new Error(d.error || `HTTP ${res.status}`);
         }
         const d = await res.json();
-        this.refs.push({id: d.id, url: d.url, source: 'upload'});
+        this.refs.push({id: d.id, url: d.url, source: 'upload', role: 'content'});
       } catch (e) {
         this.error = e.message || String(e);
       } finally {
@@ -661,6 +674,18 @@ function outhanTopicAndFirstFrame() {
         this.refs = this.refs.filter(r => r.id !== assetId);
       } catch (e) {
         this.error = e.message || String(e);
+      }
+    },
+
+    async saveRefRole(r) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/reference/${r.id}/role`, {
+          method:'PATCH',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({role: r.role}),
+        });
+      } catch (e) {
+        this.error = `角色保存失败：${e.message || e}`;
       }
     },
 

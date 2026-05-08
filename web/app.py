@@ -1044,7 +1044,8 @@ async def project_outhan_topic(request: Request, video_id: str):
         refs.append({
             "id": a["id"],
             "url": f"/api/outhan/{video_id}/asset/{a['id']}",
-            "source": meta.get("source") or "upload",  # 只有 upload；之前的 pexels 来源已废弃
+            "source": meta.get("source") or "upload",
+            "role": meta.get("role") or "content",  # [AI-NOTE] 默认 content（兼容老数据）
         })
     candidates = []
     for a in _outhan_storage.list_assets(video_id, "first_frame"):
@@ -1277,6 +1278,38 @@ async def api_outhan_asset_delete(video_id: str, asset_id: str):
     return JSONResponse({"ok": True})
 
 
+# [AI-NOTE] 2026-05-08: 参考图角色 PATCH——content/texture/style/palette/composition
+# 改的是 outhan_assets[i].metadata.role；不影响图本身或 first_frame 关系
+@app.patch("/api/outhan/{video_id}/reference/{asset_id}/role")
+async def api_outhan_reference_role(video_id: str, asset_id: str, request: Request):
+    body = await request.json()
+    role = (body.get("role") or "content").strip()
+    if role not in {"content", "texture", "style", "palette", "composition"}:
+        return JSONResponse({"error": f"非法 role: {role}"}, status_code=400)
+    from pipeline import state as _st
+    rec = _st.get_video(video_id)
+    if rec is None:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    import json as _json
+    import time as _time
+    meta = dict(rec.meta) if rec.meta else {}
+    found = False
+    for a in meta.get("outhan_assets", []):
+        if a.get("id") == asset_id and a.get("type") == "reference":
+            a.setdefault("metadata", {})
+            a["metadata"]["role"] = role
+            found = True
+            break
+    if not found:
+        return JSONResponse({"error": "参考图不存在"}, status_code=404)
+    with _st.get_conn() as conn:
+        conn.execute(
+            "UPDATE videos SET meta_json = ?, updated_at = ? WHERE video_id = ?",
+            (_json.dumps(meta, ensure_ascii=False), _time.time(), video_id),
+        )
+    return JSONResponse({"ok": True, "role": role})
+
+
 @app.get("/api/outhan/{video_id}/asset/{asset_id}")
 async def api_outhan_asset_serve(video_id: str, asset_id: str):
     from fastapi.responses import Response as _Response
@@ -1381,8 +1414,12 @@ async def api_outhan_generate_first_frame(video_id: str, request: Request):
     ref_ids = [str(x) for x in ref_ids if x][:5]  # 上限 5 张
     size = body.get("size") or "2K"
 
-    # 加载参考图为 base64 inline
+    # 加载参考图为 base64 inline，同时按相同顺序收集 role 标签
+    # [AI-NOTE] 2026-05-08: role ∈ {content, texture, style, palette, composition}
+    # 默认 content；图按上传顺序传给 Gemini，图1/图2/图3 含义自然对齐
+    _ALLOWED_ROLES = {"content", "texture", "style", "palette", "composition"}
     ref_media: list[dict[str, str]] = []
+    ref_roles: list[str] = []
     for rid in ref_ids:
         a = _outhan_storage.get_asset(video_id, rid)
         if not a:
@@ -1393,6 +1430,9 @@ async def api_outhan_generate_first_frame(video_id: str, request: Request):
             mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                     "webp": "image/webp"}.get(ext, "image/jpeg")
             ref_media.append({"mimeType": mime, "data": _b64.b64encode(raw).decode("ascii")})
+            meta = a.get("metadata") or {}
+            r = meta.get("role") or "content"
+            ref_roles.append(r if r in _ALLOWED_ROLES else "content")
         except Exception:
             continue
 
@@ -1402,8 +1442,10 @@ async def api_outhan_generate_first_frame(video_id: str, request: Request):
         # 旧路径：用户已经手写好 prompt（覆盖一切）
         actual_prompt = legacy_prompt
     elif ref_media:
-        # 新路径：参考图 + 主题 + 用户描述 → Gemini 多模态融合
-        fused_prompt = _enhancer.fuse_first_frame_prompt(theme, user_desc, ref_media)
+        # 新路径：参考图 + 主题 + 用户描述 → Gemini 按角色分配 + 融合
+        fused_prompt = _enhancer.fuse_first_frame_prompt(
+            theme, user_desc, ref_media, reference_roles=ref_roles
+        )
         actual_prompt = fused_prompt or (
             f"{theme}。{user_desc}".rstrip("。") if user_desc else theme
         )
