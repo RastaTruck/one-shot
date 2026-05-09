@@ -4,6 +4,10 @@ config/.env
 .env.*
 !.env.example
 
+# Outhan 用户私有数据（voice ID 偏好等，每个用户的私有配置不入库）
+config/user_voices.json
+data/outhan_last_report.txt
+
 # Python
 __pycache__/
 *.py[cod]

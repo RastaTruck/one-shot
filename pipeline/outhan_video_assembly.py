@@ -121,12 +121,21 @@ def assemble_mp4(
     _log(f"视频类型：{'纯画面（无配音）' if is_silent else '有对白（含配音）'}")
 
     # 输入校验
+    # [AI-NOTE] 2026-05-08: dialogue 模式下每段需要至少一条带音频的 line（lines[].audio_asset_id）
+    # 或老 schema 的 segment.audio_asset_id；纯静默段（无 lines 也无 script）报错
     for s in segs:
         idx = s.get("index", -1)
         if not s.get("video_asset_id"):
             return _err("input", f"段 {idx + 1} 缺视频", log, fail_index=idx)
-        if not is_silent and not s.get("audio_asset_id"):
-            return _err("input", f"段 {idx + 1} 缺音频", log, fail_index=idx)
+        if not is_silent:
+            lines = s.get("lines") or []
+            has_line_audio = any(ln.get("audio_asset_id") for ln in lines)
+            has_legacy_audio = bool(s.get("audio_asset_id"))
+            if not has_line_audio and not has_legacy_audio:
+                return _err(
+                    "input", f"段 {idx + 1} 没有任何音频（lines 全空或全未合成）",
+                    log, fail_index=idx,
+                )
 
     tmp_dir = _outhan_storage.project_dir(project_id) / "_assembly_tmp"
     if tmp_dir.exists():
@@ -168,77 +177,95 @@ def assemble_mp4(
             final_tmp = videos_only
             total_duration = video_total
         else:
-            # 步骤 3：concat 音频
-            audio_paths: list[Path] = []
-            for s in segs:
-                audio_asset = _outhan_storage.get_asset(project_id, s["audio_asset_id"])
-                if not audio_asset:
-                    return _err(
-                        "input", f"段 {s['index'] + 1} 音频资源缺失",
-                        log, fail_index=s["index"],
-                    )
-                audio_paths.append(Path(audio_asset["path"]))
-            audio_only = tmp_dir / "audio_only.mp3"
-            r = _concat_files(audio_paths, audio_only, "alist")
-            if not r.get("ok"):
-                return _err("ffmpeg", f"音频 concat 失败：{r.get('stderr', '')[:300]}", log)
-            audio_total = _media_duration_via_ffmpeg(audio_only) or 0
-            _log(f"音频 concat 完成，总时长 {audio_total:.2f}s")
+            # [AI-NOTE] 2026-05-08 重写：每段独立 mux 它的 lines（按 start_at adelay + amix），
+            # 然后再 concat 已带音频的段视频。这样 line 间静默由 adelay 保证，段间衔接由
+            # video_total 决定，不再 concat 单一 audio 流。
 
-            # 步骤 4：音频长 → 用 tpad 克隆最后一帧补齐视频；视频长 → 末尾静音播放
-            gap = audio_total - video_total
-            if gap > 0.05:
-                extended = tmp_dir / "videos_extended.mp4"
-                cmd = [
-                    bin_, "-hide_banner", "-loglevel", "error", "-y",
-                    "-i", str(videos_only),
-                    "-vf", f"tpad=stop_mode=clone:stop_duration={gap:.2f}",
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                    "-pix_fmt", "yuv420p",
-                    str(extended),
+            seg_with_audio: list[Path] = []
+            for i, s in enumerate(segs):
+                idx = s["index"]
+                norm_video = norm_videos[i]
+                seg_duration = float(s.get("duration") or _media_duration_via_ffmpeg(norm_video) or 5)
+
+                # [AI-NOTE] 2026-05-08: 优先用段级 audio（整段连贯合成的结果，最理想）；
+                # 没有再回退到 line 级 amix（多角色场景）
+                line_inputs: list[tuple[Path, int]] = []  # (audio_path, delay_ms)
+                if s.get("audio_asset_id"):
+                    # ✨ 整段一次合成模式：单条 mp3 从段头开始，音质连贯
+                    asset = _outhan_storage.get_asset(project_id, s["audio_asset_id"])
+                    if asset:
+                        line_inputs.append((Path(asset["path"]), 0))
+                else:
+                    # 多角色 / 逐行模式：按 line 收集，按 start_at adelay
+                    lines = sorted(
+                        [ln for ln in (s.get("lines") or []) if ln.get("audio_asset_id")],
+                        key=lambda ln: float(ln.get("start_at") or 0),
+                    )
+                    for ln in lines:
+                        asset = _outhan_storage.get_asset(project_id, ln["audio_asset_id"])
+                        if not asset:
+                            continue
+                        sa_ms = max(0, int(round(float(ln.get("start_at") or 0) * 1000)))
+                        line_inputs.append((Path(asset["path"]), sa_ms))
+
+                if not line_inputs:
+                    # 不应到这里（前面已校验），保险报错
+                    return _err(
+                        "input", f"段 {idx + 1} 没有可混入的音频",
+                        log, fail_index=idx,
+                    )
+
+                out_seg = tmp_dir / f"seg-{idx:02d}-mux.mp4"
+                # 构造 ffmpeg 命令：1 个视频输入 + N 个音频输入 + filter_complex
+                cmd = [bin_, "-hide_banner", "-loglevel", "error", "-y",
+                       "-i", str(norm_video)]
+                for ap, _ in line_inputs:
+                    cmd += ["-i", str(ap)]
+
+                # filter graph：每条音频 adelay=ms|ms（双声道）→ 全部 amix → apad 至段长
+                fparts: list[str] = []
+                for j, (_, sa_ms) in enumerate(line_inputs):
+                    fparts.append(f"[{j+1}:a]adelay={sa_ms}|{sa_ms}[a{j}]")
+                if len(line_inputs) == 1:
+                    # 单条无需 amix，直接 apad
+                    fparts.append(f"[a0]apad=whole_dur={seg_duration:.2f}[aout]")
+                else:
+                    mix_inputs = "".join(f"[a{j}]" for j in range(len(line_inputs)))
+                    n = len(line_inputs)
+                    fparts.append(
+                        f"{mix_inputs}amix=inputs={n}:duration=longest:dropout_transition=0,"
+                        f"apad=whole_dur={seg_duration:.2f}[aout]"
+                    )
+                filter_complex = ";".join(fparts)
+
+                cmd += [
+                    "-filter_complex", filter_complex,
+                    "-map", "0:v", "-map", "[aout]",
+                    "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-t", f"{seg_duration:.2f}",  # 强制 mux 出段长，避免音频拖长视频
+                    str(out_seg),
                 ]
                 try:
                     rr = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                     if rr.returncode != 0:
                         return _err(
                             "ffmpeg",
-                            f"视频末尾补帧失败：{(rr.stderr or '')[-300:]}",
-                            log,
+                            f"段 {idx + 1} mux 失败：{(rr.stderr or '')[-300:]}",
+                            log, fail_index=idx,
                         )
                 except Exception as e:
-                    return _err("ffmpeg", f"视频末尾补帧异常：{e}", log)
-                video_input = extended
-                _log(f"音频比视频长 {gap:.2f}s，已用最后一帧延展视频")
-            else:
-                video_input = videos_only
-                if abs(gap) < 0.05:
-                    _log(f"视频音频时长几乎相等（差 {abs(gap):.2f}s），无需补齐")
-                else:
-                    _log(f"视频比音频长 {-gap:.2f}s，结尾静音播放")
+                    return _err("ffmpeg", f"段 {idx + 1} mux 异常：{e}", log, fail_index=idx)
+                _log(f"段 {idx + 1}: mux {len(line_inputs)} 条 line（段长 {seg_duration:.1f}s）")
+                seg_with_audio.append(out_seg)
 
-            # 步骤 5：mux 视频流 + 音频流 → final.mp4
+            # 步骤 4：concat 已带音频的段视频
             final_tmp = tmp_dir / "final.mp4"
-            cmd = [
-                bin_, "-hide_banner", "-loglevel", "error", "-y",
-                "-i", str(video_input),
-                "-i", str(audio_only),
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy",
-                "-c:a", "aac", "-b:a", "128k",
-                str(final_tmp),
-            ]
-            try:
-                rr = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                if rr.returncode != 0:
-                    return _err(
-                        "ffmpeg",
-                        f"final mux 失败：{(rr.stderr or '')[-300:]}",
-                        log,
-                    )
-            except Exception as e:
-                return _err("ffmpeg", f"final mux 异常：{e}", log)
-            _log("final mux 完成")
-            total_duration = _media_duration_via_ffmpeg(final_tmp) or max(video_total, audio_total)
+            r = _concat_files(seg_with_audio, final_tmp, "flist")
+            if not r.get("ok"):
+                return _err("ffmpeg", f"final concat 失败：{r.get('stderr', '')[:300]}", log)
+            _log("final concat 完成")
+            total_duration = _media_duration_via_ffmpeg(final_tmp) or video_total
 
         # 落盘成正式 final_video 资产
         try:

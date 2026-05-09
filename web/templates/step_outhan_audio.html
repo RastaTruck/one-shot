@@ -22,7 +22,7 @@
     </div>
   </template>
 
-  <!-- dialogue 模式：配音流程 -->
+  <!-- dialogue 模式：多 line 配音流程 -->
   <template x-if="videoKind === 'dialogue'">
     <div class="space-y-6">
 
@@ -30,7 +30,7 @@
       <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
         <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 4 · 配音</h2>
         <p class="mt-1 text-[13px] text-ink-500">
-          选择项目默认音色，所有段沿用；多角色场景下每段可单独切音色。
+          每段视频可有多句配音（不同时间点出现，可不同音色）。在每段内编辑「行」、调整起始时间。
         </p>
 
         <div class="mt-4">
@@ -50,70 +50,151 @@
             </button>
             <a href="https://fish.audio/zh-CN/discovery/" target="_blank"
                class="text-[11px] text-blue-600 hover:underline">浏览更多音色 ↗</a>
+            <button @click="addCustomOpen = !addCustomOpen"
+                    class="text-[11px] text-blue-600 hover:underline"
+                    x-text="addCustomOpen ? '取消添加' : '＋ 添加自定义音色 ID'"></button>
           </div>
           <audio x-ref="previewAudio" class="hidden"></audio>
           <p x-show="loadingVoices" x-cloak class="mt-2 text-[11px] text-ink-400">加载音色列表中...</p>
+
+          <!-- 自定义音色 ID 输入区 -->
+          <div x-show="addCustomOpen" x-cloak class="mt-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
+            <p class="text-[12px] text-blue-900 mb-2">
+              从 <a href="https://fish.audio/zh-CN/discovery/" target="_blank" class="underline font-bold">Fish Audio Discovery</a>
+              找到喜欢的音色 → 点该音色 → URL 里 <code class="bg-white px-1 rounded">/m/xxx-id</code> 那串就是 voice ID → 复制粘进来：
+            </p>
+            <div class="grid grid-cols-[1fr_140px_auto_auto] gap-2">
+              <input type="text" x-model="addCustom.id"
+                     placeholder="voice ID（一串字母数字）"
+                     class="h-9 px-2 rounded border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] font-mono">
+              <input type="text" x-model="addCustom.name"
+                     placeholder="显示名（可选）"
+                     class="h-9 px-2 rounded border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px]">
+              <button @click="previewVoice(addCustom.id)" :disabled="!addCustom.id || previewing === addCustom.id"
+                      class="h-9 px-3 rounded-md bg-white hover:bg-blue-100 border border-ink-200 text-[12px] font-bold text-ink-700 disabled:opacity-30">
+                <span x-text="previewing === addCustom.id ? '试听中...' : '🔊 试听'"></span>
+              </button>
+              <button @click="addCustomVoice()" :disabled="!addCustom.id"
+                      class="h-9 px-3 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-bold disabled:opacity-50">
+                添加
+              </button>
+            </div>
+            <p class="mt-2 text-[10px] text-ink-500">
+              添加后立刻出现在上方下拉里。这是会话级，刷新后会回到默认列表（重启网站可以扩 page_size 增加默认数量）。
+            </p>
+          </div>
         </div>
 
         <div class="mt-4 flex gap-3 flex-wrap">
-          <button x-show="allHaveScript" x-cloak @click="synthAll()" :disabled="synthing"
+          <button @click="synthAllSegments()" :disabled="synthing"
                   class="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-bold transition disabled:opacity-50">
-            <span x-text="synthing ? '全部合成中...' : '▶ 全部合成（应用当前音色）'"></span>
+            <span x-text="synthing ? '全部合成中...' : '▶ 全部段 · 全部 line 合成'"></span>
           </button>
           <button @click="generateScripts()" :disabled="genScripts || segments.length === 0"
                   class="px-4 py-2 rounded-full bg-white border border-ink-200 hover:border-blue-400 text-ink-700 text-[13px] font-bold transition disabled:opacity-50">
-            <span x-text="genScripts ? 'Gemini 写稿中...' : '🔄 重新生成所有段配音稿'"></span>
+            <span x-text="genScripts ? 'Gemini 写稿中...' : '🔄 重新生成所有段 lines'"></span>
           </button>
         </div>
         <div x-show="error" x-cloak class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700"
              x-text="error"></div>
       </div>
 
-      <!-- 段卡片 -->
+      <!-- 段卡片（多 line 编辑器） -->
       <div class="space-y-3">
         <template x-for="s in segments" :key="s.index">
           <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
             <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
-              <span class="font-bold text-[15px] text-ink-900">段 <span x-text="s.index + 1"></span></span>
+              <div>
+                <span class="font-bold text-[15px] text-ink-900">段 <span x-text="s.index + 1"></span></span>
+                <span class="ml-2 text-[12px] text-ink-500">视频时长 <strong x-text="s.duration"></strong>s</span>
+              </div>
               <div class="flex items-center gap-2">
                 <span class="px-2 py-0.5 rounded text-[11px] font-bold border"
-                      :class="s.audio_asset_id ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : (s.script ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-ink-100 text-ink-500 border-ink-200')"
-                      x-text="s.audio_asset_id ? '已合成' : (s.script ? '有稿待合成' : '无稿')"></span>
+                      :class="segStatusClass(s)"
+                      x-text="segStatusLabel(s)"></span>
               </div>
             </div>
 
-            <!-- 段配音稿 -->
-            <label class="block text-[11px] font-bold text-ink-700 mb-1">Fish S1 配音稿</label>
-            <textarea x-model="s.script" @blur="saveScript(s)" rows="3"
-                      placeholder="例：(开心) 春天来了，万物生长。"
-                      class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px] font-mono"></textarea>
-
-            <!-- 段音色 + 合成按钮 -->
-            <div class="mt-3 grid md:grid-cols-[1fr_auto_auto] gap-2 items-center">
-              <select x-model="s.voice_id" @change="saveVoice(s)"
-                      class="h-9 px-2 rounded-md border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] font-bold bg-white">
-                <option value="">↪ 跟项目默认（<span x-text="projectVoiceLabel || 'S1 默认'"></span>）</option>
+            <!-- 段级默认音色（可选；line voice_id 空时回退到这里） -->
+            <div class="mb-3 flex items-center gap-2 flex-wrap">
+              <label class="text-[11px] font-bold text-ink-700">段默认音色：</label>
+              <select x-model="s.voice_id" @change="saveSegVoice(s)"
+                      class="h-7 px-2 rounded border border-ink-200 focus:border-blue-400 focus:outline-none text-[11px] font-bold bg-white">
+                <option value="">↪ 跟项目默认</option>
                 <template x-for="v in voices" :key="v.id">
-                  <option :value="v.id" x-text="`${v.name}（${v.desc}）`"></option>
+                  <option :value="v.id" x-text="v.name"></option>
                 </template>
               </select>
-              <button @click="previewVoice(s.voice_id || projectVoice)"
-                      :disabled="!(s.voice_id || projectVoice)"
-                      class="h-9 px-3 rounded-md bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-[12px] font-bold text-ink-700 disabled:opacity-30">
-                🔊 试听
-              </button>
-              <button @click="synthOne(s.index)"
-                      :disabled="synthing || !s.script || synthOneIdx === s.index"
-                      class="h-9 px-3 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-bold transition disabled:opacity-50">
-                <span x-text="synthOneIdx === s.index ? '合成中...' : (s.audio_asset_id ? '重新合成' : '合成')"></span>
-              </button>
+              <span class="text-[10px] text-ink-400">（每条 line 可单独 override）</span>
             </div>
 
-            <!-- 已合成的音频预览 -->
-            <div x-show="s.audio_asset_id" x-cloak class="mt-2">
-              <audio controls
-                     :src="`/api/outhan/${videoId}/asset/${s.audio_asset_id}`"
-                     class="w-full max-w-md"></audio>
+            <!-- lines 列表 -->
+            <div class="space-y-2">
+              <template x-for="(ln, lnIdx) in (s.lines || [])" :key="ln.id">
+                <div class="rounded-lg border border-ink-200 p-3 bg-ink-50/30">
+                  <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+                    <span class="text-[10px] px-1.5 py-0.5 rounded font-bold bg-blue-100 text-blue-700">
+                      行 <span x-text="lnIdx + 1"></span>
+                    </span>
+                    <span class="text-[10px] text-ink-500">在 <strong x-text="ln.start_at"></strong>s 开始</span>
+                    <span x-show="ln.audio_asset_id" x-cloak
+                          class="text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700">
+                      ✓ 已合成
+                    </span>
+                  </div>
+                  <textarea x-model="ln.text" @blur="saveLine(s.index, ln, 'text')"
+                            rows="2"
+                            placeholder="(calm) 春天来了。 (happy) 万物悄悄苏醒。"
+                            class="w-full px-2 py-1.5 rounded border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] font-mono"></textarea>
+                  <div class="mt-2 grid md:grid-cols-[80px_1fr_auto_auto_auto] gap-1.5 items-center">
+                    <input type="number" min="0" :max="s.duration" step="0.1"
+                           x-model.number="ln.start_at" @blur="saveLine(s.index, ln, 'start_at')"
+                           title="该行在视频里的起始时间（秒）"
+                           class="h-7 px-1.5 rounded border border-ink-200 text-[11px] text-center">
+                    <select x-model="ln.voice_id" @change="saveLine(s.index, ln, 'voice_id')"
+                            class="h-7 px-1.5 rounded border border-ink-200 text-[11px] font-bold bg-white">
+                      <option value="">↪ 跟段默认</option>
+                      <template x-for="v in voices" :key="v.id">
+                        <option :value="v.id" x-text="v.name"></option>
+                      </template>
+                    </select>
+                    <button @click="previewVoice(ln.voice_id || s.voice_id || projectVoice)"
+                            :disabled="!(ln.voice_id || s.voice_id || projectVoice)"
+                            class="h-7 px-2 rounded bg-white hover:bg-blue-50 border border-ink-200 text-[11px] font-bold text-ink-700 disabled:opacity-30">
+                      🔊
+                    </button>
+                    <button @click="synthLine(s.index, ln.id)"
+                            :disabled="synthLineKey === s.index + ':' + ln.id || !(ln.text && ln.text.trim())"
+                            class="h-7 px-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold disabled:opacity-50"
+                            :title="ln.audio_asset_id ? '重新合成' : '合成'">
+                      <span x-text="synthLineKey === s.index + ':' + ln.id ? '...' : (ln.audio_asset_id ? '↻' : '合成')"></span>
+                    </button>
+                    <button @click="removeLine(s.index, ln.id)"
+                            class="h-7 px-2 rounded bg-white hover:bg-red-50 border border-ink-200 hover:border-red-400 text-red-500 text-[12px] font-bold"
+                            title="删除此行">×</button>
+                  </div>
+                  <div x-show="ln.audio_asset_id" x-cloak class="mt-2">
+                    <audio controls
+                           :src="`/api/outhan/${videoId}/asset/${ln.audio_asset_id}`"
+                           class="w-full max-w-md h-8"></audio>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div class="mt-2 flex items-center gap-2 flex-wrap">
+              <button @click="addLine(s.index)"
+                      class="px-3 py-1 rounded-full bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-[11px] font-bold text-ink-700">
+                + 加一行
+              </button>
+              <button @click="synthSeg(s.index)"
+                      :disabled="synthSegIdx === s.index || !hasAnyLineText(s)"
+                      class="px-3 py-1 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold disabled:opacity-50">
+                <span x-text="synthSegIdx === s.index ? '合成中...' : '▶ 段内全合成'"></span>
+              </button>
+              <span x-show="(s.lines || []).length === 0" x-cloak class="text-[11px] text-ink-400">
+                这段还没有 line —— 点「+ 加一行」开始
+              </span>
             </div>
           </div>
         </template>
@@ -126,7 +207,7 @@
        class="px-4 py-2 rounded-full border border-ink-200 hover:border-blue-400 text-[13px] font-bold text-ink-700">
       ← 步骤 3 · 分段视频
     </a>
-    <button x-show="videoKind === 'dialogue'" x-cloak @click="next()" :disabled="!allHaveAudio"
+    <button x-show="videoKind === 'dialogue'" x-cloak @click="next()" :disabled="!allLinesHaveAudio"
             class="px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] transition disabled:opacity-50">
       进入步骤 5 · 打包 →
     </button>
@@ -143,16 +224,82 @@ function outhanAudio() {
     voices: [],
     loadingVoices: false,
     previewing: null,
-    genScripts: false, synthing: false, synthOneIdx: null,
+    addCustomOpen: false,
+    addCustom: { id: '', name: '' },
+    genScripts: false,
+    synthing: false,
+    synthSegIdx: null,
+    synthLineKey: null,    // "segIdx:lineId"
     saving: false,
     error: null,
 
-    get allHaveScript() { return this.segments.length > 0 && this.segments.every(s => !!(s.script && s.script.trim())); },
-    get allHaveAudio() { return this.segments.length > 0 && this.segments.every(s => !!s.audio_asset_id); },
+    // 所有非空 line 都已合成
+    get allLinesHaveAudio() {
+      if (this.segments.length === 0) return false;
+      return this.segments.every(s => {
+        const lines = (s.lines || []).filter(ln => (ln.text || '').trim());
+        if (lines.length === 0) return false;  // 空段不算就绪
+        return lines.every(ln => !!ln.audio_asset_id);
+      });
+    },
     get projectVoiceLabel() {
       if (!this.projectVoice) return '';
       const v = this.voices.find(x => x.id === this.projectVoice);
       return v ? v.name : this.projectVoice.slice(0, 8);
+    },
+
+    hasAnyLineText(s) {
+      return (s.lines || []).some(ln => (ln.text || '').trim());
+    },
+    segStatusClass(s) {
+      const lines = (s.lines || []).filter(ln => (ln.text || '').trim());
+      if (lines.length === 0) return 'bg-ink-100 text-ink-500 border-ink-200';
+      const ok = lines.every(ln => ln.audio_asset_id);
+      if (ok) return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+      const some = lines.some(ln => ln.audio_asset_id);
+      return some ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-blue-100 text-blue-700 border-blue-200';
+    },
+    segStatusLabel(s) {
+      const lines = (s.lines || []).filter(ln => (ln.text || '').trim());
+      if (lines.length === 0) return '空段';
+      const okCount = lines.filter(ln => ln.audio_asset_id).length;
+      return `${okCount}/${lines.length} 已合成`;
+    },
+
+    async addCustomVoice() {
+      // 清理末尾从 URL 复制时带的 &xxx / ?xxx 等查询参数
+      let id = (this.addCustom.id || '').trim();
+      id = id.split('?')[0].split('&')[0].split('#')[0];
+      if (!id) return;
+      // 前端已存在就提示
+      if (this.voices.some(v => v.id === id)) {
+        this.error = '该音色 ID 已在列表里';
+        return;
+      }
+      const name = (this.addCustom.name || '').trim() || `自定义 ${id.slice(0, 6)}`;
+      try {
+        const res = await fetch('/api/outhan/voices/custom', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({id, name}),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(()=>({}));
+          throw new Error(d.error || `HTTP ${res.status}`);
+        }
+        // 重拉音色列表（包含刚加的）
+        await this.loadVoices();
+        // 自动选中刚加的（如果项目还没选过音色）
+        if (!this.projectVoice) {
+          this.projectVoice = id;
+          this.saveProjectVoice();
+        }
+        this.addCustom = { id: '', name: '' };
+        this.addCustomOpen = false;
+        this.error = null;
+      } catch (e) {
+        this.error = `添加失败：${e.message || e}`;
+      }
     },
 
     async loadVoices() {
@@ -173,13 +320,12 @@ function outhanAudio() {
       try {
         const res = await fetch(`/api/outhan/${this.videoId}/segments`);
         if (!res.ok) return;
-        const d = await res.json(); this.segments = d.segments;
+        const d = await res.json();
+        this.segments = d.segments;
       } catch {}
     },
 
     async saveProjectVoice() {
-      // [AI-NOTE] 2026-05-08: 改用专用 /save-voice 路由，避免顺手把 step 1 字段（用 jinja
-      // 渲染当时的旧值）覆盖回去。
       try {
         const res = await fetch(`/api/outhan/${this.videoId}/save-voice`, {
           method:'POST',
@@ -191,6 +337,15 @@ function outhanAudio() {
           throw new Error(d.error || `HTTP ${res.status}`);
         }
       } catch (e) { this.error = `保存项目音色失败：${e.message || e}`; }
+    },
+
+    async saveSegVoice(s) {
+      try {
+        await fetch(`/api/outhan/${this.videoId}/segment/${s.index}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({voice_id: s.voice_id || ''}),
+        });
+      } catch {}
     },
 
     async previewVoice(voiceId) {
@@ -221,42 +376,77 @@ function outhanAudio() {
       finally { this.genScripts = false; }
     },
 
-    async saveScript(s) {
+    async addLine(segIndex) {
       try {
-        await fetch(`/api/outhan/${this.videoId}/segment/${s.index}`, {
-          method:'PATCH', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({script: s.script}),
+        const seg = this.segments.find(s => s.index === segIndex);
+        const lastLine = (seg.lines || []).slice(-1)[0];
+        const startAt = lastLine
+          ? Math.min(seg.duration - 0.5, (lastLine.start_at || 0) + (lastLine.duration_hint || 1.5))
+          : 0;
+        const res = await fetch(`/api/outhan/${this.videoId}/segment/${segIndex}/line`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({text: '', start_at: startAt, duration_hint: 2.0}),
         });
-      } catch {}
-    },
-
-    async saveVoice(s) {
-      try {
-        await fetch(`/api/outhan/${this.videoId}/segment/${s.index}`, {
-          method:'PATCH', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({voice_id: s.voice_id || ''}),
-        });
-      } catch {}
-    },
-
-    async synthOne(idx) {
-      this.synthOneIdx = idx; this.error = null;
-      try {
-        await this.saveScript(this.segments.find(s => s.index === idx));
-        const res = await fetch(`/api/outhan/${this.videoId}/segment/${idx}/synthesize`, {method:'POST'});
         if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || res.status); }
         await this.refresh();
-      } catch (e) { this.error = `段 ${idx+1}: ${e.message || e}`; }
-      finally { this.synthOneIdx = null; }
+      } catch (e) { this.error = `加 line 失败：${e.message || e}`; }
     },
 
-    async synthAll() {
+    async removeLine(segIndex, lineId) {
+      if (!confirm('删除这一行？')) return;
+      try {
+        await fetch(`/api/outhan/${this.videoId}/segment/${segIndex}/line/${lineId}`, {method:'DELETE'});
+        await this.refresh();
+      } catch (e) { this.error = e.message || String(e); }
+    },
+
+    async saveLine(segIndex, ln, field) {
+      try {
+        const body = {};
+        body[field] = ln[field];
+        await fetch(`/api/outhan/${this.videoId}/segment/${segIndex}/line/${ln.id}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+        });
+        // 改 text 后端会清旧 audio_asset_id；前端同步
+        if (field === 'text') ln.audio_asset_id = null;
+      } catch {}
+    },
+
+    async synthLine(segIndex, lineId) {
+      this.synthLineKey = `${segIndex}:${lineId}`;
+      this.error = null;
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/segment/${segIndex}/synthesize`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({line_id: lineId}),
+        });
+        if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || res.status); }
+        await this.refresh();
+      } catch (e) { this.error = `段 ${segIndex+1} 行 ${lineId}: ${e.message || e}`; }
+      finally { this.synthLineKey = null; }
+    },
+
+    async synthSeg(segIndex) {
+      this.synthSegIdx = segIndex; this.error = null;
+      try {
+        const res = await fetch(`/api/outhan/${this.videoId}/segment/${segIndex}/synthesize`, {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: '{}',
+        });
+        if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || res.status); }
+        await this.refresh();
+      } catch (e) { this.error = `段 ${segIndex+1}: ${e.message || e}`; }
+      finally { this.synthSegIdx = null; }
+    },
+
+    async synthAllSegments() {
       this.synthing = true; this.error = null;
       try {
-        for (const s of this.segments) await this.saveScript(s);
         for (const s of this.segments) {
-          if (!s.script || !s.script.trim()) continue;
-          const res = await fetch(`/api/outhan/${this.videoId}/segment/${s.index}/synthesize`, {method:'POST'});
+          if (!this.hasAnyLineText(s)) continue;
+          const res = await fetch(`/api/outhan/${this.videoId}/segment/${s.index}/synthesize`, {
+            method:'POST', headers:{'Content-Type':'application/json'}, body: '{}',
+          });
           if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(`段 ${s.index+1}: ${d.error || res.status}`); }
           await this.refresh();
         }

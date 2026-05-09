@@ -10,6 +10,9 @@
         <p class="mt-1 text-[13px] text-ink-500">
           顺序生成每一段；每段完成后自动抽尾帧作为下段首帧（不用你手工传）。
         </p>
+        <p class="mt-1 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded inline-block">
+          🔇 段视频预览无声音是正常的——视频生成模型（Seedance/Vidu）只出画面，所有声音由 Fish 在步骤 4 配音 + 步骤 5 装配后才有。
+        </p>
       </div>
       <div class="flex items-center gap-2">
         <span class="px-2 py-0.5 rounded-full text-[11px] font-bold border"
@@ -30,9 +33,9 @@
               class="px-4 py-2 rounded-full border-2 border-red-300 hover:bg-red-50 text-red-700 text-[13px] font-bold transition disabled:opacity-50">
         🔄 全部重来
       </button>
-      <button x-show="running" x-cloak @click="cancel()"
-              class="px-4 py-2 rounded-full border border-ink-200 hover:bg-ink-50 text-[13px] font-bold text-ink-700">
-        取消（停在当前段）
+      <button x-show="isAnyBusy" x-cloak @click="cancel()" :disabled="cancelling"
+              class="px-4 py-2 rounded-full border border-ink-200 hover:bg-ink-50 text-[13px] font-bold text-ink-700 disabled:opacity-60">
+        <span x-text="cancelling ? '取消中...' : '取消（立即停止）'"></span>
       </button>
       <span x-show="!running && busySegmentIdx !== null" x-cloak
             class="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
@@ -41,15 +44,30 @@
     </div>
 
     <div x-show="error" x-cloak
-         class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700">
-      <strong x-text="error"></strong>
+         class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200 text-[13px] text-red-700 flex items-start justify-between gap-3">
+      <strong class="flex-1" x-text="error"></strong>
+      <button x-show="errorSegIdx !== null" x-cloak @click="scrollToSeg(errorSegIdx)"
+              class="flex-shrink-0 px-3 py-1 rounded-full bg-white hover:bg-red-100 border border-red-300 text-[11px] font-bold whitespace-nowrap">
+        ↓ 跳到段 <span x-text="errorSegIdx + 1"></span>
+      </button>
     </div>
   </div>
 
   <!-- 段卡片 -->
   <div class="space-y-3">
     <template x-for="s in segments" :key="s.index">
-      <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+      <div class="rounded-2xl bg-white p-5 shadow-soft border-2 transition"
+           :class="(s.status === 'failed' || s._lastError) ? 'border-red-300 bg-red-50/30' : 'border-ink-200'"
+           :id="`seg-card-${s.index}`">
+        <!-- 段级错误条（最显眼） -->
+        <div x-show="s._lastError" x-cloak
+             class="mb-3 p-3 rounded-lg bg-red-100 border border-red-300 text-[12px] text-red-800 flex items-start justify-between gap-2">
+          <div class="flex-1">
+            <strong>❌ 这一段出错了：</strong> <span x-text="s._lastError"></span>
+          </div>
+          <button @click="s._lastError = null"
+                  class="flex-shrink-0 w-5 h-5 rounded-full hover:bg-red-200 text-red-600 font-bold leading-none">×</button>
+        </div>
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-2">
             <span class="font-bold text-[15px] text-ink-900">段 <span x-text="s.index + 1"></span></span>
@@ -65,7 +83,7 @@
             </select>
             <button @click="runOne(s.index)" :disabled="globalBusy"
                     class="px-3 py-1 rounded-full bg-white hover:bg-blue-50 border border-ink-200 hover:border-blue-400 text-[12px] font-bold text-ink-700 disabled:opacity-50">
-              <span x-text="s.status === 'completed' ? '重新生成' : '生成'"></span>
+              <span x-text="runningOne === s.index ? '生成中...' : (s.status === 'completed' ? '重新生成' : '生成')"></span>
             </button>
           </div>
         </div>
@@ -122,17 +140,26 @@ function outhanVideo() {
     videoId: {{ video_id|tojson }},
     segments: {{ segments|tojson }},
     videoKind: {{ outhan_data.get('video_kind', 'dialogue')|tojson }},
-    running: false,
+    running: false,            // 批量顺序生成中
+    runningOne: null,          // 单段生成中的段 index（null = 没在跑）
     cancelFlag: false,
+    cancelling: false,
+    abortController: null,    // 当前进行中 fetch 的 controller，cancel 时 abort
     error: null,
+    errorSegIdx: null,        // 错误关联的段（用于"跳到段 N"按钮）
     pollHandle: null,
+
+    // [AI-NOTE] 2026-05-08: 任意 fetch 在跑都算 busy（含批量、单段、状态轮询中的段）
+    get isAnyBusy() {
+      return this.running || this.runningOne !== null;
+    },
 
     get completed() { return this.segments.filter(s => s.status === 'completed').length; },
     get busySegmentIdx() {
       const s = this.segments.find(x => ['creating','polling','extracting'].includes(x.status));
       return s ? s.index : null;
     },
-    get globalBusy() { return this.running || this.busySegmentIdx !== null; },
+    get globalBusy() { return this.running || this.runningOne !== null || this.busySegmentIdx !== null; },
 
     badgeClass(st) {
       return ({
@@ -146,6 +173,26 @@ function outhanVideo() {
                completed:'完成', failed:'失败'})[st] || st;
     },
 
+    // 记录段级错误 + 顶部错误带"跳转"按钮 + 段 status 改为 failed
+    setSegError(idx, msg) {
+      const seg = this.segments.find(s => s.index === idx);
+      if (seg) {
+        seg._lastError = msg;
+        seg.status = 'failed';
+      }
+      this.error = `段 ${idx + 1}: ${msg}`;
+      this.errorSegIdx = idx;
+    },
+
+    scrollToSeg(idx) {
+      const el = document.getElementById(`seg-card-${idx}`);
+      if (el) {
+        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        el.classList.add('ring-4', 'ring-red-200');
+        setTimeout(() => el.classList.remove('ring-4', 'ring-red-200'), 1800);
+      }
+    },
+
     async startPolling() {
       // 周期性刷新 segments（处理服务端轮询完成后的状态变更）
       this.pollHandle = setInterval(() => {
@@ -153,6 +200,67 @@ function outhanVideo() {
           this.refresh();
         }
       }, 5000);
+      // [AI-NOTE] 2026-05-08: 进页面时扫一遍，找出"孤立任务"——
+      // 段 status 是 polling/creating/extracting + 有 task_id，但前端没在轮询。
+      // 这种场景：上次 generateOne 中途网络断了 / 用户切走页面 / 浏览器重启
+      // 后端任务其实还在 Volces/Vidu 那边跑，需要恢复 poll。
+      this.resumeOrphanedTasks();
+    },
+
+    async resumeOrphanedTasks() {
+      const orphans = this.segments.filter(s =>
+        ['polling', 'creating', 'extracting'].includes(s.status) && s.task_id
+      );
+      if (orphans.length === 0) return;
+      console.log(`[outhan] 发现 ${orphans.length} 个孤立任务，恢复轮询：`,
+                  orphans.map(s => `段 ${s.index + 1}`).join('、'));
+      for (const s of orphans) {
+        // 各段并行恢复（不阻塞）；不动 running/runningOne flag——后台静默 resume
+        this._resumeOnePoll(s.index);
+      }
+    },
+
+    // 复用 generateOne 的轮询循环，但跳过创建任务（任务已经在 Volces/Vidu 跑了）
+    async _resumeOnePoll(idx) {
+      let fails = 0;
+      while (true) {
+        if (this.cancelFlag) return;
+        for (let i = 0; i < 10; i++) {
+          if (this.cancelFlag) return;
+          await new Promise(r => setTimeout(r, 500));
+        }
+        if (this.cancelFlag) return;
+        try {
+          const r = await fetch(`/api/outhan/${this.videoId}/segment/${idx}/poll-video`);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const d = await r.json();
+          fails = 0;
+          await this.refresh();
+          if (d.status === 'completed') {
+            console.log(`[outhan] 段 ${idx + 1} 恢复轮询：completed`);
+            return;
+          }
+          if (d.status === 'failed') {
+            const taskState = d.task_state ? `（${d.task_state}）` : '';
+            const realErr = d.error || '后端没返回具体错因';
+            const seg = this.segments.find(x => x.index === idx);
+            if (seg) {
+              seg._lastError = `视频任务失败${taskState}：${realErr}`;
+              seg.status = 'failed';
+            }
+            console.log(`[outhan] 段 ${idx + 1} 恢复轮询：failed ${realErr}`);
+            return;
+          }
+          // 还在 polling/extracting 等，继续下一轮
+        } catch (e) {
+          fails++;
+          if (fails >= 5) {
+            // 连续失败 5 次（25 秒）→ 安静放弃，不打扰用户。下次进页面会再次 resume。
+            console.log(`[outhan] 段 ${idx + 1} 恢复轮询：连续 5 次抖动，暂停`);
+            return;
+          }
+        }
+      }
     },
 
     async refresh() {
@@ -160,7 +268,17 @@ function outhanVideo() {
         const res = await fetch(`/api/outhan/${this.videoId}/segments`);
         if (!res.ok) return;
         const d = await res.json();
-        this.segments = d.segments;
+        // [AI-NOTE] 2026-05-08: 保留前端临时字段 _lastError（不在后端 schema），
+        // 不然替换 segments 会清空刚记的段级错误
+        const oldErrors = {};
+        for (const s of this.segments) {
+          if (s._lastError) oldErrors[s.index] = s._lastError;
+        }
+        const newSegs = d.segments;
+        for (const s of newSegs) {
+          if (oldErrors[s.index]) s._lastError = oldErrors[s.index];
+        }
+        this.segments = newSegs;
       } catch {}
     },
 
@@ -175,19 +293,26 @@ function outhanVideo() {
     },
 
     async runOne(idx) {
+      // 重新生成 → 清掉这一段的旧错误（红框消失）+ 顶部错误也消
+      const seg = this.segments.find(s => s.index === idx);
+      if (seg) seg._lastError = null;
       this.error = null;
-      this.running = true;
+      this.errorSegIdx = null;
+      this.runningOne = idx;
       this.cancelFlag = false;
       try {
         await this.generateOne(idx);
       } finally {
-        this.running = false;
+        this.runningOne = null;
         await this.refresh();
       }
     },
 
     async runAll() {
+      // 批量重试 → 清掉所有段的旧错误
+      this.segments.forEach(s => { s._lastError = null; });
       this.error = null;
+      this.errorSegIdx = null;
       this.running = true;
       this.cancelFlag = false;
       try {
@@ -205,44 +330,81 @@ function outhanVideo() {
     },
 
     async generateOne(idx) {
+      // [AI-NOTE] 2026-05-08: 用 AbortController 让 fetch 可被 cancel() 立即中断
+      this.abortController = new AbortController();
+      const signal = this.abortController.signal;
       try {
-        const res = await fetch(`/api/outhan/${this.videoId}/segment/${idx}/generate-video`, {method:'POST'});
+        const res = await fetch(
+          `/api/outhan/${this.videoId}/segment/${idx}/generate-video`,
+          {method:'POST', signal},
+        );
         if (!res.ok) {
           const d = await res.json().catch(() => ({}));
-          this.error = `段 ${idx+1}: ${d.error || res.status}`;
+          this.setSegError(idx, d.error || `HTTP ${res.status}`);
           return false;
         }
       } catch (e) {
-        this.error = `段 ${idx+1}: ${e.message || e}`;
+        if (e.name === 'AbortError') return false;  // 用户取消，不报错
+        this.setSegError(idx, e.message || String(e));
         return false;
       }
       // 轮询
       let fails = 0;
       while (true) {
         if (this.cancelFlag) return false;
-        await new Promise(r => setTimeout(r, 5000));
+        // [AI-NOTE] 2026-05-08: setTimeout sleep 期间也响应 cancel——拆成 10 × 500ms 检查
+        for (let i = 0; i < 10; i++) {
+          if (this.cancelFlag) return false;
+          await new Promise(r => setTimeout(r, 500));
+        }
+        if (this.cancelFlag) return false;
         try {
-          const r = await fetch(`/api/outhan/${this.videoId}/segment/${idx}/poll-video`);
+          const r = await fetch(
+            `/api/outhan/${this.videoId}/segment/${idx}/poll-video`,
+            {signal},
+          );
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const d = await r.json();
           fails = 0;
           await this.refresh();
           if (d.status === 'completed') return true;
           if (d.status === 'failed') {
-            this.error = `段 ${idx+1}: 任务失败`;
+            // [AI-NOTE] 2026-05-08: 把 Vidu/Volces 的真错因（d.error）带到段卡片，
+            // 不要再用泛化文案蒙用户
+            const taskState = d.task_state ? `（${d.task_state}）` : '';
+            const realErr = d.error || '后端没返回具体错因';
+            this.setSegError(idx, `视频任务失败${taskState}：${realErr}`);
             return false;
           }
         } catch (e) {
+          if (e.name === 'AbortError') return false;
           fails++;
           if (fails >= 3) {
-            this.error = `段 ${idx+1}: 连续 3 次轮询失败`;
+            this.setSegError(idx, '连续 3 次轮询失败（网络抖动或服务暂时不可用，过会儿再试）');
             return false;
           }
         }
       }
     },
 
-    cancel() { this.cancelFlag = true; },
+    async cancel() {
+      // [AI-NOTE] 2026-05-08: 取消三件套——
+      //   1) cancelFlag 阻止下一次循环
+      //   2) abort() 立即中断当前进行中的 fetch（不等响应）
+      //   3) 后端 cancel-running-segments 拨回 polling 段为 pending
+      this.cancelling = true;
+      this.cancelFlag = true;
+      try {
+        if (this.abortController) {
+          try { this.abortController.abort(); } catch (_) {}
+        }
+      } catch (_) {}
+      try {
+        await fetch(`/api/outhan/${this.videoId}/cancel-running-segments`, {method:'POST'});
+        await this.refresh();
+      } catch (e) { /* 静默 */ }
+      finally { this.cancelling = false; }
+    },
 
     async resetAll() {
       if (!confirm('全部重来？所有段的视频/音频/尾帧/任务都会被清掉，prompts 和 scene 保留。')) return;

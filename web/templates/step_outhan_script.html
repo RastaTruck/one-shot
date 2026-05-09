@@ -9,10 +9,10 @@
         <h2 class="font-display text-[20px] font-semibold text-ink-900">步骤 2 · 台本</h2>
         <p class="mt-1 text-[13px] text-ink-500">
           <template x-if="videoKind === 'dialogue'">
-            <span>Gemini 看首帧 + 主题，按目标时长 ÷ 5 秒分段，<strong>同时输出画面提示词 + Fish S1 配音稿</strong>。每段两栏都可手编。</span>
+            <span>Gemini 看首帧 + 主题 + 你的补充指引，按内容节奏自由分段（每段 3-12 秒），<strong>同时输出画面提示词 + Fish S1 配音稿</strong>。</span>
           </template>
           <template x-if="videoKind === 'silent'">
-            <span>纯画面视频：Gemini 只输出每段画面提示词，跳过配音稿。</span>
+            <span>纯画面视频：Gemini 按内容节奏自由分段（3-12 秒），只输出画面提示词。</span>
           </template>
         </p>
       </div>
@@ -21,9 +21,24 @@
               :class="videoKind === 'dialogue' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-ink-100 text-ink-600 border-ink-200'"
               x-text="videoKind === 'dialogue' ? '📢 有对白' : '🎬 纯画面'"></span>
         <span x-show="segments.length > 0" x-cloak class="text-[12px] text-ink-500">
-          共 <strong x-text="segments.length"></strong> 段
+          共 <strong x-text="segments.length"></strong> 段 · 总时长 <strong x-text="totalDuration"></strong>s
         </span>
       </div>
+    </div>
+
+    <!-- 补充指引 -->
+    <div class="mb-4">
+      <label class="block text-[12px] font-bold text-ink-700 mb-1">
+        📝 对台本的补充指引
+        <span class="text-ink-400 font-normal">（关键词 / 重点强调 / 想避免的内容；约束 Gemini 发散，留空也行）</span>
+      </label>
+      <textarea x-model="scriptHint" @blur="saveHint()" rows="3"
+                placeholder="例：每段都要有近景镜头；强调温暖治愈感；不要出现金钱/股市相关元素"
+                class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px]"></textarea>
+      <p class="mt-1 text-[11px] text-ink-400">
+        <span x-show="hintSaving" x-cloak class="text-blue-600">保存中...</span>
+        <span x-show="!hintSaving">失焦时自动保存。下次生成台本时 Gemini 会读这段。</span>
+      </p>
     </div>
 
     <button @click="generateScript()" :disabled="generating"
@@ -43,10 +58,16 @@
   <div x-show="segments.length > 0" x-cloak class="space-y-3">
     <template x-for="s in segments" :key="s.index">
       <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
-        <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h4 class="font-bold text-[15px] text-ink-900">
-            段 <span x-text="s.index + 1"></span> · <span x-text="s.duration"></span>s
+            段 <span x-text="s.index + 1"></span>
           </h4>
+          <div class="flex items-center gap-1.5">
+            <label class="text-[11px] text-ink-500 font-bold">时长</label>
+            <input type="number" min="3" max="12" x-model.number="s.duration" @blur="saveDuration(s)"
+                   class="w-14 h-7 px-2 rounded border border-ink-200 focus:border-blue-400 focus:outline-none text-[12px] text-center">
+            <span class="text-[11px] text-ink-500">秒</span>
+          </div>
         </div>
         <div x-show="s.scene" class="text-[12px] text-ink-500 mb-2">
           <strong>场景：</strong><span x-text="s.scene"></span>
@@ -62,11 +83,14 @@
           <div x-show="videoKind === 'dialogue'" x-cloak>
             <label class="block text-[11px] font-bold text-ink-700 mb-1">
               🎙️ Fish S1 配音稿
-              <span class="text-ink-400 font-normal">（情绪标签放句首：(平静) 春来了…）</span>
+              <span class="text-ink-400 font-normal">（每行一条；Fish S1 标签：(calm)(happy)(excited)…；停顿 (break)/(long-break)；改音色/起始时间去配音页）</span>
             </label>
-            <textarea x-model="s.script" @blur="saveScript(s)" rows="4"
-                      placeholder="(平静) 春天来了，万物悄悄苏醒。"
+            <textarea x-model="s._linesText" @blur="saveLinesText(s)" rows="4"
+                      placeholder="(calm) 你好啊。&#10;(happy) 好久不见。"
                       class="w-full px-3 py-2 rounded-lg border-2 border-ink-200 focus:border-blue-400 focus:outline-none text-[13px] font-mono"></textarea>
+            <p x-show="(s.lines || []).length > 1" x-cloak class="mt-1 text-[10px] text-ink-400">
+              共 <strong x-text="(s.lines || []).length"></strong> 行，每行起始时间默认按段长均分；去配音页可微调。
+            </p>
           </div>
         </div>
 
@@ -95,9 +119,52 @@ function outhanScript() {
     videoId: {{ video_id|tojson }},
     segments: {{ segments|tojson }},
     videoKind: {{ outhan_data.get('video_kind', 'dialogue')|tojson }},
+    scriptHint: {{ outhan_data.get('script_hint', '')|tojson }},
+    hintSaving: false,
     generating: false,
     saving: false,
     error: null,
+
+    init() {
+      // [AI-NOTE] 2026-05-08: 给每段 wrap 一份 _linesText（lines 拼接），textarea 双向绑这个
+      this.segments.forEach(s => this._wrapLinesText(s));
+    },
+
+    _wrapLinesText(s) {
+      s._linesText = ((s.lines || []).map(ln => ln.text || '').join('\n')) || (s.script || '');
+    },
+
+    get totalDuration() {
+      return this.segments.reduce((sum, s) => sum + (Number(s.duration) || 0), 0);
+    },
+
+    async saveHint() {
+      this.hintSaving = true;
+      try {
+        await fetch(`/api/outhan/${this.videoId}/save-script-hint`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({script_hint: this.scriptHint}),
+        });
+      } catch (e) { /* 静默 */ } finally {
+        this.hintSaving = false;
+      }
+    },
+
+    async saveDuration(s) {
+      // 夹紧到 3-12 秒
+      let d = Number(s.duration) || 5;
+      if (d < 3) d = 3;
+      if (d > 12) d = 12;
+      s.duration = d;
+      try {
+        await fetch(`/api/outhan/${this.videoId}/segment/${s.index}`, {
+          method:'PATCH',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({duration: d}),
+        });
+      } catch (e) { /* 静默 */ }
+    },
 
     async generateScript() {
       this.generating = true;
@@ -110,6 +177,7 @@ function outhanScript() {
         }
         const d = await res.json();
         this.segments = d.segments;
+        this.segments.forEach(s => this._wrapLinesText(s));
       } catch (e) {
         this.error = e.message || String(e);
       } finally {
@@ -127,14 +195,23 @@ function outhanScript() {
       } catch (e) { /* 静默 */ }
     },
 
-    async saveScript(s) {
+    async saveLinesText(s) {
+      // 把整段 textarea 内容（多行）reconcile 到 lines
       try {
-        await fetch(`/api/outhan/${this.videoId}/segment/${s.index}`, {
-          method:'PATCH',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({script: s.script}),
+        const res = await fetch(`/api/outhan/${this.videoId}/segment/${s.index}/lines-text`, {
+          method:'PUT',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({text: s._linesText || ''}),
         });
-      } catch (e) { /* 静默 */ }
+        if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || res.status); }
+        // 拉新 segments，刷新 s.lines
+        const r2 = await fetch(`/api/outhan/${this.videoId}/segments`);
+        if (r2.ok) {
+          const d2 = await r2.json();
+          this.segments = d2.segments;
+          this.segments.forEach(seg => this._wrapLinesText(seg));
+        }
+      } catch (e) { this.error = `段 ${s.index+1}: ${e.message || e}`; }
     },
 
     async next() {

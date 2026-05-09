@@ -66,10 +66,12 @@ def _api_key() -> str | None:
 
 
 def _retry_urlopen(req: urllib.request.Request, *, timeout: int) -> bytes:
-    """[AI-NOTE] 2026-05-07: Volces TLS 偶尔 SSL UNEXPECTED_EOF_WHILE_READING；
-    HTTP 4xx/5xx 不重试（这些是业务错误），只对网络级临时故障重试。"""
+    """[AI-NOTE] 2026-05-08: Volces TLS 偶尔 SSL UNEXPECTED_EOF_WHILE_READING；
+    HTTP 4xx/5xx 不重试（这些是业务错误），只对网络级临时故障重试。
+    5 次退避：2s, 5s, 10s, 15s（够抗一波短暂抖动）"""
     last_err: Exception | None = None
-    for attempt in range(3):
+    delays = [2, 5, 10, 15]
+    for attempt in range(5):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
@@ -77,8 +79,10 @@ def _retry_urlopen(req: urllib.request.Request, *, timeout: int) -> bytes:
             raise  # 业务错误，立刻抛
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as e:
             last_err = e
-            if attempt < 2:
-                time.sleep(2 + attempt * 3)  # 2s, 5s
+            if attempt < len(delays):
+                print(f"[ark-retry] {attempt+1}/5 抖动重试：{str(e)[:120]}",
+                      file=__import__('sys').stderr)
+                time.sleep(delays[attempt])
                 continue
             raise
     if last_err:
@@ -112,6 +116,16 @@ def _err(e: Exception) -> str:
             msg = f"HTTP {e.code}: {body}"
         except Exception:
             pass
+        return msg
+    # [AI-NOTE] 2026-05-08: 把网络级抖动转成用户能懂的话——
+    # 而不是丢个 _ssl.c:1028 的 raw error 让用户懵
+    raw = str(e)
+    if "UNEXPECTED_EOF" in raw or "SSL" in raw:
+        return f"Volces 服务 SSL 握手抖动（已重试 5 次失败）。请等 30 秒再点重试，不是 prompt 问题"
+    if "timed out" in raw or "timeout" in raw.lower():
+        return f"Volces 服务超时（已重试 5 次）。请稍后重试"
+    if "Connection reset" in raw or "RemoteDisconnected" in raw:
+        return f"Volces 服务连接断开（已重试 5 次）。请稍后重试"
     return msg
 
 
@@ -121,27 +135,35 @@ def generate_image(
     size: str = "2K",
     watermark: bool = True,
     timeout: int = 180,
+    image: str | list[str] | None = None,
 ) -> dict[str, Any]:
-    """同步生图。返回 {ok, url, cost, provider, error, prompt}."""
+    """同步生图。返回 {ok, url, cost, provider, error, prompt}.
+
+    [AI-NOTE] 2026-05-08: Seedream 4 支持图生图/多图组图编辑——
+    传 image 参数（单 URL 字符串或 base64 data URL 数组），模型会基于参考图修改。
+    image=None 时纯文生图（与之前行为一致）。
+    """
     key = _api_key()
     if key is None:
         return {
             "ok": True, "url": _STUB_IMG, "cost": 0.0,
             "provider": "stub", "error": None, "prompt": prompt,
         }
+    payload: dict[str, Any] = {
+        "model": MODEL_IMAGE,
+        "prompt": prompt,
+        "sequential_image_generation": "disabled",
+        "response_format": "url",
+        "size": size,
+        "stream": False,
+        "watermark": watermark,
+    }
+    # 图生图/组图编辑模式
+    if image:
+        payload["image"] = image
     try:
         resp = _http_post_json(
-            f"{ARK_BASE}/images/generations", key,
-            {
-                "model": MODEL_IMAGE,
-                "prompt": prompt,
-                "sequential_image_generation": "disabled",
-                "response_format": "url",
-                "size": size,
-                "stream": False,
-                "watermark": watermark,
-            },
-            timeout=timeout,
+            f"{ARK_BASE}/images/generations", key, payload, timeout=timeout,
         )
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, json.JSONDecodeError) as e:
         return {"ok": False, "url": None, "cost": 0.0, "provider": "ark",

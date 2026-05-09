@@ -75,10 +75,11 @@ def _http_get_json(url: str, key: str, timeout: int = 30) -> dict:
 
 
 def _retry_urlopen(req: urllib.request.Request, *, timeout: int) -> bytes:
-    """[AI-NOTE] 2026-05-07: 网络级临时故障重试（SSL EOF 等）。HTTP 4xx/5xx 不重试。"""
+    """[AI-NOTE] 2026-05-08: 5 次退避重试（SSL EOF 等抖动），HTTP 4xx/5xx 不重试。"""
     import time as _time
     last_err: Exception | None = None
-    for attempt in range(3):
+    delays = [2, 5, 10, 15]
+    for attempt in range(5):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
@@ -86,8 +87,10 @@ def _retry_urlopen(req: urllib.request.Request, *, timeout: int) -> bytes:
             raise
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as e:
             last_err = e
-            if attempt < 2:
-                _time.sleep(2 + attempt * 3)
+            if attempt < len(delays):
+                print(f"[vidu-retry] {attempt+1}/5 抖动重试：{str(e)[:120]}",
+                      file=__import__('sys').stderr)
+                _time.sleep(delays[attempt])
                 continue
             raise
     if last_err:
@@ -103,6 +106,14 @@ def _err(e: Exception) -> str:
             msg = f"HTTP {e.code}: {body}"
         except Exception:
             pass
+        return msg
+    raw = str(e)
+    if "UNEXPECTED_EOF" in raw or "SSL" in raw:
+        return f"Vidu 服务 SSL 握手抖动（已重试 5 次失败）。请等 30 秒再点重试，不是 prompt 问题"
+    if "timed out" in raw or "timeout" in raw.lower():
+        return f"Vidu 服务超时（已重试 5 次）。请稍后重试"
+    if "Connection reset" in raw or "RemoteDisconnected" in raw:
+        return f"Vidu 服务连接断开（已重试 5 次）。请稍后重试"
     return msg
 
 

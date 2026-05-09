@@ -36,6 +36,7 @@ DEFAULT_OUTHAN = {
     "video_engine": "jimeng",
     "video_kind": "dialogue",       # 默认有对白，老项目读出来也是它（兼容）
     "voice_id": "",                 # 空 → 用 Fish S1 默认音色；段级 voice_id 可 override
+    "script_hint": "",              # [AI-NOTE] 2026-05-08: 台本生成的用户补充指引（关键词/约束/避免点）
     "first_frame_asset_id": None,
     "first_frame_prompt": None,
     "final_video_asset_id": None,   # 装配后写入；让 update_outhan_data 不用绕底层
@@ -97,7 +98,27 @@ def step_path(project_id: str, step: int) -> str:
 
 def get_segments(project_id: str) -> list[dict[str, Any]]:
     meta = _read_meta(project_id)
-    return list(meta.get("outhan_segments", []))
+    segs = list(meta.get("outhan_segments", []))
+    # [AI-NOTE] 2026-05-08: 老段没 lines 字段时，即时 wrap script → lines[0]
+    # （读时 wrap，不写回 DB；只有用户主动改 lines 时才写）
+    return [_ensure_lines(s) for s in segs]
+
+
+def _ensure_lines(seg: dict[str, Any]) -> dict[str, Any]:
+    """老段兼容：没 lines 字段时，把 script + audio_asset_id 包成单条 line。"""
+    if "lines" in seg and isinstance(seg["lines"], list):
+        return seg
+    s = dict(seg)
+    script = (s.get("script") or "").strip()
+    s["lines"] = [{
+        "id": "L0",
+        "text": script,
+        "voice_id": "",                           # 空 → 跟段级 voice_id；段级也空就 S1 默认
+        "audio_asset_id": s.get("audio_asset_id"),
+        "start_at": 0.0,
+        "duration_hint": float(s.get("duration") or 5),
+    }] if script or s.get("audio_asset_id") else []
+    return s
 
 
 def replace_segments(project_id: str, segments: list[dict[str, Any]]) -> None:
@@ -125,6 +146,7 @@ def update_segment(project_id: str, index: int, **fields: Any) -> dict[str, Any]
 def reset_all_segments(project_id: str) -> None:
     """[AI-NOTE] 2026-05-07: 全部重来——清所有段的 video/audio/tail/task，
     状态回 pending；段 0 首帧恢复为项目首帧；其余段首帧清空。保留 prompt/scene/duration/engine。
+    [AI-NOTE] 2026-05-08: 同步清 lines.audio_asset_id（保留 text/voice_id/start_at）。
     """
     meta = _read_meta(project_id)
     segs = meta.get("outhan_segments", [])
@@ -136,12 +158,103 @@ def reset_all_segments(project_id: str) -> None:
         s["tail_frame_asset_id"] = None
         s["task_id"] = None
         s["status"] = "pending"
+        for ln in s.get("lines") or []:
+            ln["audio_asset_id"] = None
         if s.get("index") == 0:
             s["first_frame_asset_id"] = project_first_frame
         else:
             s["first_frame_asset_id"] = None
     meta["outhan_segments"] = segs
     _write_meta(project_id, meta)
+
+
+# ============== lines (segment 内的多句配音) ===================
+
+def _next_line_id(seg: dict[str, Any]) -> str:
+    """生成段内唯一 line id（L0, L1, L2...），跳过已有 id。"""
+    used = {ln.get("id") for ln in (seg.get("lines") or [])}
+    n = 0
+    while f"L{n}" in used:
+        n += 1
+    return f"L{n}"
+
+
+def update_line(
+    project_id: str, seg_index: int, line_id: str, **fields: Any
+) -> dict[str, Any] | None:
+    """更新段内某条 line 的字段。返回更新后的 line；段或 line 不存在返回 None。"""
+    meta = _read_meta(project_id)
+    segs = meta.get("outhan_segments", [])
+    target_seg = None
+    for s in segs:
+        if s.get("index") == seg_index:
+            target_seg = s
+            break
+    if target_seg is None:
+        return None
+    target_seg = _ensure_lines(target_seg)
+    target_line = None
+    for ln in target_seg["lines"]:
+        if ln.get("id") == line_id:
+            ln.update(fields)
+            target_line = ln
+            break
+    if target_line is None:
+        return None
+    # 写回（target_seg 是 dict 的引用，但 _ensure_lines 可能已经 wrap 出新 dict——
+    # 找原段写回 lines）
+    for s in segs:
+        if s.get("index") == seg_index:
+            s["lines"] = target_seg["lines"]
+            break
+    meta["outhan_segments"] = segs
+    _write_meta(project_id, meta)
+    return target_line
+
+
+def add_line(
+    project_id: str, seg_index: int, *,
+    text: str = "", voice_id: str = "",
+    start_at: float = 0.0, duration_hint: float = 2.0,
+) -> dict[str, Any] | None:
+    """在段尾追加一条 line。返回新 line。"""
+    meta = _read_meta(project_id)
+    segs = meta.get("outhan_segments", [])
+    for i, s in enumerate(segs):
+        if s.get("index") == seg_index:
+            s = _ensure_lines(s)
+            new_line = {
+                "id": _next_line_id(s),
+                "text": text,
+                "voice_id": voice_id,
+                "audio_asset_id": None,
+                "start_at": float(start_at),
+                "duration_hint": float(duration_hint),
+            }
+            s["lines"].append(new_line)
+            segs[i] = s
+            meta["outhan_segments"] = segs
+            _write_meta(project_id, meta)
+            return new_line
+    return None
+
+
+def remove_line(project_id: str, seg_index: int, line_id: str) -> bool:
+    """删除段内某条 line。返回是否删除成功。"""
+    meta = _read_meta(project_id)
+    segs = meta.get("outhan_segments", [])
+    for i, s in enumerate(segs):
+        if s.get("index") == seg_index:
+            s = _ensure_lines(s)
+            before = len(s["lines"])
+            s["lines"] = [ln for ln in s["lines"] if ln.get("id") != line_id]
+            if len(s["lines"]) == before:
+                return False
+            segs[i] = s
+            meta["outhan_segments"] = segs
+            _write_meta(project_id, meta)
+            return True
+    return False
 
 
 def cascade_reset_after(project_id: str, index: int) -> None:
@@ -157,6 +270,8 @@ def cascade_reset_after(project_id: str, index: int) -> None:
             s["tail_frame_asset_id"] = None
             s["task_id"] = None
             s["status"] = "pending"
+            for ln in s.get("lines") or []:
+                ln["audio_asset_id"] = None
             if s.get("index") == index + 1:
                 s["first_frame_asset_id"] = None
     meta["outhan_segments"] = segs

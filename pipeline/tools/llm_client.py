@@ -41,6 +41,36 @@ def _http_post_json(url: str, headers: dict[str, str], payload: dict[str, Any], 
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _http_post_json_retry(
+    url: str, headers: dict[str, str], payload: dict[str, Any], timeout: int,
+    *, retries: int = 3,
+) -> dict[str, Any]:
+    """[AI-NOTE] 2026-05-08: 给 Gemini 调用加 SSL EOF 重试——
+    generativelanguage.googleapis.com 偶尔握手抖动，跟 Volces 同款问题。
+    每次失败退避 2/5 秒；最后一次失败仍然抛原异常给调用方处理。"""
+    import time as _time
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return _http_post_json(url, headers, payload, timeout)
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as e:
+            last_exc = e
+            err_str = str(e)
+            # 仅对网络/SSL 抖动重试；HTTP 4xx/5xx（包含 quota / 安全策略）不重试
+            transient = any(k in err_str for k in [
+                "UNEXPECTED_EOF", "SSL", "timed out", "Connection reset",
+                "WSAECONNRESET", "ConnectionError", "RemoteDisconnected",
+            ])
+            if not transient or attempt == retries - 1:
+                raise
+            print(f"[http-retry] attempt {attempt+1}/{retries} 抖动重试：{err_str[:120]}",
+                  file=__import__('sys').stderr)
+            _time.sleep(2 + attempt * 3)  # 2s, 5s
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("unreachable")
+
+
 # ==================== Gemini 多模态（图/视频 + 文本）====================
 
 def call_gemini_multimodal_text(
@@ -71,24 +101,47 @@ def call_gemini_multimodal_text(
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
+        # [AI-NOTE] 2026-05-08: 4096 → 16384，给 lines schema（多段 × 多 line）足够输出空间
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 16384},
     }
     try:
-        resp = _http_post_json(url, {}, payload, timeout=timeout)
-    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, OSError):
+        # [AI-NOTE] 2026-05-08: 用 retry 版本，对 SSL EOF 等网络抖动 3 次重试
+        resp = _http_post_json_retry(url, {}, payload, timeout=timeout, retries=3)
+    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, OSError) as e:
+        # 失败时不再静默吞——打到 stderr 方便排查
+        print(f"[gemini-multimodal] HTTP 失败（已重试 3 次）：{type(e).__name__}: {str(e)[:200]}",
+              file=__import__('sys').stderr)
         return None
     try:
-        text_parts = resp["candidates"][0]["content"]["parts"]
+        candidates = resp.get("candidates") or []
+        if not candidates:
+            # 安全策略 / promptFeedback 拒绝 / 配额耗尽
+            pf = resp.get("promptFeedback", {})
+            print(f"[gemini-multimodal] 无 candidates：promptFeedback={pf}, resp_keys={list(resp.keys())}",
+                  file=__import__('sys').stderr)
+            return None
+        cand = candidates[0]
+        finish = cand.get("finishReason", "")
+        text_parts = (cand.get("content") or {}).get("parts") or []
         content = "".join(p.get("text", "") for p in text_parts).strip()
         if not content:
+            # 最常见：finishReason=MAX_TOKENS（输出截断时 parts 是空的）/ SAFETY / RECITATION
+            print(f"[gemini-multimodal] 空内容 finish={finish}, parts_count={len(text_parts)}",
+                  file=__import__('sys').stderr)
             return None
+        if finish == "MAX_TOKENS":
+            # 截断了但还是有部分内容——后端解析 JSON 时会报错；这里先打告警
+            print(f"[gemini-multimodal] WARN: 输出被 MAX_TOKENS 截断（{len(content)} chars）",
+                  file=__import__('sys').stderr)
         usage = resp.get("usageMetadata", {})
         in_tok = usage.get("promptTokenCount", 0)
         out_tok = usage.get("candidatesTokenCount", 0)
         # 2.5-pro 比 flash 贵约 8x；用 flash 价格估算 + 2x 安全缓冲
         cost = (in_tok * 0.00216 + out_tok * 0.00864) / 1000
         return content, round(cost, 6)
-    except (KeyError, IndexError):
+    except (KeyError, IndexError, TypeError) as e:
+        print(f"[gemini-multimodal] 解析响应失败 {type(e).__name__}: {e}; resp_keys={list(resp.keys()) if isinstance(resp, dict) else type(resp)}",
+              file=__import__('sys').stderr)
         return None
 
 
@@ -120,7 +173,8 @@ def call_gemini_json(system: str, user: str, timeout: int = 240) -> tuple[str, f
         },
     }
     try:
-        resp = _http_post_json(url, {}, payload, timeout=timeout)
+        # [AI-NOTE] 2026-05-08: SSL EOF 等抖动 3 次重试
+        resp = _http_post_json_retry(url, {}, payload, timeout=timeout, retries=3)
     except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, OSError):
         return None
     try:
