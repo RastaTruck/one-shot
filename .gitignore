@@ -51,3 +51,20 @@ bgm/*.mp3
 
 # 日报/交接文档（本地 only）
 data/handoff/
+
+# 新闻口播管线运行时产物（用户每次跑都生成，不入 git）
+data/news_audio/
+data/news_video/
+data/projects/
+
+# 用户上传的口播原始素材（大文件 / 隐私）
+口播素材/
+
+# Node 依赖（hyperframes Playwright 渲染用，npm install 自动重建，不入 git）
+node_modules/
+hyperframes_studio/node_modules/
+hyperframes_studio/.tmp_comp_*.html
+hyperframes_studio/renders/
+
+# Claude worktrees（隔离工作树，不进主仓库历史）
+.claude/worktrees/

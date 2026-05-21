@@ -237,6 +237,7 @@
   dims: {{ (style_presets | selectattr("id", "equalto", "humor") | list)[0].dims | tojson }},
 }' class="px-4 md:px-6 py-6 max-w-[1600px] mx-auto pb-28">
 
+  {% include "_forge_brief_banner.html" %}
 
   {# ====== 阶段 A · 探索题材 ====== #}
   {% if phase == 'explore' %}

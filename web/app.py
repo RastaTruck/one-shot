@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 import json as _json
 import sys as _sys
+from urllib.parse import quote
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ROOT))
@@ -51,6 +52,11 @@ _BGM_DIR = Path(__file__).resolve().parent.parent / "bgm"
 _BGM_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/bgm", StaticFiles(directory=str(_BGM_DIR)), name="bgm")
 
+# 新闻口播专用 BGM 目录（用户提供的素材，避免与一二布布 bgm/ 串）
+_NEWS_BGM_DIR = Path(__file__).resolve().parent.parent / "口播bgm"
+_NEWS_BGM_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/news-bgm", StaticFiles(directory=str(_NEWS_BGM_DIR)), name="news_bgm")
+
 
 # 禁缓存 HTML —— 否则 user 浏览器会卡在旧 base.html（旧 CDN 链接 / 旧字段）
 @app.middleware("http")
@@ -69,6 +75,8 @@ from web.routes.inspiration import router as _inspiration_router  # noqa: E402
 app.include_router(_inspiration_router)
 from web.routes.style_api import router as _style_api_router  # noqa: E402
 app.include_router(_style_api_router)
+from web.routes.forge import router as _forge_router  # noqa: E402
+app.include_router(_forge_router)
 
 # /data 暴露项目 data/ 目录（audio / outputs 给浏览器直接读）
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -91,12 +99,12 @@ MOCK_HERO_STATS = [
 ]
 
 MOCK_QUICK_ACTIONS = [
+    {"title": "热点工坊", "desc": "从当日热搜 + 财经 RSS + 长尾雷达里挑信号，AI 帮你立意，一键送入下游管线",
+     "icon": "radar", "bg": "#ECFEFF", "fg": "#0E7490", "href": "/forge"},
     {"title": "开始新选题", "desc": "从已收藏的灵感片段（钩子/金句/案例/CTA）里挑选，作为新选题的起点",
      "icon": "sparkles", "bg": "#FFF8EC", "fg": "#D06E05", "href": "/inspiration"},
     {"title": "逛素材库", "desc": "查看背景 / 立绘 / 元素 / 表情视频四大仓库",
      "icon": "images", "bg": "#EEF4FF", "fg": "#1E40AF", "href": "/library"},
-    {"title": "复盘数据", "desc": "从已发布作品的播放完播率里找下一条爆款",
-     "icon": "bar-chart-3", "bg": "#ECFDF5", "fg": "#047857", "href": "#"},
 ]
 
 MOCK_PROJECTS = [
@@ -715,6 +723,26 @@ def _build_project_view(video_id: str) -> dict | None:
             "is_demo": False,
             "project_type": "outhan",
         }
+    if db_video.project_type == "news":
+        return {
+            "video_id": video_id,
+            "title": db_video.title or video_id,
+            "hook": db_video.topic or "",
+            "category": "新闻口播",
+            "cover_emoji": "🎤",
+            "cover_bg": "linear-gradient(135deg, #047857 0%, #064E3B 60%, #022C22 100%)",
+            "duration": "—",
+            "status_label": "News",
+            "status_badge_class": "badge-brand",
+            "step_done": 0,
+            "current_step_icon": "mic",
+            "current_step_label": "口播 lipsync 流水线",
+            "updated_ago": _humanize_ago(db_video.updated_at),
+            "next_step": "news",
+            "from_db": True,
+            "is_demo": False,
+            "project_type": "news",
+        }
     progress = _flow.compute_progress(video_id, _DATA_DIR / "outputs")
     label, badge, current_label = _status_for(progress)
     done_count = sum(1 for sv in progress.steps_view if sv.done)
@@ -889,9 +917,10 @@ async def project_new(type: str = "yierbubu"):
 
     [AI-NOTE] 2026-05-07: 通过 ?type 参数区分管线模块——
       - yierbubu（默认/原一二布布 IP 流程）→ /project/{id}/topic
-      - outhan（Outhan 通用单条视频流程，迁移中）→ /project/{id}/outhan
+      - outhan（Outhan 通用单条视频流程）→ /project/{id}/outhan
+      - news（新闻口播 lipsync 流水线，骨架）→ /project/{id}/news
     """
-    if type not in ("yierbubu", "outhan"):
+    if type not in ("yierbubu", "outhan", "news"):
         type = "yierbubu"
     new_id = _next_video_id()
     _state.create_video(
@@ -902,7 +931,559 @@ async def project_new(type: str = "yierbubu"):
     )
     if type == "outhan":
         return RedirectResponse(url=f"/project/{new_id}/outhan", status_code=303)
+    if type == "news":
+        return RedirectResponse(url=f"/project/{new_id}/news", status_code=303)
     return RedirectResponse(url=f"/project/{new_id}/topic", status_code=303)
+
+
+# ========== 新闻口播管线 · 路由 + API（真闭环 v0） ==========
+_NEWS_AUDIO_DIR = _DATA_DIR / "news_audio"
+_NEWS_VIDEO_DIR = _DATA_DIR / "news_video"
+_NEWS_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+_NEWS_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _news_render_ctx(video_id: str, current_step: int) -> dict:
+    from pipeline import news_meta as _news_meta
+    proj = _state.get_video(video_id)
+    data = _news_meta.get_news_data(video_id)
+    reached = max(data.get("current_step", 1), current_step)
+    return {
+        "video_id": video_id,
+        "news_title": (proj.title if proj else None),
+        "news_data": data,
+        "current_step": current_step,
+        "reached_step": reached,
+        # 热点工坊传过来的完整立意 + 找补 + 信号（模板顶部 banner 用）
+        "forge_brief": data.get("forge_brief"),
+        "forge_supplements": data.get("forge_supplements"),
+        "forge_signal": data.get("forge_signal"),
+    }
+
+
+@app.get("/project/{video_id}/news", response_class=HTMLResponse)
+async def project_news_workflow(video_id: str):
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    from pipeline import news_meta as _news_meta
+    data = _news_meta.get_news_data(video_id)
+    slug = _news_meta.step_path(video_id, data.get("current_step", 1))
+    return RedirectResponse(url=f"/project/{video_id}/news/{slug}", status_code=303)
+
+
+@app.get("/project/{video_id}/news/topic", response_class=HTMLResponse)
+async def project_news_topic_page(request: Request, video_id: str):
+    return TEMPLATES.TemplateResponse(
+        "step_news_topic.html",
+        {"request": request, **_news_render_ctx(video_id, 1)},
+    )
+
+
+@app.get("/project/{video_id}/news/script", response_class=HTMLResponse)
+async def project_news_script_page(request: Request, video_id: str):
+    return TEMPLATES.TemplateResponse(
+        "step_news_script.html",
+        {"request": request, **_news_render_ctx(video_id, 2)},
+    )
+
+
+@app.get("/project/{video_id}/news/presenter", response_class=HTMLResponse)
+async def project_news_presenter_page(request: Request, video_id: str):
+    from pipeline import shot_template_library as _stl
+    return TEMPLATES.TemplateResponse(
+        "step_news_presenter.html",
+        {"request": request, "series_list": _stl.list_series(), **_news_render_ctx(video_id, 3)},
+    )
+
+
+@app.get("/project/{video_id}/news/audio", response_class=HTMLResponse)
+async def project_news_audio_page(request: Request, video_id: str):
+    return TEMPLATES.TemplateResponse(
+        "step_news_audio.html",
+        {"request": request, "voices": _edge_tts.list_voices(), **_news_render_ctx(video_id, 4)},
+    )
+
+
+@app.get("/project/{video_id}/news/video", response_class=HTMLResponse)
+async def project_news_video_page(request: Request, video_id: str):
+    return TEMPLATES.TemplateResponse(
+        "step_news_video.html",
+        {"request": request, **_news_render_ctx(video_id, 5)},
+    )
+
+
+@app.get("/project/{video_id}/news/export", response_class=HTMLResponse)
+async def project_news_export_page(request: Request, video_id: str):
+    return TEMPLATES.TemplateResponse(
+        "step_news_export.html",
+        {"request": request, **_news_render_ctx(video_id, 6)},
+    )
+
+
+# ---------- API ----------
+
+@app.post("/api/news/{video_id}/generate-topics")
+async def api_news_generate_topics(video_id: str, payload: dict):
+    """真调 LLM 出 6 条候选选题。"""
+    from pipeline import news_meta as _news_meta
+    keywords = str(payload.get("keywords", "")).strip()
+    if not keywords:
+        return JSONResponse({"ok": False, "error": "关键词不能为空"})
+    intent = str(payload.get("intent", "搞懂概念"))
+    audience = str(payload.get("audience", "完全小白"))
+    duration_sec = int(payload.get("duration_sec", 60))
+    mode = str(payload.get("mode", "single"))
+
+    # 用 news 专属 topic 生成器（不绑定金融领域）
+    from pipeline.agents import news_script_writer as _nsw
+    res = _nsw.generate_topics(
+        keywords=keywords, intent=intent, audience=audience,
+        duration_sec=duration_sec, n_topics=6,
+    )
+    if not res.get("ok"):
+        return JSONResponse({"ok": False, "error": res.get("error", "生成失败")})
+
+    topics = res.get("topics", [])
+    _news_meta.update_news_data(
+        video_id,
+        mode=mode,
+        topic_keywords=keywords,
+        topic_intent=intent,
+        topic_audience=audience,
+        duration_sec=duration_sec,
+        topic_pool=topics,
+    )
+    return JSONResponse({
+        "ok": True,
+        "topics": topics,
+        "provider": res.get("provider"),
+        "cost": res.get("cost", 0.0),
+    })
+
+
+@app.post("/api/news/{video_id}/pick-topic")
+async def api_news_pick_topic(video_id: str, payload: dict):
+    from pipeline import news_meta as _news_meta
+    topic = payload.get("topic")
+    if not topic:
+        return JSONResponse({"ok": False, "error": "topic 缺失"})
+    _news_meta.update_news_data(
+        video_id,
+        topic_picked=topic,
+        current_step=max(_news_meta.get_news_data(video_id).get("current_step", 1), 2),
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/news/{video_id}/generate-script")
+async def api_news_generate_script(video_id: str):
+    """根据已锁定选题真调 LLM 生成口播文案。"""
+    from pipeline import news_meta as _news_meta
+    from pipeline.agents import news_script_writer as _nsw
+    data = _news_meta.get_news_data(video_id)
+    picked = data.get("topic_picked")
+    if not picked:
+        return JSONResponse({"ok": False, "error": "还没选定题目，请回上一步"})
+    res = _nsw.generate_news_script(
+        topic=picked.get("title", ""),
+        audience=data.get("topic_audience", "完全小白"),
+        duration_sec=int(data.get("duration_sec", 60)),
+        mode=data.get("mode", "single"),
+    )
+    if not res.get("ok"):
+        return JSONResponse({"ok": False, "error": res.get("error", "生成失败")})
+    # 自动切 units（用户可在 UI 再编辑）
+    from pipeline.agents.news_script_segmenter import segment_script as _seg
+    units = _seg(res["script"]) if res.get("script") else []
+    _news_meta.update_news_data(
+        video_id,
+        script_title=res["title"],
+        script_text=res["script"],
+        script_char_count=res["char_count"],
+        script_units=units,
+    )
+    return JSONResponse({
+        "ok": True,
+        "title": res["title"],
+        "script": res["script"],
+        "char_count": res["char_count"],
+        "script_units": units,
+        "provider": res.get("provider"),
+        "cost": res.get("cost", 0.0),
+    })
+
+
+@app.post("/api/news/{video_id}/save-script")
+async def api_news_save_script(video_id: str, payload: dict):
+    """保存文案 + 自动重切字幕单元（如果客户端没显式传 units）。"""
+    from pipeline import news_meta as _news_meta
+    from pipeline.agents.news_script_segmenter import segment_script as _seg
+    title = str(payload.get("title", "")).strip()
+    script = str(payload.get("script", "")).strip()
+    if not script:
+        return JSONResponse({"ok": False, "error": "文案不能为空"})
+    plain = "".join(c for c in script if not c.isspace())
+    # 客户端可以传 units 覆盖（用户手动编辑过），否则按 script 自动切
+    units_in = payload.get("units")
+    if isinstance(units_in, list) and units_in:
+        units = [str(u).strip() for u in units_in if str(u).strip()]
+    else:
+        units = _seg(script)
+    _news_meta.update_news_data(
+        video_id,
+        script_title=title,
+        script_text=script,
+        script_char_count=len(plain),
+        script_units=units,
+        current_step=max(_news_meta.get_news_data(video_id).get("current_step", 2), 3),
+    )
+    return JSONResponse({"ok": True, "script_units": units})
+
+
+@app.post("/api/news/{video_id}/segment-script")
+async def api_news_segment_script(video_id: str):
+    """对当前 script_text 跑 B2 自动切分，返回新 units（不立即保存，等用户审核后通过 save-script-units 持久化）。"""
+    from pipeline import news_meta as _news_meta
+    from pipeline.agents.news_script_segmenter import segment_script as _seg
+    data = _news_meta.get_news_data(video_id)
+    script = (data.get("script_text") or "").strip()
+    if not script:
+        return JSONResponse({"ok": False, "error": "还没有文案"})
+    units = _seg(script)
+    return JSONResponse({"ok": True, "script_units": units})
+
+
+@app.post("/api/news/{video_id}/save-script-units")
+async def api_news_save_script_units(video_id: str, payload: dict):
+    """保存用户编辑过的字幕单元 list[str]。"""
+    from pipeline import news_meta as _news_meta
+    units_in = payload.get("units")
+    if not isinstance(units_in, list):
+        return JSONResponse({"ok": False, "error": "units 必须是列表"})
+    units = [str(u).strip() for u in units_in if str(u).strip()]
+    _news_meta.update_news_data(video_id, script_units=units)
+    return JSONResponse({"ok": True, "script_units": units, "count": len(units)})
+
+
+@app.post("/api/news/{video_id}/pick-shot-template")
+async def api_news_pick_shot_template(video_id: str, payload: dict):
+    from pipeline import news_meta as _news_meta
+    sid = str(payload.get("series_id", "")).strip()
+    if not sid:
+        return JSONResponse({"ok": False, "error": "series_id 缺失"})
+    _news_meta.update_news_data(
+        video_id,
+        shot_template_id=sid,
+        current_step=max(_news_meta.get_news_data(video_id).get("current_step", 3), 4),
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/news/voice_presets")
+async def api_news_voice_presets():
+    """news 管线的音色注册表（含 Edge TTS + Fish Audio 角色音色 + 字幕样式 + 栏目条）。
+    chyron_styles 中带 hidden:true 的条目（老引擎 pil_overlay / ffmpeg_drawbox）不暴露给 UI。"""
+    p = Path(__file__).resolve().parent.parent / "config" / "news_voice_presets.json"
+    if not p.exists():
+        return JSONResponse({"providers": [], "subtitle_styles": [], "chyron_styles": []})
+    data = _json.loads(p.read_text(encoding="utf-8"))
+    data["chyron_styles"] = [
+        s for s in data.get("chyron_styles", []) if not s.get("hidden")
+    ]
+    return JSONResponse(data)
+
+
+@app.get("/api/news/bgm_library")
+async def api_news_bgm_library():
+    """扫 ./口播bgm/ 下所有 mp3/wav/m4a，返回可选 BGM 列表（含"不加 BGM"占位）。
+    增删 BGM 文件刷新即生效，无需重启。"""
+    items: list[dict] = [
+        {"id": "", "name": "不加 BGM", "desc": "干声 · 无背景音乐", "url": "", "filename": ""},
+    ]
+    if _NEWS_BGM_DIR.exists():
+        exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+        for f in sorted(_NEWS_BGM_DIR.iterdir()):
+            if f.is_file() and f.suffix.lower() in exts:
+                items.append({
+                    "id": f.name,                    # 用文件名作 id（含扩展名）
+                    "name": f.stem,                  # 显示名（去扩展名）
+                    "desc": f"{f.suffix.lstrip('.').upper()} · {f.stat().st_size // 1024} KB",
+                    "url": f"/news-bgm/{quote(f.name)}",
+                    "filename": f.name,
+                })
+    return JSONResponse({"items": items})
+
+
+@app.post("/api/news/{video_id}/save-bible")
+async def api_news_save_bible(video_id: str, payload: dict):
+    """保存 step 4 成片要素（声音 + 字幕 + 新闻栏目条 + BGM），不立刻合成配音。"""
+    from pipeline import news_meta as _news_meta
+    bgm_id_raw = payload.get("bgm_id")
+    bgm_id = str(bgm_id_raw).strip() if bgm_id_raw else None
+    if not bgm_id:
+        bgm_id = None
+    try:
+        bgm_vol = float(payload.get("bgm_volume_db", -16.0))
+    except (TypeError, ValueError):
+        bgm_vol = -16.0
+    bgm_vol = max(-40.0, min(0.0, bgm_vol))  # clamp [-40, 0] dB
+    _news_meta.update_news_data(
+        video_id,
+        voice_provider=str(payload.get("voice_provider", "edge_tts")),
+        voice_id=str(payload.get("voice_id", "")).strip(),
+        subtitle_burn=bool(payload.get("subtitle_burn", True)),
+        subtitle_style=str(payload.get("subtitle_style", "classic_white")),
+        chyron_enabled=bool(payload.get("chyron_enabled", False)),
+        chyron_style=str(payload.get("chyron_style", "znn_intl")),
+        chyron_label=str(payload.get("chyron_label", "DEVELOPING")).strip()[:14],
+        chyron_title=str(payload.get("chyron_title", "")).strip()[:36],
+        chyron_title_sub=str(payload.get("chyron_title_sub", "")).strip()[:24],
+        chyron_station=str(payload.get("chyron_station", "ZNN")).strip()[:6],
+        chyron_time_str=str(payload.get("chyron_time_str", "")).strip()[:10],
+        bgm_id=bgm_id,
+        bgm_volume_db=bgm_vol,
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/news/{video_id}/generate-audio")
+async def api_news_generate_audio(video_id: str, payload: dict):
+    """合成配音 · 支持 edge_tts / fish_audio 双 provider。
+
+    payload: { voice_provider, voice_id, subtitle_burn?, subtitle_style? }
+    """
+    from pipeline import news_meta as _news_meta
+    data = _news_meta.get_news_data(video_id)
+    script = data.get("script_text", "").strip()
+    if not script:
+        return JSONResponse({"ok": False, "error": "没有文案，请回上一步"})
+
+    provider = str(payload.get("voice_provider", data.get("voice_provider", "edge_tts")))
+    voice_id = str(payload.get("voice_id", data.get("voice_id", ""))).strip()
+    sub_burn = bool(payload.get("subtitle_burn", data.get("subtitle_burn", True)))
+    sub_style = str(payload.get("subtitle_style", data.get("subtitle_style", "classic_white")))
+
+    # TTS 输入构造：优先用 script_units（每个 unit 末尾 "。" 喂 → TTS 在每个 unit 边界真停顿，字幕能 1:1 对齐）
+    # 兼容老项目（无 units）→ 走原始 script 拆 A:/B: 前缀
+    units = data.get("script_units") or []
+    if units:
+        from pipeline.agents.news_script_segmenter import tts_text as _tts_text
+        plain = _tts_text(units)
+    else:
+        plain = "\n".join(
+            line.split(":", 1)[-1].strip() if ":" in line else line
+            for line in script.split("\n")
+        )
+    out_dir = _NEWS_AUDIO_DIR / video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "voice.mp3"
+
+    if provider == "fish_audio":
+        if not voice_id:
+            return JSONResponse({"ok": False, "error": "Fish Audio 必须选一个角色音色"})
+        r = await _fish_audio.synthesize_async(plain, voice_id, out_path)
+    else:  # edge_tts
+        if not voice_id or not _edge_tts.voice_exists(voice_id):
+            voice_id = "zh-CN-XiaoxiaoNeural"
+        r = await _edge_tts.synthesize_async(plain, voice_id, out_path)
+
+    if not r.get("ok"):
+        return JSONResponse({"ok": False, "error": r.get("error", "TTS 合成失败")})
+
+    from pipeline.tools import ffmpeg_client as _ffm
+    dur = _ffm.probe_duration(str(out_path)) or 0.0
+    rel_path = str(out_path.relative_to(_DATA_DIR.parent))
+    _news_meta.update_news_data(
+        video_id,
+        voice_provider=provider,
+        voice_id=voice_id,
+        subtitle_burn=sub_burn,
+        subtitle_style=sub_style,
+        audio_path=rel_path,
+        audio_duration_sec=round(dur, 2),
+        current_step=max(_news_meta.get_news_data(video_id).get("current_step", 4), 5),
+    )
+    return JSONResponse({
+        "ok": True,
+        "audio_url": "/" + rel_path,
+        "duration": round(dur, 2),
+        "voice_provider": provider,
+        "voice_id": voice_id,
+    })
+
+
+@app.post("/api/news/preview-voice")
+async def api_news_preview_voice(payload: dict):
+    """声音试听 · Edge TTS 现场合成短 demo；Fish Audio 直接返回已存样本 URL。"""
+    provider = str(payload.get("voice_provider", "edge_tts"))
+    voice_id = str(payload.get("voice_id", "")).strip()
+    if not voice_id:
+        return JSONResponse({"ok": False, "error": "voice_id 缺失"})
+
+    if provider == "fish_audio":
+        # 从注册表查 sample_url
+        p = Path(__file__).resolve().parent.parent / "config" / "news_voice_presets.json"
+        presets = _json.loads(p.read_text(encoding="utf-8"))
+        for prov in presets.get("providers", []):
+            if prov.get("id") == "fish_audio":
+                for v in prov.get("voices", []):
+                    if v.get("id") == voice_id:
+                        return JSONResponse({"ok": True, "audio_url": v.get("sample_url", "")})
+        return JSONResponse({"ok": False, "error": "Fish 音色未注册或样本缺失"})
+
+    # Edge TTS · 用一句固定短 demo 合成（缓存）
+    demo_text = "你好，这是我的声音。我用这条样本帮你判断要不要选我。"
+    demo_dir = _DATA_DIR / "voice_samples" / "edge_tts"
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    demo_path = demo_dir / f"{voice_id}.mp3"
+    if not demo_path.exists():
+        r = await _edge_tts.synthesize_async(demo_text, voice_id, demo_path)
+        if not r.get("ok"):
+            return JSONResponse({"ok": False, "error": r.get("error", "demo 合成失败")})
+    rel = str(demo_path.relative_to(_DATA_DIR.parent))
+    return JSONResponse({"ok": True, "audio_url": "/" + rel})
+
+
+@app.post("/api/news/{video_id}/assemble-video")
+async def api_news_assemble_video(video_id: str, payload: dict):
+    """ffmpeg 按配音时长循环切换镜头模板，输出最终 mp4。"""
+    from pipeline import news_meta as _news_meta
+    from pipeline import shot_template_library as _stl
+    from pipeline.agents import news_video_assembler as _nva
+    data = _news_meta.get_news_data(video_id)
+    sid = data.get("shot_template_id")
+    audio_rel = data.get("audio_path")
+    if not sid or not audio_rel:
+        return JSONResponse({"ok": False, "error": "缺少镜头模板或配音"})
+    takes = _stl.get_take_paths(sid)
+    framings = _stl.get_take_framings(sid)
+    takes_meta = _stl.get_takes_meta(sid)
+    if not takes:
+        return JSONResponse({"ok": False, "error": f"系列 {sid} 没有 take 视频"})
+    audio_path = _DATA_DIR.parent / audio_rel
+    if not audio_path.exists():
+        return JSONResponse({"ok": False, "error": f"配音文件丢失: {audio_rel}"})
+    out_dir = _NEWS_VIDEO_DIR / video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "final.mp4"
+    switch_every = float(payload.get("switch_every", data.get("switch_every", 6.0)))
+
+    # 字幕样式 + chyron profile：从注册表查
+    sub_burn = bool(data.get("subtitle_burn", False))
+    sub_style_id = str(data.get("subtitle_style", "classic_white"))
+    sub_ass = ""
+    chy_enabled = bool(data.get("chyron_enabled", False))
+    chy_style_id = str(data.get("chyron_style", "znn_intl"))
+    chy_profile = None
+    try:
+        _vp_path = Path(__file__).resolve().parent.parent / "config" / "news_voice_presets.json"
+        _vp = _json.loads(_vp_path.read_text(encoding="utf-8"))
+        if sub_burn:
+            for s in _vp.get("subtitle_styles", []):
+                if s.get("id") == sub_style_id:
+                    sub_ass = s.get("ass_style", "")
+                    break
+        if chy_enabled:
+            for s in _vp.get("chyron_styles", []):
+                if s.get("id") == chy_style_id:
+                    chy_profile = s
+                    break
+    except Exception:
+        pass
+
+    # chyron 标题：用户填的优先，否则取 script_title
+    chy_title = str(data.get("chyron_title") or data.get("script_title") or "").strip()
+    chy_label = str(data.get("chyron_label") or "DEVELOPING").strip()
+    chy_title_sub = str(data.get("chyron_title_sub") or data.get("script_title") or "").strip()
+    chy_station = str(data.get("chyron_station") or "ZNN").strip()
+    chy_time = str(data.get("chyron_time_str") or "").strip()
+    # chyron ticker：用户填的优先，否则取文案首句作底部滚动文字
+    chy_ticker = str(data.get("chyron_ticker") or "").strip()
+    if not chy_ticker:
+        script_text = str(data.get("script_text") or "").strip()
+        if script_text:
+            # 取首句（到第一个 。！？ 为止）作为 ticker
+            import re as _re
+            m = _re.search(r"[^。！？!?]{8,40}[。！？!?]", script_text)
+            if m:
+                chy_ticker = m.group(0).strip()
+            else:
+                chy_ticker = script_text[:40]
+    chy_live = bool(data.get("chyron_live_dot", True))
+
+    # BGM 解析：bgm_id 是 ./口播bgm/ 下的文件名，None 表示不加 BGM
+    bgm_file_id = data.get("bgm_id") or None
+    bgm_path = None
+    if bgm_file_id:
+        candidate = _NEWS_BGM_DIR / bgm_file_id
+        if candidate.exists() and candidate.is_file():
+            bgm_path = candidate
+    try:
+        bgm_vol_db = float(data.get("bgm_volume_db", -16.0))
+    except (TypeError, ValueError):
+        bgm_vol_db = -16.0
+
+    res = _nva.assemble(
+        takes, audio_path, out_path,
+        switch_every=switch_every,
+        script=data.get("script_text", ""),
+        framings=framings,
+        takes_meta=takes_meta,
+        subtitle_burn=sub_burn,
+        subtitle_ass_style=sub_ass,
+        chyron_enabled=chy_enabled,
+        chyron_profile=chy_profile,
+        chyron_label=chy_label,
+        chyron_title=chy_title,
+        chyron_ticker=chy_ticker,
+        chyron_live_dot=chy_live,
+        chyron_title_sub=chy_title_sub,
+        chyron_station=chy_station,
+        chyron_time_str=chy_time,
+        bgm_path=bgm_path,
+        bgm_volume_db=bgm_vol_db,
+        script_units=(data.get("script_units") or None),
+    )
+    if not res.get("ok"):
+        return JSONResponse({"ok": False, "error": res.get("error", "合成失败")})
+    rel_path = str(out_path.relative_to(_DATA_DIR.parent))
+    _news_meta.update_news_data(
+        video_id,
+        final_video_path=rel_path,
+        switch_every=switch_every,
+        current_step=max(_news_meta.get_news_data(video_id).get("current_step", 5), 6),
+    )
+    return JSONResponse({
+        "ok": True,
+        "video_url": "/" + rel_path,
+        "duration_sec": res.get("duration_sec", 0),
+        "segments": res.get("segments", 0),
+        "size": res.get("size", "?"),
+        "mode": res.get("mode"),
+        "plan": res.get("plan", []),
+        "subtitle_burned": res.get("subtitle_burned", False),
+        "subtitle_segments": res.get("subtitle_segments", 0),
+        "burn_warning": res.get("burn_warning"),
+        "chyron_applied": res.get("chyron_applied", False),
+        "chyron_warning": res.get("chyron_warning"),
+    })
+
+
+@app.get("/api/shot_templates")
+async def api_shot_templates():
+    from pipeline import shot_template_library as _stl
+    return JSONResponse({"series": _stl.list_series()})
+
+
+@app.post("/api/news/{video_id}/run-lipsync")
+async def api_news_run_lipsync(video_id: str):
+    """同步阻塞跑 VideoRetalk lipsync（OSS 上传 → 提交 → 轮询 → 下载）。
+    成功返回 {ok, lipsync_video_path, task_id, elapsed_sec}.
+    """
+    from pipeline.agents import news_lipsync_agent as _nla
+    res = _nla.run_lipsync(video_id, timeout_sec=600)
+    return JSONResponse(res)
 
 
 @app.get("/project/{video_id}/outhan", response_class=HTMLResponse)
@@ -1060,6 +1641,11 @@ async def project_outhan_topic(request: Request, video_id: str):
         })
     # 最新的排前面，方便用户看到刚生成/上传的图
     candidates.sort(key=lambda c: c["ts"], reverse=True)
+    # 热点工坊立意（如果是从工坊来）
+    _sources = _state.load_project_sources(video_id) or {}
+    _fb = _sources.get("forge_brief") if isinstance(_sources, dict) else None
+    _fs = _sources.get("forge_supplements") if isinstance(_sources, dict) else None
+    _fg = _sources.get("forge_signal") if isinstance(_sources, dict) else None
     return TEMPLATES.TemplateResponse(
         "step_outhan_topic.html",
         {
@@ -1071,6 +1657,9 @@ async def project_outhan_topic(request: Request, video_id: str):
             "candidates": candidates,
             "current_step": 1,
             "reached_step": data["current_step"],
+            "forge_brief": _fb,
+            "forge_supplements": _fs,
+            "forge_signal": _fg,
         },
     )
 
@@ -3206,6 +3795,10 @@ async def page_topic(request: Request, video_id: str,
     real_sources = _state.load_project_sources(video_id) or DEFAULT_SOURCES.copy()
     real_pool = _state.load_project_topic_pool(video_id) or []
     real_picked = _state.load_project_topic(video_id)
+    # 热点工坊带过来的立意（在 banner 渲染）
+    _fb = (real_sources or {}).get("forge_brief") if isinstance(real_sources, dict) else None
+    _fs = (real_sources or {}).get("forge_supplements") if isinstance(real_sources, dict) else None
+    _fg = (real_sources or {}).get("forge_signal") if isinstance(real_sources, dict) else None
     return TEMPLATES.TemplateResponse("step_topic.html", build_ctx(
         request, "topic", video_id,
         topic_pool=MOCK_TOPIC_POOL,
@@ -3231,6 +3824,9 @@ async def page_topic(request: Request, video_id: str,
         real_sources=real_sources,
         real_pool=real_pool,
         real_picked=real_picked,
+        forge_brief=_fb,
+        forge_supplements=_fs,
+        forge_signal=_fg,
     ))
 
 
