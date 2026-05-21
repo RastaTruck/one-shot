@@ -1,0 +1,161 @@
+{% extends "_news_layout.html" %}
+{% block page_title %}视频合成 · {{ news_title or video_id }}{% endblock %}
+
+{% block news_step_content %}
+<div x-data="newsVideo()" class="space-y-5">
+
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-4">
+      <h2 class="font-display text-[18px] font-semibold text-ink-900">步骤 5 · 视频合成</h2>
+      <p class="mt-0.5 text-[12px] text-ink-500">
+        ffmpeg 按配音时长循环切换镜头模板 · 替换原音轨 · 输出 mp4
+      </p>
+    </div>
+
+    <!-- 参数 -->
+    <div class="mb-3 grid grid-cols-2 gap-3">
+      <div class="p-3 rounded-lg bg-ink-50">
+        <div class="text-[10px] text-ink-500 uppercase tracking-wider">配音时长</div>
+        <div class="text-[15px] font-semibold text-ink-900 mt-0.5"><span x-text="audioDur"></span> 秒</div>
+      </div>
+      <div class="p-3 rounded-lg bg-emerald-50/60 border border-emerald-100">
+        <div class="text-[10px] text-emerald-700 uppercase tracking-wider font-semibold">切镜策略</div>
+        <div class="text-[12.5px] font-semibold text-emerald-900 mt-0.5 leading-tight">
+          语义节奏 · 按句末切
+        </div>
+        <div class="text-[10px] text-emerald-700 mt-0.5 leading-snug opacity-80">
+          目标 ~6s/段 · 不切在词中间
+        </div>
+      </div>
+    </div>
+
+    <!-- 切镜计划展示 -->
+    <div x-show="plan.length > 0" class="mb-4 p-3 rounded-lg bg-ink-50 border border-ink-100">
+      <div class="text-[10px] text-ink-500 uppercase tracking-wider font-semibold mb-2 flex items-center justify-between">
+        <span>切镜计划 · <span x-text="plan.length"></span> 段</span>
+        <span class="normal-case text-ink-400" x-text="modeLabel"></span>
+      </div>
+
+      <!-- 横向时间轴 -->
+      <div class="flex items-stretch h-8 rounded-md overflow-hidden bg-white border border-ink-200 mb-2">
+        <template x-for="(seg, i) in plan" :key="i">
+          <div class="flex items-center justify-center text-[10px] font-bold text-white border-r border-white/30 last:border-r-0 px-1"
+               :style="`flex-grow: ${seg[0]}; background: ${takeColor(seg[1])};`"
+               :title="`段${i+1}: ${takeId(seg[1])} · 截取 ${seg[2]||0}s 起 · 时长 ${seg[0]?.toFixed?.(1) || seg[0]}s`">
+            <span class="truncate" x-text="takeShortId(seg[1])"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- 详细列表 -->
+      <div class="space-y-0.5 mt-2">
+        <template x-for="(seg, i) in plan" :key="i">
+          <div class="flex items-center gap-2 text-[10.5px] font-mono text-ink-600">
+            <span class="inline-block w-3 h-3 rounded-sm shrink-0" :style="`background: ${takeColor(seg[1])};`"></span>
+            <span class="text-ink-400 tabular-nums w-12">段<span x-text="i+1"></span></span>
+            <span class="text-ink-900 font-semibold w-24" x-text="takeId(seg[1])"></span>
+            <span class="text-ink-500">|</span>
+            <span class="text-ink-500">截取</span>
+            <span class="text-ink-900 tabular-nums" x-text="(seg[2] || 0).toFixed(2) + 's'"></span>
+            <span class="text-ink-400">起</span>
+            <span class="text-ink-500">·</span>
+            <span class="text-ink-900 tabular-nums" x-text="seg[0].toFixed(2) + 's'"></span>
+            <span class="text-ink-500">长</span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- 隐藏 switchEvery（语义模式下不生效；后端 fallback 用） -->
+    <input type="hidden" x-model.number="switchEvery">
+
+    <button type="button" @click="render()" :disabled="loading || !canRender"
+            class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-2 disabled:bg-ink-300 disabled:cursor-not-allowed">
+      <i data-lucide="film" class="w-4 h-4" :class="loading ? 'animate-pulse' : ''"></i>
+      <span x-text="loading ? `合成中… ${elapsed}s（首次较慢）` : (videoUrl ? '重新合成' : '开始合成')"></span>
+    </button>
+
+    <div x-show="error" x-text="error" class="mt-2 px-3 py-1.5 rounded bg-rose-50 text-rose-700 text-[12px]"></div>
+
+    <!-- 预览 -->
+    <div x-show="videoUrl" class="mt-5">
+      <div class="text-[11px] text-ink-500 uppercase tracking-wider mb-2 font-semibold">成片预览</div>
+      <video controls class="w-full max-w-md rounded-xl shadow-medium bg-black mx-auto" :src="videoUrl"></video>
+      <div x-show="meta" class="mt-2 text-[11px] text-ink-500 text-center">
+        <span x-text="meta?.segments + ' 段切镜 · '"></span>
+        <span x-text="meta?.size + ' · '"></span>
+        <span x-text="meta?.duration_sec.toFixed(1) + 's'"></span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="flex items-center justify-between">
+    <a href="/project/{{ video_id }}/news/audio" class="btn-ghost text-[12px]">
+      <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>返回配音</span>
+    </a>
+    <button type="button" @click="next()" :disabled="!videoUrl"
+            class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-1.5 disabled:bg-ink-300">
+      <span>下一步 · 导出</span>
+      <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    </button>
+  </div>
+
+</div>
+
+<script>
+function newsVideo() {
+  const init = {{ news_data | tojson }};
+  return {
+    audioDur: (init.audio_duration_sec || 0).toFixed(1),
+    switchEvery: init.switch_every || 6,
+    videoUrl: init.final_video_path ? '/' + init.final_video_path : '',
+    canRender: !!(init.audio_path && init.shot_template_id),
+    plan: [],
+    modeLabel: '',
+    takesIndex: [],
+    meta: null,
+    loading: false,
+    error: '',
+    elapsed: 0,
+    _tick: null,
+    async init() {
+      try {
+        const r = await fetch('/api/shot_templates');
+        const d = await r.json();
+        const sid = '{{ news_data.shot_template_id or "" }}';
+        const s = d.series?.find(x => x.id === sid);
+        this.takesIndex = s?.takes || [];
+      } catch(e) {}
+    },
+    takeId(idx) { return this.takesIndex[idx]?.id || ('take_' + idx); },
+    takeShortId(idx) { return this.takesIndex[idx]?.label || this.takeId(idx); },
+    takeColor(idx) {
+      const palette = ['#059669','#0891b2','#7c3aed','#d97706','#dc2626','#0284c7','#65a30d','#db2777'];
+      return palette[idx % palette.length];
+    },
+    async render() {
+      this.loading = true; this.error = ''; this.elapsed = 0;
+      const t0 = Date.now();
+      this._tick = setInterval(() => { this.elapsed = Math.round((Date.now()-t0)/1000); }, 500);
+      try {
+        const r = await fetch(`/api/news/{{ video_id }}/assemble-video`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({switch_every: this.switchEvery}),
+        });
+        const data = await r.json();
+        if (!data.ok) { this.error = data.error || '合成失败'; return; }
+        this.videoUrl = data.video_url + '?t=' + Date.now();
+        this.meta = {segments: data.segments, size: data.size, duration_sec: data.duration_sec};
+        this.plan = data.plan || [];
+        const modeMap = {rhythm: '嘴动节奏匹配', semantic: '按句末切镜', even: '等时切镜'};
+        this.modeLabel = modeMap[data.mode] || data.mode || '';
+      } catch(e) { this.error = '网络错误: ' + e.message; }
+      finally { this.loading = false; clearInterval(this._tick); }
+    },
+    next() { if (this.videoUrl) location.href = `/project/{{ video_id }}/news/export`; },
+  };
+}
+</script>
+{% endblock %}

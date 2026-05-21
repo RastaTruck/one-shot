@@ -1,0 +1,438 @@
+{% extends "_news_layout.html" %}
+{% block page_title %}文案 · {{ news_title or video_id }}{% endblock %}
+
+{% block news_step_content %}
+<div x-data="newsScript()" x-init="init()" class="space-y-5">
+
+  {% include "_forge_brief_banner.html" %}
+
+  <!-- ============== 文案卡 ============== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-3 flex items-start justify-between">
+      <div>
+        <h2 class="font-display text-[18px] font-semibold text-ink-900">步骤 2 · 文案</h2>
+        <p class="mt-0.5 text-[12px] text-ink-500">
+          基于已锁定的选题
+          <span class="text-emerald-700 font-semibold" x-text="'「' + (picked?.title || '...') + '」'"></span>
+          · 目标 <span x-text="(durationSec || 60) + '秒'"></span>
+        </p>
+      </div>
+      <button type="button" @click="generate()" :disabled="!!loading"
+              class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-bold transition flex items-center gap-1.5 disabled:bg-ink-300">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5" :class="loading ? 'animate-spin' : ''"></i>
+        <span x-text="loading ? `生成中… ${elapsed}s` : (script ? '重新生成' : '生成文案')"></span>
+      </button>
+    </div>
+
+    <div x-show="error" x-text="error" class="mb-3 px-3 py-2 rounded bg-rose-50 text-rose-700 text-[12px]"></div>
+
+    <!-- 标题 -->
+    <div class="mb-3">
+      <label class="block text-[11px] font-bold text-ink-700 mb-1">视频标题</label>
+      <input type="text" x-model="title"
+             class="w-full h-9 px-3 rounded-lg border border-ink-200 focus:border-emerald-400 outline-none text-[13px] font-semibold">
+    </div>
+
+    <!-- 工坊文案 AI 生成进度（仅当从工坊跳来 + 文案还空 显示）-->
+    <div x-show="forgeJobPolling || forgeJobError" x-transition class="mb-3 px-4 py-3 rounded-xl border-2"
+         :class="forgeJobError ? 'border-rose-200 bg-rose-50/40' : 'border-teal-200 bg-teal-50/40'">
+      <template x-if="forgeJobPolling">
+        <div class="flex items-start gap-3">
+          <i data-lucide="loader-2" class="w-5 h-5 text-teal-600 animate-spin mt-0.5"></i>
+          <div class="flex-1">
+            <div class="text-[13px] font-semibold text-teal-900">基于工坊立意 · AI 写文案中…</div>
+            <div class="mt-1 text-[11px] text-teal-800 space-y-0.5">
+              <div class="flex items-center gap-1.5">
+                <i data-lucide="check" class="w-3 h-3"></i>
+                <span>立意已锁定（核心论点 + 信息支撑 + 关键数据）</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>
+                <span x-text="forgeJobStatus === 'running' ? '正在写口播文案（含数据引用）…' : '排队中…'"></span>
+              </div>
+              <div class="flex items-center gap-1.5 opacity-50">
+                <i data-lucide="circle" class="w-3 h-3"></i>
+                <span>自动切字幕单元</span>
+              </div>
+            </div>
+            <div class="mt-1.5 text-[10px] text-teal-600">
+              <span x-text="'已耗 ' + forgeJobElapsed + 's'"></span>
+              <span x-show="forgeJobProvider" x-text="' · ' + forgeJobProvider"></span>
+              <span class="text-ink-400">· 通常 30-60s 完成，最长 3 分钟超时</span>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template x-if="forgeJobError">
+        <div class="flex items-start gap-3">
+          <i data-lucide="alert-triangle" class="w-5 h-5 text-rose-600 mt-0.5"></i>
+          <div class="flex-1">
+            <div class="text-[13px] font-semibold text-rose-900">AI 文案生成失败</div>
+            <div class="mt-1 text-[12px] text-rose-700" x-text="forgeJobError"></div>
+            <div class="mt-2 flex items-center gap-2">
+              <button type="button" @click="pollForgeScriptJob()"
+                      class="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-medium">
+                重新轮询
+              </button>
+              <button type="button" @click="forgeJobError = ''; generate()"
+                      class="px-2.5 py-1 rounded-lg border border-ink-200 text-[11px] font-medium hover:bg-ink-50">
+                改用普通文案生成
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 文案 -->
+    <div>
+      <label class="block text-[11px] font-bold text-ink-700 mb-1 flex items-center justify-between">
+        <span>口播文案</span>
+        <span class="text-[10px] font-normal text-ink-400">
+          字数 <b x-text="charCount"></b> · 估时 <b x-text="estDuration + 's'"></b>
+        </span>
+      </label>
+      <textarea x-model="script" @input="recount()" rows="12"
+                placeholder="点上面「生成文案」让 AI 出稿；也可以手敲或粘贴自己的稿"
+                class="w-full px-3 py-2 rounded-lg border border-ink-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none text-[13px] leading-relaxed font-mono"></textarea>
+    </div>
+
+    <div class="mt-2 text-[11px] text-ink-500" x-show="provider">
+      <i data-lucide="info" class="w-3 h-3 inline-block"></i>
+      <span x-text="`生成于 ${provider} · ¥${(cost||0).toFixed(4)}`"></span>
+    </div>
+  </div>
+
+  <!-- ============== 字幕单元卡 ============== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft" x-show="script.trim()" x-transition>
+    <div class="mb-3 flex items-start justify-between gap-3">
+      <div>
+        <h2 class="font-display text-[16px] font-semibold text-ink-900 flex items-center gap-1.5">
+          <i data-lucide="list-ordered" class="w-4 h-4 text-emerald-600"></i>
+          字幕单元 · 一行一条字幕
+        </h2>
+        <p class="mt-0.5 text-[12px] text-ink-500 leading-relaxed">
+          每条 = TTS 真停顿点，决定字幕断句。<b class="text-ink-700">建议 6-14 字</b>。<br>
+          太长（> 14）字幕一行装不下，太短（&lt; 4）TTS 节奏怪。
+        </p>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <div class="text-[11px] text-ink-500 text-right leading-snug">
+          <div><b class="text-ink-900" x-text="units.length"></b> 条</div>
+          <div>均 <b x-text="avgLen"></b> · 最长 <b x-text="maxLen"></b></div>
+        </div>
+        <button type="button" @click="resegment()" :disabled="!!resegmenting"
+                class="px-2.5 py-1.5 rounded-lg border border-ink-200 text-[11px] font-medium text-ink-700 hover:bg-ink-50 hover:border-emerald-300 transition flex items-center gap-1 disabled:opacity-50">
+          <i data-lucide="rotate-cw" class="w-3 h-3" :class="resegmenting ? 'animate-spin' : ''"></i>
+          <span x-text="resegmenting ? '切分中…' : '重新自动切分'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- units 空态 -->
+    <div x-show="units.length === 0 && script.trim()" class="px-4 py-6 text-center text-ink-400 text-[12px] rounded-lg bg-ink-50 border border-dashed border-ink-200">
+      <div>还没切分字幕单元</div>
+      <div class="mt-1 text-[11px]">点「重新自动切分」基于文案生成；或在下方新增空行手动建</div>
+    </div>
+
+    <!-- units 列表 -->
+    <div class="space-y-1.5" x-show="units.length > 0">
+      <template x-for="(u, i) in units" :key="i">
+        <div class="flex items-start gap-2 group">
+          <!-- 序号 -->
+          <span class="mt-2 w-6 text-[10px] font-mono text-ink-400 text-right select-none" x-text="String(i+1).padStart(2,'0')"></span>
+          <!-- 内容 -->
+          <textarea x-model="units[i]" @input="markDirty(); recountUnits();"
+                    rows="1"
+                    :class="units[i].length > 14 ? 'border-amber-300 bg-amber-50/40' : (units[i].length > 0 && units[i].length < 4) ? 'border-rose-200 bg-rose-50/40' : 'border-ink-200'"
+                    class="flex-1 px-2 py-1.5 rounded-md border text-[13px] leading-snug font-mono resize-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-100 outline-none"></textarea>
+          <!-- 字数 -->
+          <span class="mt-2 w-6 text-[10px] font-mono text-right select-none"
+                :class="units[i].length > 14 ? 'text-amber-600 font-bold' : (units[i].length > 0 && units[i].length < 4) ? 'text-rose-500 font-bold' : 'text-ink-400'"
+                x-text="units[i].length"></span>
+          <!-- 操作 -->
+          <div class="mt-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
+            <button type="button" @click="mergeUp(i)" :disabled="i===0" title="合并到上一行"
+                    class="w-7 h-7 rounded hover:bg-emerald-50 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center">
+              <i data-lucide="arrow-up-from-line" class="w-3.5 h-3.5 text-ink-500"></i>
+            </button>
+            <button type="button" @click="splitAt(i)" :disabled="units[i].length < 2" title="拦腰切分"
+                    class="w-7 h-7 rounded hover:bg-emerald-50 disabled:opacity-30 disabled:hover:bg-transparent flex items-center justify-center">
+              <i data-lucide="scissors" class="w-3.5 h-3.5 text-ink-500"></i>
+            </button>
+            <button type="button" @click="removeAt(i)" title="删除这一行"
+                    class="w-7 h-7 rounded hover:bg-rose-50 flex items-center justify-center">
+              <i data-lucide="x" class="w-3.5 h-3.5 text-rose-500"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 底操作 + 状态 -->
+    <div class="mt-3 flex items-center justify-between gap-3">
+      <button type="button" @click="addUnit()"
+              class="px-2.5 py-1.5 rounded-lg border border-dashed border-ink-300 text-[11px] text-ink-500 hover:border-emerald-400 hover:text-emerald-700 transition flex items-center gap-1">
+        <i data-lucide="plus" class="w-3 h-3"></i><span>新增空行</span>
+      </button>
+      <div class="text-[10px]" x-show="unitsDirty">
+        <span class="text-amber-600">●</span>
+        <span class="text-ink-500" x-text="unitsSaving ? '保存中…' : '有未保存改动 · 1 秒后自动保存'"></span>
+      </div>
+      <div class="text-[10px] text-emerald-600 flex items-center gap-1" x-show="unitsSavedFlash" x-transition>
+        <i data-lucide="check" class="w-3 h-3"></i>
+        <span>已保存</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 底部操作 ============== -->
+  <div class="flex items-center justify-between">
+    <a href="/project/{{ video_id }}/news/topic" class="btn-ghost text-[12px]">
+      <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>返回选题</span>
+    </a>
+    <button type="button" @click="saveAndNext()" :disabled="!script.trim() || !!saving"
+            class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-1.5 disabled:bg-ink-300">
+      <span x-text="saving ? '保存中…' : '保存并下一步 · 选主播'"></span>
+      <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    </button>
+  </div>
+
+</div>
+
+<script>
+function newsScript() {
+  const init = {{ news_data | tojson }};
+  return {
+    picked: init.topic_picked,
+    durationSec: init.duration_sec || 60,
+    audience: init.topic_audience,
+    mode: init.mode,
+    title: init.script_title || (init.topic_picked?.title || ''),
+    script: init.script_text || '',
+    charCount: init.script_char_count || 0,
+    estDuration: 0,
+    provider: '',
+    cost: 0,
+    loading: false,
+    saving: false,
+    error: '',
+    elapsed: 0,
+    _tick: null,
+    // units
+    units: (init.script_units || []).slice(),
+    avgLen: 0,
+    maxLen: 0,
+    unitsDirty: false,
+    unitsSaving: false,
+    unitsSavedFlash: false,
+    resegmenting: false,
+    _unitsSaveTimer: null,
+
+    // 工坊 job 轮询状态
+    forgeJobPolling: false,
+    forgeJobStatus: '',
+    forgeJobError: '',
+    forgeJobElapsed: 0,
+    forgeJobProvider: '',
+    _forgePollTimer: null,
+    _forgePollStartMs: 0,
+    _forgePollTickTimer: null,
+
+    init() {
+      this.recount();
+      this.recountUnits();
+      // 检测：从工坊来 (有 forge_brief) + 文案还空 → 启动轮询拉文案
+      const hasForge = {{ 'true' if forge_brief else 'false' }};
+      if (hasForge && !this.script.trim()) {
+        this.pollForgeScriptJob();
+      }
+    },
+    async pollForgeScriptJob() {
+      const self = this;
+      self.forgeJobPolling = true;
+      self.forgeJobStatus = 'pending';
+      self.forgeJobError = '';
+      self.forgeJobElapsed = 0;
+      self._forgePollStartMs = Date.now();
+      // 每 0.5s 更新 elapsed 显示
+      self._forgePollTickTimer = setInterval(() => {
+        self.forgeJobElapsed = Math.round((Date.now() - self._forgePollStartMs) / 1000);
+      }, 500);
+
+      const TIMEOUT_S = 180;  // 3 分钟硬超时
+      while (true) {
+        if (self.forgeJobElapsed > TIMEOUT_S) {
+          self.forgeJobError = '文案生成超时（180s）—— 你可以点上面「生成文案」手动重试';
+          break;
+        }
+        try {
+          const r = await fetch(`/api/forge/script-job/{{ video_id }}`);
+          const data = await r.json();
+          if (!data.ok) {
+            self.forgeJobError = data.error || 'job 不存在';
+            break;
+          }
+          self.forgeJobStatus = data.status;
+          self.forgeJobProvider = data.provider || '';
+          if (data.status === 'completed' && data.result) {
+            // 文案到位 → 灌进 textarea + units
+            self.title = data.result.title || self.title;
+            self.script = data.result.script || '';
+            self.units = (data.result.units || []).slice();
+            self.recount();
+            self.recountUnits();
+            self.forgeJobPolling = false;
+            self.$nextTick(() => window.lucide?.createIcons());
+            break;
+          }
+          if (data.status === 'failed') {
+            self.forgeJobError = data.error || '生成失败';
+            break;
+          }
+        } catch (e) {
+          self.forgeJobError = '网络错误: ' + e.message;
+          break;
+        }
+        // pending / running → 等 2.5s 再轮询
+        await new Promise(r => setTimeout(r, 2500));
+      }
+
+      clearInterval(self._forgePollTickTimer);
+      self.forgeJobPolling = false;
+      self.$nextTick(() => window.lucide?.createIcons());
+    },
+    recount() {
+      const plain = this.script.replace(/[\s\n\r]/g, '').replace(/^[AB]:/gm, '');
+      this.charCount = plain.length;
+      this.estDuration = Math.round(plain.length / 5.5);
+    },
+    recountUnits() {
+      const lens = this.units.map(u => (u || '').length);
+      this.avgLen = lens.length ? Math.round(lens.reduce((a,b)=>a+b,0) / lens.length) : 0;
+      this.maxLen = lens.length ? Math.max(...lens) : 0;
+    },
+    markDirty() {
+      this.unitsDirty = true;
+      this.unitsSavedFlash = false;
+      clearTimeout(this._unitsSaveTimer);
+      this._unitsSaveTimer = setTimeout(() => this.saveUnits(), 1000);
+    },
+    async saveUnits() {
+      this.unitsSaving = true;
+      try {
+        const clean = this.units.map(u => (u || '').trim()).filter(Boolean);
+        const r = await fetch(`/api/news/{{ video_id }}/save-script-units`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({units: clean}),
+        });
+        const data = await r.json();
+        if (data.ok) {
+          this.unitsDirty = false;
+          this.unitsSavedFlash = true;
+          setTimeout(() => { this.unitsSavedFlash = false; }, 1800);
+        } else {
+          console.error('saveUnits error', data);
+        }
+      } catch (e) {
+        console.error('saveUnits net', e);
+      } finally {
+        this.unitsSaving = false;
+      }
+    },
+    async resegment() {
+      this.resegmenting = true;
+      try {
+        const r = await fetch(`/api/news/{{ video_id }}/segment-script`, {method:'POST'});
+        const data = await r.json();
+        if (data.ok) {
+          this.units = (data.script_units || []).slice();
+          this.recountUnits();
+          // 自动保存这次自动切分结果
+          this.markDirty();
+          clearTimeout(this._unitsSaveTimer);
+          this._unitsSaveTimer = setTimeout(() => this.saveUnits(), 300);
+        } else {
+          this.error = data.error || '切分失败';
+        }
+      } catch (e) {
+        this.error = '网络错误: ' + e.message;
+      } finally {
+        this.resegmenting = false;
+        this.$nextTick(() => window.lucide?.createIcons());
+      }
+    },
+    mergeUp(i) {
+      if (i === 0) return;
+      const merged = ((this.units[i-1] || '') + (this.units[i] || '')).trim();
+      this.units.splice(i-1, 2, merged);
+      this.markDirty(); this.recountUnits();
+      this.$nextTick(() => window.lucide?.createIcons());
+    },
+    splitAt(i) {
+      const s = this.units[i] || '';
+      if (s.length < 2) return;
+      const mid = Math.ceil(s.length / 2);
+      this.units.splice(i, 1, s.slice(0, mid), s.slice(mid));
+      this.markDirty(); this.recountUnits();
+      this.$nextTick(() => window.lucide?.createIcons());
+    },
+    removeAt(i) {
+      this.units.splice(i, 1);
+      this.markDirty(); this.recountUnits();
+      this.$nextTick(() => window.lucide?.createIcons());
+    },
+    addUnit() {
+      this.units.push('');
+      this.markDirty();
+      this.$nextTick(() => window.lucide?.createIcons());
+    },
+
+    async generate() {
+      if (!this.picked) { this.error = '没有选定选题，请回上一步'; return; }
+      this.loading = true; this.error = ''; this.elapsed = 0;
+      const t0 = Date.now();
+      this._tick = setInterval(() => { this.elapsed = Math.round((Date.now()-t0)/1000); }, 500);
+      try {
+        const r = await fetch(`/api/news/{{ video_id }}/generate-script`, {method:'POST'});
+        const data = await r.json();
+        if (!data.ok) { this.error = data.error || '生成失败'; return; }
+        this.title = data.title;
+        this.script = data.script;
+        this.provider = data.provider; this.cost = data.cost;
+        // 后端已切好 units 顺手带回来 → 直接刷新
+        this.units = (data.script_units || []).slice();
+        this.recount();
+        this.recountUnits();
+      } catch(e) { this.error = '网络错误: ' + e.message; }
+      finally {
+        this.loading = false; clearInterval(this._tick);
+        this.$nextTick(() => window.lucide?.createIcons());
+      }
+    },
+    async saveAndNext() {
+      if (!this.script.trim()) return;
+      this.saving = true;
+      try {
+        // 先把 units pending 改动落库（如果有）
+        if (this.unitsDirty) {
+          clearTimeout(this._unitsSaveTimer);
+          await this.saveUnits();
+        }
+        const cleanUnits = this.units.map(u => (u || '').trim()).filter(Boolean);
+        const r = await fetch(`/api/news/{{ video_id }}/save-script`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({title: this.title, script: this.script, units: cleanUnits}),
+        });
+        const data = await r.json();
+        if (data.ok) location.href = `/project/{{ video_id }}/news/presenter`;
+        else this.error = data.error || '保存失败';
+      } catch(e) { this.error = '网络错误: ' + e.message; }
+      finally { this.saving = false; }
+    },
+  };
+}
+</script>
+{% endblock %}

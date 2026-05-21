@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-07",
+  "schema_note": "v0 占位主播库 — 实际样板视频和声纹文件还没入库。挂在 data/asset_library/presenters/{presenter_id}/ 下。",
+  "presenters": [
+    {
+      "id": "news_anchor_male_01",
+      "name": "新闻男主播 · 沉稳",
+      "category": "news",
+      "emoji": "📺",
+      "blurb": "30+ 男声 · 中央台风格 · 适合时事/财经/宏观",
+      "voice_clone_id": "MISSING_voice_clone_id",
+      "samples": [
+        {"framing": "正视中景", "take_id": "front_mid_01", "path": "MISSING/news_anchor_male_01/front_mid_01.mp4", "duration_sec": 6.5},
+        {"framing": "正视中景", "take_id": "front_mid_02", "path": "MISSING/news_anchor_male_01/front_mid_02.mp4", "duration_sec": 7.0},
+        {"framing": "正视中景", "take_id": "front_mid_03", "path": "MISSING/news_anchor_male_01/front_mid_03.mp4", "duration_sec": 5.8},
+        {"framing": "特写", "take_id": "closeup_01", "path": "MISSING/news_anchor_male_01/closeup_01.mp4", "duration_sec": 5.0},
+        {"framing": "特写", "take_id": "closeup_02", "path": "MISSING/news_anchor_male_01/closeup_02.mp4", "duration_sec": 6.2},
+        {"framing": "远景", "take_id": "wide_01", "path": "MISSING/news_anchor_male_01/wide_01.mp4", "duration_sec": 8.0},
+        {"framing": "远景", "take_id": "wide_02", "path": "MISSING/news_anchor_male_01/wide_02.mp4", "duration_sec": 7.5}
+      ],
+      "ready": false,
+      "missing_note": "v0 占位 · 实际素材未入库；先做 UI 验证再补素材"
+    },
+    {
+      "id": "news_anchor_female_01",
+      "name": "新闻女主播 · 知性",
+      "category": "news",
+      "emoji": "🎙️",
+      "blurb": "30+ 女声 · 央视风格 · 适合人物访谈/科普/历史",
+      "voice_clone_id": "MISSING_voice_clone_id",
+      "samples": [
+        {"framing": "正视中景", "take_id": "front_mid_01", "path": "MISSING/news_anchor_female_01/front_mid_01.mp4", "duration_sec": 6.0},
+        {"framing": "正视中景", "take_id": "front_mid_02", "path": "MISSING/news_anchor_female_01/front_mid_02.mp4", "duration_sec": 6.5},
+        {"framing": "特写", "take_id": "closeup_01", "path": "MISSING/news_anchor_female_01/closeup_01.mp4", "duration_sec": 5.5},
+        {"framing": "远景", "take_id": "wide_01", "path": "MISSING/news_anchor_female_01/wide_01.mp4", "duration_sec": 7.0}
+      ],
+      "ready": false,
+      "missing_note": "v0 占位 · 实际素材未入库"
+    },
+    {
+      "id": "knowledge_blogger_01",
+      "name": "知识博主 · 亲切型",
+      "category": "knowledge",
+      "emoji": "💡",
+      "blurb": "20+ 双性可选 · 桌面+暖光环境 · 适合 IT/学习/科普",
+      "voice_clone_id": "MISSING_voice_clone_id",
+      "samples": [
+        {"framing": "正视中景", "take_id": "front_mid_01", "path": "MISSING/knowledge_blogger_01/front_mid_01.mp4", "duration_sec": 6.0},
+        {"framing": "特写", "take_id": "closeup_01", "path": "MISSING/knowledge_blogger_01/closeup_01.mp4", "duration_sec": 5.0}
+      ],
+      "ready": false,
+      "missing_note": "v0 占位 · 实际素材未入库"
+    }
+  ]
+}

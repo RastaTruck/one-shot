@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1242, height=1668" />
+<!-- 字体：异步加载，font-display:swap 让 system fallback 立即接管，防 Playwright 卡 networkidle -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@900&family=Noto+Sans+SC:wght@900&family=Oswald:wght@700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<!-- GSAP 本地化（feedback_china-cdn-no-trust：jsdelivr 国内不稳） -->
+<script src="vendor/gsap.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width: 1242px;
+    height: 1668px;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  #chyron {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 367px;
+  }
+
+  /* 副条（深蓝） */
+  .sub-bar {
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 165px;
+    background: #0A2E5C;
+    box-shadow: 0 -8px 16px rgba(0,0,0,0.25);
+  }
+  .sub-bar::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #D4A04A 0%, #FFE08A 50%, #D4A04A 100%);
+  }
+
+  /* 左上红斜块 */
+  .label-block {
+    position: absolute;
+    left: 0; top: 0;
+    height: 165px;
+    width: 380px;
+    background: linear-gradient(180deg, #E62436 0%, #C01020 100%);
+    clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 60px 0 30px;
+    overflow: hidden;
+  }
+  .label-block::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    background: linear-gradient(180deg, #FFE08A 0%, #D4A04A 50%, #FFE08A 100%);
+  }
+
+  /* 全程流光：沿 sub-bar 横向扫的高光 */
+  .gloss-sub {
+    position: absolute;
+    left: 0; top: 0;
+    width: 100%; height: 165px;
+    background: linear-gradient(100deg,
+      transparent 35%,
+      rgba(255,255,255,0.10) 48%,
+      rgba(255,255,255,0.22) 50%,
+      rgba(255,255,255,0.10) 52%,
+      transparent 65%);
+    background-size: 200% 100%;
+    pointer-events: none;
+    mix-blend-mode: overlay;
+    will-change: background-position;
+  }
+  /* 主条流光 */
+  .gloss-main {
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 100%; height: 202px;
+    background: linear-gradient(100deg,
+      transparent 35%,
+      rgba(212,160,74,0.18) 48%,
+      rgba(255,224,138,0.32) 50%,
+      rgba(212,160,74,0.18) 52%,
+      transparent 65%);
+    background-size: 220% 100%;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    will-change: background-position;
+  }
+  /* LIVE 红点（呼吸） */
+  .live-dot {
+    position: absolute;
+    left: 36px; top: 50%;
+    transform: translateY(-50%);
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #E62436;
+    box-shadow: 0 0 0 0 rgba(230,36,54,0.7);
+  }
+  .label-text {
+    font-family: 'Oswald', 'Bebas Neue', sans-serif;
+    font-size: 44px;
+    color: #FFFFFF;
+    letter-spacing: 2px;
+    font-weight: 800;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    white-space: nowrap;
+    line-height: 1;
+  }
+
+  /* 中部副标题 */
+  .sub-title {
+    position: absolute;
+    left: 380px; right: 260px; top: 0;
+    height: 165px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Noto Sans SC', sans-serif;
+    font-weight: 900;
+    font-size: 50px;
+    color: #FFFFFF;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    letter-spacing: 1px;
+    white-space: nowrap;
+    line-height: 1;
+    overflow: hidden;
+  }
+
+  /* 右上台标斜块 */
+  .station-block {
+    position: absolute;
+    right: 0; top: 0;
+    height: 165px;
+    width: 260px;
+    background: linear-gradient(180deg, #E62436 0%, #C01020 100%);
+    clip-path: polygon(15% 0, 100% 0, 100% 100%, 0 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-left: 40px;
+  }
+  .station-text {
+    font-family: 'Oswald', 'Bebas Neue', sans-serif;
+    font-size: 92px;
+    color: #FFFFFF;
+    font-weight: 800;
+    letter-spacing: 6px;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.4);
+  }
+
+  /* 主条（白底） */
+  .main-bar {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 202px;
+    background: linear-gradient(180deg, #FFFFFF 0%, #F0F0F0 100%);
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
+  }
+
+  .main-title {
+    position: absolute;
+    left: 36px; top: 0; bottom: 0;
+    right: 280px;
+    display: flex;
+    align-items: center;
+    font-family: 'Oswald', 'Bebas Neue', 'Noto Sans SC', sans-serif;
+    font-weight: 800;
+    font-size: 72px;
+    color: #0A1226;
+    letter-spacing: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    line-height: 1;
+  }
+
+  .time-stamp {
+    position: absolute;
+    right: 36px; top: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    font-family: 'Oswald', 'Inter', sans-serif;
+    font-weight: 800;
+    font-size: 68px;
+    color: #D4A04A;
+    letter-spacing: 1px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.1);
+  }
+</style>
+</head>
+<body>
+<div
+  id="root"
+  data-composition-id="main"
+  data-start="0"
+  data-duration="30"
+  data-width="1242"
+  data-height="1668"
+  data-composition-variables='{
+    "label": {"type":"string","default":"DEVELOPING"},
+    "title_main": {"type":"string","default":"FUNNY ZOO SURVIVAL TIPS"},
+    "title_sub": {"type":"string","default":"疯狂动物园避坑3招"},
+    "station": {"type":"string","default":"ZNN"},
+    "time_str": {"type":"string","default":"6:01 PM"}
+  }'
+>
+  <div id="chyron">
+    <div class="sub-bar"></div>
+    <div class="gloss-sub" id="gloss-sub"></div>
+    <div class="label-block">
+      <div id="label-text" class="label-text">DEVELOPING</div>
+    </div>
+    <div id="sub-title-el" class="sub-title">疯狂动物园避坑3招</div>
+    <div class="station-block">
+      <div id="station-text" class="station-text">ZNN</div>
+      <div class="live-dot" id="live-dot"></div>
+    </div>
+    <div class="main-bar">
+      <div class="gloss-main" id="gloss-main"></div>
+      <div id="main-title-el" class="main-title">FUNNY ZOO SURVIVAL TIPS</div>
+      <div id="time-stamp-el" class="time-stamp">6:01 PM</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 读取 hyperframes 注入的参数（如果有）
+  const vars = (window.__hyperframes && window.__hyperframes.getVariables)
+    ? window.__hyperframes.getVariables() : {};
+  if (vars.label) document.getElementById('label-text').textContent = vars.label;
+  if (vars.title_sub) document.getElementById('sub-title-el').textContent = vars.title_sub;
+  if (vars.station) document.getElementById('station-text').textContent = vars.station;
+  if (vars.title_main) document.getElementById('main-title-el').textContent = String(vars.title_main).toUpperCase();
+  if (vars.time_str) document.getElementById('time-stamp-el').textContent = vars.time_str;
+
+  // ===== 标题 auto-fit · 超长则缩字号，最低 32px =====
+  // 修 Bug #2：中文标题"特朗普访华，中美这次到底谁更急？"在 nowrap+72px 下溢出被截
+  function autoFitText(el, maxFont, minFont, buffer) {
+    if (!el) return;
+    let size = maxFont;
+    el.style.fontSize = size + 'px';
+    // scrollWidth 是文本本身的宽度，offsetWidth 是元素被 right/left 约束的宽度
+    while (size > minFont && el.scrollWidth > el.offsetWidth - (buffer || 0)) {
+      size -= 2;
+      el.style.fontSize = size + 'px';
+    }
+  }
+  // 等字体加载好再量（避免 fallback 字宽算错）
+  const _fit = () => {
+    autoFitText(document.getElementById('main-title-el'), 72, 38, 8);
+    autoFitText(document.getElementById('sub-title-el'),  50, 30, 6);
+  };
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(_fit);
+  } else {
+    setTimeout(_fit, 60);
+  }
+  _fit();  // 同步一次先排上，字体 ready 后再精修
+
+  // GSAP 入场动效（前 0.6s）
+  window.__timelines = window.__timelines || {};
+  const tl = gsap.timeline({ paused: true });
+  // 整体 chyron 从下滑入
+  tl.from('#chyron', { y: 367, duration: 0.5, ease: 'power3.out' }, 0);
+  // 左斜块从左滑入
+  tl.from('.label-block', { x: -340, duration: 0.5, ease: 'power3.out' }, 0.15);
+  // 右台标斜块从右滑入
+  tl.from('.station-block', { x: 260, duration: 0.5, ease: 'power3.out' }, 0.15);
+  // 副标题渐入
+  tl.from('#sub-title-el', { opacity: 0, y: 20, duration: 0.4 }, 0.35);
+  // 主标题从右滑入
+  tl.from('#main-title-el', { x: 80, opacity: 0, duration: 0.6, ease: 'power3.out' }, 0.25);
+  // 时间码闪入
+  tl.from('#time-stamp-el', { opacity: 0, scale: 0.8, duration: 0.4 }, 0.5);
+
+  // ===== 全程持续动效（入场结束后无限循环） =====
+  // 初始化流光位置
+  gsap.set('#gloss-sub',  { backgroundPosition: '-100% 0%' });
+  gsap.set('#gloss-main', { backgroundPosition: '-120% 0%' });
+
+  // sub-bar 流光循环：每 4s 扫一次（轻、慢）
+  tl.to('#gloss-sub', {
+    backgroundPosition: '200% 0%',
+    duration: 4, ease: 'sine.inOut',
+    repeat: -1, repeatDelay: 1.2,
+  }, 1.0);
+
+  // main-bar 流光循环：每 5s 扫一次（金色亮一些）
+  tl.to('#gloss-main', {
+    backgroundPosition: '220% 0%',
+    duration: 5, ease: 'sine.inOut',
+    repeat: -1, repeatDelay: 0.8,
+  }, 1.4);
+
+  // LIVE 红点呼吸光环
+  tl.to('#live-dot', {
+    boxShadow: '0 0 0 14px rgba(230,36,54,0.0)',
+    duration: 1.2, ease: 'sine.out',
+    repeat: -1,
+  }, 1.0);
+
+  // 整条 chyron 微呼吸（不抢戏）
+  tl.to('#chyron', {
+    keyframes: [{ y: -1.5, duration: 3.5, ease: 'sine.inOut' },
+                { y: 0,    duration: 3.5, ease: 'sine.inOut' }],
+    repeat: -1,
+  }, 1.5);
+
+  window.__timelines["main"] = tl;
+</script>
+</body>
+</html>

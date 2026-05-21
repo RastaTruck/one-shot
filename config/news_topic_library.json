@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-07",
+  "schema_note": "v0 新闻口播题材库骨架 · 后续按概念图谱式扩充（参考 topic_library.json）。",
+  "domains": [
+    {
+      "id": "news",
+      "name": "新闻口播",
+      "emoji": "📰",
+      "active": true,
+      "concepts": [
+        {
+          "id": "daily_brief",
+          "name": "日报短评",
+          "emoji": "📅",
+          "one_liner": "30-60s 当日热点 + 短评 · 信息快递型",
+          "scenes": ["时事", "财经", "科技", "国际", "民生"],
+          "topics": [
+            {"title": "三句话讲清今天的全球财经热点", "hook": "用最短的话告诉你为什么市场在动", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["财经"], "keywords": "财经日报, 市场, 短评"},
+            {"title": "今日科技圈最值得关注的一件事", "hook": "不是新产品发布 是规则变化", "level": "人人能懂", "intent": "探讨影响", "audience": "完全小白", "angles": ["科技"], "keywords": "科技日报, 行业动态"}
+          ]
+        },
+        {
+          "id": "history_recap",
+          "name": "历史回顾",
+          "emoji": "📜",
+          "one_liner": "60-120s 历史片段 · 故事化播报",
+          "scenes": ["人物", "事件", "战争", "经济史", "技术史"],
+          "topics": [
+            {"title": "一百年前的今天 这个人改变了世界", "hook": "他做的决定 你今天还在受益", "level": "人人能懂", "intent": "引发共鸣", "audience": "完全小白", "angles": ["人物"], "keywords": "历史, 人物"},
+            {"title": "二战如果美国不参战 世界会怎样", "hook": "三个变量 推演平行历史", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["战争"], "keywords": "二战, 历史推演"}
+          ]
+        },
+        {
+          "id": "science_quick",
+          "name": "科普快讯",
+          "emoji": "🔬",
+          "one_liner": "30-60s 一个科学/技术新概念 · 入门讲清",
+          "scenes": ["AI", "生物", "物理", "天文", "医学"],
+          "topics": [
+            {"title": "什么是 AGI 一分钟讲清楚", "hook": "通用人工智能不是更强的 ChatGPT", "level": "人人能懂", "intent": "搞懂概念", "audience": "完全小白", "angles": ["AI"], "keywords": "AGI, 通用人工智能"},
+            {"title": "量子纠缠到底神奇在哪", "hook": "两个粒子隔着银河系也能瞬间感应", "level": "需要点底子", "intent": "搞懂概念", "audience": "有点基础", "angles": ["物理"], "keywords": "量子, 纠缠"}
+          ]
+        },
+        {
+          "id": "event_explain",
+          "name": "事件解读",
+          "emoji": "🔍",
+          "one_liner": "60-90s 一个热点事件 · 三层深度解析",
+          "scenes": ["国际", "经济", "社会", "科技", "环保"],
+          "topics": [
+            {"title": "OpenAI 这次发布到底意味着什么 三层解读", "hook": "表面是产品 中间是路线 底层是行业格局", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["科技"], "keywords": "OpenAI, AI 行业"},
+            {"title": "美联储这次决议为什么市场反向解读了", "hook": "鹰派表态 + 鸽派落地 = 市场抢跑", "level": "需要点底子", "intent": "探讨影响", "audience": "有点基础", "angles": ["经济"], "keywords": "美联储, 利率决议"}
+          ]
+        }
+      ]
+    }
+  ]
+}

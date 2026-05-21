@@ -1,0 +1,165 @@
+{% extends "_news_layout.html" %}
+{% block page_title %}选题 · {{ news_title or video_id }}{% endblock %}
+
+{% block news_step_content %}
+<div x-data="newsTopic()" class="space-y-5">
+
+  {% include "_forge_brief_banner.html" %}
+
+  <!-- 顶部参数条 -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-4">
+      <h2 class="font-display text-[18px] font-semibold text-ink-900">步骤 1 · 选题</h2>
+      <p class="mt-0.5 text-[12px] text-ink-500">填关键词 → AI 出 6 条候选 → 锁定一条进入文案</p>
+    </div>
+
+    <!-- 模式 -->
+    <div class="mb-4">
+      <label class="block text-[11px] font-bold text-ink-700 mb-1.5">口播模式</label>
+      <div class="flex gap-2">
+        <button type="button" @click="form.mode = 'single'"
+                :class="form.mode === 'single' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-ink-700 border-ink-200 hover:border-emerald-400'"
+                class="flex-1 px-3 py-2 rounded-lg border text-[12px] font-semibold transition flex items-center justify-center gap-1.5">
+          <i data-lucide="user" class="w-3.5 h-3.5"></i>
+          <span>单人口播</span>
+        </button>
+        <button type="button" disabled
+                class="flex-1 px-3 py-2 rounded-lg border-2 border-dashed border-ink-200 text-ink-400 text-[12px] font-semibold flex items-center justify-center gap-1.5 cursor-not-allowed">
+          <i data-lucide="users" class="w-3.5 h-3.5"></i>
+          <span>对话口播（v1）</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 关键词 -->
+    <div class="mb-4">
+      <label class="block text-[11px] font-bold text-ink-700 mb-1">关键词 / 主题 <span class="text-rose-500">*</span></label>
+      <input type="text" x-model="form.keywords"
+             placeholder="例：今日财经速递 / 量子纠缠是什么 / 疯狂动物园趣闻"
+             class="w-full h-9 px-3 rounded-lg border border-ink-200 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100 text-[13px]">
+    </div>
+
+    <!-- 受众 + 时长 -->
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      <div>
+        <label class="block text-[11px] font-bold text-ink-700 mb-1">意图</label>
+        <select x-model="form.intent" class="w-full h-9 px-2 rounded-lg border border-ink-200 focus:border-emerald-400 outline-none text-[12px]">
+          <option>搞懂概念</option><option>探讨影响</option><option>学会操作</option><option>引发共鸣</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-[11px] font-bold text-ink-700 mb-1">受众</label>
+        <select x-model="form.audience" class="w-full h-9 px-2 rounded-lg border border-ink-200 focus:border-emerald-400 outline-none text-[12px]">
+          <option>完全小白</option><option>有点基础</option><option>进阶用户</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-[11px] font-bold text-ink-700 mb-1">目标时长</label>
+        <select x-model.number="form.duration_sec" class="w-full h-9 px-2 rounded-lg border border-ink-200 focus:border-emerald-400 outline-none text-[12px]">
+          <option :value="30">30 秒</option><option :value="45">45 秒</option><option :value="60">60 秒</option><option :value="90">90 秒</option>
+        </select>
+      </div>
+    </div>
+
+    <button type="button" @click="generate()" :disabled="loading || !form.keywords.trim()"
+            class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-2 disabled:bg-ink-300 disabled:cursor-not-allowed">
+      <i data-lucide="sparkles" class="w-4 h-4" :class="loading ? 'animate-spin' : ''"></i>
+      <span x-text="loading ? `AI 生成中… ${elapsed}s` : '生成候选选题'"></span>
+    </button>
+    <div x-show="error" x-text="error" class="mt-2 text-[12px] text-rose-600"></div>
+  </div>
+
+  <!-- 候选列表 -->
+  <div x-show="topics.length > 0" class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-3 flex items-center justify-between">
+      <div class="font-display font-semibold text-[14px] text-ink-900">候选选题 · 点一条锁定</div>
+      <span class="text-[11px] text-ink-400" x-text="`共 ${topics.length} 条 · ${provider} · ¥${(cost||0).toFixed(4)}`"></span>
+    </div>
+    <div class="space-y-2">
+      <template x-for="t in topics" :key="t.id">
+        <button type="button" @click="pick(t)"
+                :class="picked && picked.id === t.id ? 'border-emerald-500 bg-emerald-50/50 shadow-medium' : 'border-ink-200 hover:border-emerald-400 hover:bg-emerald-50/20'"
+                class="w-full text-left p-3.5 rounded-xl border-2 transition">
+          <div class="flex items-start gap-2">
+            <span class="shrink-0 w-6 h-6 rounded-md bg-emerald-100 text-emerald-700 text-[11px] font-bold flex items-center justify-center"
+                  x-text="t.id"></span>
+            <div class="flex-1 min-w-0">
+              <div class="font-semibold text-[13.5px] text-ink-900 leading-snug" x-text="t.title"></div>
+              <div class="text-[11.5px] text-ink-600 italic mt-0.5" x-text="t.hook ? '「'+t.hook+'」' : ''"></div>
+              <div class="mt-1.5 flex flex-wrap gap-1" x-show="t.angle">
+                <span class="text-[10px] text-ink-500" x-text="'#'+(t.angle||'')"></span>
+              </div>
+            </div>
+            <i data-lucide="check" class="w-4 h-4 text-emerald-600" x-show="picked && picked.id === t.id"></i>
+          </div>
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <!-- 下一步 -->
+  <div class="flex items-center justify-end">
+    <button type="button" @click="next()" :disabled="!picked"
+            class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-1.5 disabled:bg-ink-300 disabled:cursor-not-allowed">
+      <span>下一步 · 生成文案</span>
+      <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    </button>
+  </div>
+
+</div>
+
+<script>
+function newsTopic() {
+  const init = {{ news_data | tojson }};
+  return {
+    form: {
+      mode: init.mode || 'single',
+      keywords: init.topic_keywords || '',
+      intent: init.topic_intent || '搞懂概念',
+      audience: init.topic_audience || '完全小白',
+      duration_sec: init.duration_sec || 60,
+    },
+    topics: init.topic_pool || [],
+    picked: init.topic_picked || null,
+    provider: '',
+    cost: 0,
+    loading: false,
+    error: '',
+    elapsed: 0,
+    _tick: null,
+    async generate() {
+      if (!this.form.keywords.trim()) return;
+      this.loading = true; this.error = ''; this.elapsed = 0;
+      const t0 = Date.now();
+      this._tick = setInterval(() => { this.elapsed = Math.round((Date.now()-t0)/1000); }, 500);
+      try {
+        const r = await fetch(`/api/news/{{ video_id }}/generate-topics`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(this.form),
+        });
+        const data = await r.json();
+        if (!data.ok) { this.error = data.error || '生成失败'; return; }
+        this.topics = data.topics; this.provider = data.provider; this.cost = data.cost;
+        setTimeout(() => window.lucide?.createIcons(), 50);
+      } catch(e) { this.error = '网络错误: ' + e.message; }
+      finally { this.loading = false; clearInterval(this._tick); }
+    },
+    async pick(t) {
+      const r = await fetch(`/api/news/{{ video_id }}/pick-topic`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({topic: t}),
+      });
+      const data = await r.json();
+      if (data.ok) { this.picked = t; setTimeout(()=>window.lucide?.createIcons(), 50); }
+      else alert('保存失败: ' + (data.error || ''));
+    },
+    next() {
+      if (!this.picked) return;
+      location.href = `/project/{{ video_id }}/news/script`;
+    },
+  };
+}
+</script>
+{% endblock %}

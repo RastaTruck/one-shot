@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-15",
+  "schema_note": "news 管线音色注册表。edge_tts 是免费免合规风险的稳定选项；fish_audio 是公共市场角色音色（用户上传克隆），效果参差。试听样本固定存 data/voice_samples/<provider>/<voice_id>.mp3。",
+  "providers": [
+    {
+      "id": "edge_tts",
+      "name": "Edge TTS · 微软中文",
+      "blurb": "免费稳定 · 4 男 1 女 · 解说员标准",
+      "voices": [
+        {"id": "zh-CN-XiaoxiaoNeural", "name": "晓晓", "desc": "女声温暖亲和", "gender": "female", "tone": "warm"},
+        {"id": "zh-CN-YunxiNeural",    "name": "云希", "desc": "男声轻快随性", "gender": "male",   "tone": "casual"},
+        {"id": "zh-CN-YunjianNeural",  "name": "云健", "desc": "男声沉稳讲解", "gender": "male",   "tone": "steady"},
+        {"id": "zh-CN-XiaoyiNeural",   "name": "晓伊", "desc": "女声灵动",     "gender": "female", "tone": "lively"},
+        {"id": "zh-CN-YunyangNeural",  "name": "云扬", "desc": "男声新闻播报", "gender": "male",   "tone": "news"}
+      ]
+    },
+    {
+      "id": "fish_audio",
+      "name": "Fish Audio · 角色音色",
+      "blurb": "Fish 公共市场克隆模型 · 当前 4 个《疯狂动物城》尼克狐候选（用户验证均非原声但有电影感）",
+      "voices": [
+        {
+          "id": "1c07ac24a3014be0a12757ce7067541b",
+          "name": "尼克狐 D",
+          "desc": "raspy + sarcastic + charismatic（沙哑+讽刺+魅力）",
+          "gender": "male",
+          "sample_url": "/data/voice_samples/nick_fox/D_raspy_sarcastic.mp3"
+        },
+        {
+          "id": "67f314ac144e49f7a6285b2cc3870c6c",
+          "name": "尼克狐 E",
+          "desc": "deep + smooth + cynical（中文版 · 慵懒低沉）",
+          "gender": "male",
+          "sample_url": "/data/voice_samples/nick_fox/E_deep_smooth_cynical.mp3"
+        },
+        {
+          "id": "56815e59745f4dd088bd28281918db4c",
+          "name": "尼克狐 F",
+          "desc": "sarcastic + charming（讽刺+撩人）",
+          "gender": "male",
+          "sample_url": "/data/voice_samples/nick_fox/F_sarcastic_charming.mp3"
+        },
+        {
+          "id": "977911aa0b0f46adb5551a7917e2dc40",
+          "name": "尼克狐 G",
+          "desc": "Jason Bateman 标注版（电影原声演员）",
+          "gender": "male",
+          "sample_url": "/data/voice_samples/nick_fox/G_jason_bateman.mp3"
+        }
+      ]
+    }
+  ],
+  "subtitle_styles": [
+    {
+      "id": "classic_white",
+      "name": "经典白字",
+      "desc": "白字+黑描边 · 短视频标配",
+      "ass_style": "PlayResX=1080,PlayResY=1920,FontName=PingFang SC,FontSize=84,Bold=1,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=6,Shadow=2,Alignment=2,MarginV=380,WrapStyle=0"
+    },
+    {
+      "id": "modern_orange",
+      "name": "现代橙底",
+      "desc": "白字+橙色底 · 综艺/段子感",
+      "ass_style": "PlayResX=1080,PlayResY=1920,FontName=PingFang SC,FontSize=78,Bold=1,PrimaryColour=&HFFFFFF,OutlineColour=&H0C8AF4,BackColour=&H0C8AF4,BorderStyle=3,Outline=4,Shadow=0,Alignment=2,MarginV=380,WrapStyle=0"
+    }
+  ],
+  "chyron_styles": [
+    {
+      "id": "znn_intl",
+      "name": "ZNN 国际新闻 · 红蓝白",
+      "desc": "美式 CNN 风 · 红斜块 + 深蓝副条 + 白底大主条 · GSAP 流光",
+      "engine": "hyperframes",
+      "template_id": "funny_zoo",
+      "bar_height_ratio": 0.22
+    },
+    {
+      "id": "znn_finance",
+      "name": "ZNN 财经/科技 · 黑金",
+      "desc": "深沉财经风 · 黑底金边 + 宋体主标题 + ON AIR 红点 · 全程流光",
+      "engine": "hyperframes",
+      "template_id": "black_gold",
+      "bar_height_ratio": 0.22
+    },
+    {
+      "id": "znn_intl_pil",
+      "name": "ZNN 国际新闻 (PIL · 旧)",
+      "desc": "PIL 渲染版 · hyperframes 不可用时的 fallback",
+      "hidden": true,
+      "engine": "pil_overlay",
+      "main_bg_hex": "FAFAFA",
+      "main_text_hex": "111111",
+      "sub_bg_hex": "0A2E5C",
+      "sub_text_hex": "FFFFFF",
+      "accent_bg_hex": "D11A2A",
+      "accent_text_hex": "FFFFFF",
+      "accent_line_hex": "D4A04A",
+      "time_color_hex": "FFC845",
+      "bar_height_ratio": 0.22
+    },
+    {
+      "id": "znn_breaking",
+      "name": "ZNN 突发新闻 (PIL · 旧)",
+      "desc": "突发新闻红 PIL · 老引擎",
+      "hidden": true,
+      "engine": "pil_overlay",
+      "main_bg_hex": "FAFAFA",
+      "main_text_hex": "111111",
+      "sub_bg_hex": "1A0F0F",
+      "sub_text_hex": "FFE0E0",
+      "accent_bg_hex": "E10F0F",
+      "accent_text_hex": "FFFFFF",
+      "accent_line_hex": "FFD700",
+      "time_color_hex": "FFD700",
+      "bar_height_ratio": 0.22
+    },
+    {
+      "id": "cctv_red",
+      "name": "央视红 (drawbox · 最旧)",
+      "desc": "底部红条 ffmpeg_drawbox · v0 简版",
+      "hidden": true,
+      "engine": "ffmpeg_drawbox",
+      "bar_color_hex": "CC2222",
+      "label_color_hex": "FFFFFF",
+      "label_bg_hex": "8C0000",
+      "title_color_hex": "FFFFFF",
+      "bar_height_ratio": 0.17
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{% extends "_news_layout.html" %}
+{% block page_title %}镜头模板 · {{ news_title or video_id }}{% endblock %}
+
+{% block news_step_content %}
+<div x-data="newsPresenter()" class="space-y-5">
+
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-4">
+      <h2 class="font-display text-[18px] font-semibold text-ink-900">步骤 3 · 镜头模板系列</h2>
+      <p class="mt-0.5 text-[12px] text-ink-500">
+        每个系列 = 一个口播角色 / IP，下挂多个机位 take。后面合成时按节奏循环切换这些机位。
+      </p>
+    </div>
+
+    {% if not series_list %}
+    <div class="p-6 rounded-xl bg-amber-50 border border-amber-200 text-center text-[12px] text-amber-800">
+      <i data-lucide="folder-open" class="w-6 h-6 mx-auto mb-2"></i>
+      <div>镜头模板库还是空的。请把 mp4 放到 <code>data/shot_templates/&lt;系列id&gt;/</code> 并在 <code>config/shot_templates.json</code> 注册。</div>
+    </div>
+    {% else %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {% for s in series_list %}
+      <button type="button" @click="pickSeries('{{ s.id }}')"
+              :class="picked === '{{ s.id }}' ? 'border-emerald-500 bg-emerald-50/40 shadow-medium' : 'border-ink-200 hover:border-emerald-400 hover:shadow-soft'"
+              class="text-left p-4 rounded-xl border-2 transition">
+        <div class="flex items-start gap-3">
+          <div class="shrink-0 w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center text-[24px]">
+            {{ s.emoji }}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-display font-semibold text-[14px] text-ink-900">{{ s.name }}</div>
+            <div class="text-[11px] text-ink-500 mt-0.5 leading-snug">{{ s.description }}</div>
+            <div class="mt-1.5 text-[10px] text-ink-400">
+              {{ s.takes | length }} 个机位 ·
+              {% set total_dur = s.takes | sum(attribute='duration_sec') %}
+              共 {{ "%.1f"|format(total_dur) }} 秒素材
+            </div>
+          </div>
+        </div>
+
+        <!-- take 缩略预览 -->
+        <div class="mt-3 grid grid-cols-2 gap-2">
+          {% for t in s.takes[:4] %}
+          <div class="rounded-lg overflow-hidden border border-ink-200 bg-ink-900">
+            <video muted preload="metadata" class="w-full h-24 object-cover" src="{{ t.url }}#t=0.5"></video>
+            <div class="px-1.5 py-0.5 text-[9px] text-ink-300 bg-black/60 backdrop-blur-sm">
+              {{ t.label }} · {{ "%.1f"|format(t.duration_sec) }}s
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="flex items-center justify-between">
+    <a href="/project/{{ video_id }}/news/script" class="btn-ghost text-[12px]">
+      <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>返回文案</span>
+    </a>
+    <button type="button" @click="next()" :disabled="!picked"
+            class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-1.5 disabled:bg-ink-300">
+      <span>下一步 · 配音</span>
+      <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    </button>
+  </div>
+
+</div>
+
+<script>
+function newsPresenter() {
+  return {
+    picked: "{{ news_data.shot_template_id or '' }}",
+    async pickSeries(sid) {
+      const r = await fetch(`/api/news/{{ video_id }}/pick-shot-template`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({series_id: sid}),
+      });
+      const data = await r.json();
+      if (data.ok) this.picked = sid;
+      else alert('保存失败: ' + (data.error || ''));
+    },
+    next() { if (this.picked) location.href = `/project/{{ video_id }}/news/audio`; },
+  };
+}
+</script>
+{% endblock %}

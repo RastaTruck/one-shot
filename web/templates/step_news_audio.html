@@ -1,0 +1,397 @@
+{% extends "_news_layout.html" %}
+{% block page_title %}成片要素 · {{ news_title or video_id }}{% endblock %}
+
+{% block news_step_content %}
+<div x-data="newsBible()" x-init="init()" class="space-y-5">
+
+  <!-- ===== 分组 1 · 声音 ===== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-4 flex items-start justify-between">
+      <div>
+        <h2 class="font-display text-[18px] font-semibold text-ink-900 flex items-center gap-2">
+          <i data-lucide="mic" class="w-4 h-4 text-emerald-600"></i>
+          <span>🎙️ 声音 · 主时钟</span>
+        </h2>
+        <p class="mt-0.5 text-[12px] text-ink-500">
+          这条配音决定后面切镜节奏，所以叫主时钟。先试听挑一个，再合成。
+        </p>
+      </div>
+      <audio x-ref="player" :src="previewUrl" class="hidden" controls></audio>
+    </div>
+
+    <!-- provider 切换 tabs -->
+    <div class="flex items-center gap-1 mb-3 border-b border-ink-100">
+      <template x-for="prov in providers" :key="prov.id">
+        <button type="button" @click="form.voice_provider = prov.id; form.voice_id = ''"
+                :class="form.voice_provider === prov.id
+                  ? 'border-emerald-600 text-emerald-700 font-semibold'
+                  : 'border-transparent text-ink-500 hover:text-ink-900'"
+                class="px-3 py-2 text-[12.5px] border-b-2 -mb-px transition flex items-center gap-1.5">
+          <span x-text="prov.name"></span>
+          <span class="text-[10px] text-ink-400" x-text="`(${prov.voices.length})`"></span>
+        </button>
+      </template>
+    </div>
+
+    <!-- 当前 provider 的 blurb -->
+    <div class="text-[11px] text-ink-500 mb-3 leading-snug"
+         x-text="currentProvider()?.blurb || ''"></div>
+
+    <!-- voice 卡片网格 -->
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+      <template x-for="v in currentProvider()?.voices || []" :key="v.id">
+        <div class="relative">
+          <button type="button" @click="form.voice_id = v.id"
+                  :class="form.voice_id === v.id
+                    ? 'border-emerald-500 bg-emerald-50/40 shadow-soft'
+                    : 'border-ink-200 hover:border-emerald-400 hover:bg-ink-50/30'"
+                  class="w-full text-left px-3 py-2.5 rounded-xl border-2 transition">
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold text-[12.5px] text-ink-900 leading-tight" x-text="v.name"></div>
+                <div class="text-[10.5px] text-ink-500 mt-0.5 leading-snug line-clamp-2" x-text="v.desc"></div>
+              </div>
+              <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    :class="v.gender === 'female' || v.gender === 'Female' ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'"
+                    x-text="(v.gender === 'female' || v.gender === 'Female') ? '♀' : '♂'"></span>
+            </div>
+          </button>
+          <!-- 试听按钮 · 浮于右下 -->
+          <button type="button" @click="preview(v.id)" :disabled="previewLoading === v.id"
+                  class="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-ink-900 text-white text-[10px] flex items-center justify-center hover:bg-emerald-700 transition shadow disabled:bg-ink-400"
+                  :title="`试听 ${v.name}`">
+            <i data-lucide="play" class="w-3 h-3" x-show="previewLoading !== v.id"></i>
+            <i data-lucide="loader-2" class="w-3 h-3 animate-spin" x-show="previewLoading === v.id"></i>
+          </button>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== 分组 2 · 字幕 ===== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="font-display text-[18px] font-semibold text-ink-900 flex items-center gap-2">
+        <i data-lucide="captions" class="w-4 h-4 text-emerald-600"></i>
+        <span>📝 字幕</span>
+      </h2>
+      <label class="flex items-center gap-2 text-[12px] font-medium text-ink-700 cursor-pointer">
+        <input type="checkbox" x-model="form.subtitle_burn"
+               class="w-4 h-4 rounded accent-emerald-600">
+        <span>烧录字幕进视频</span>
+      </label>
+    </div>
+
+    <div class="grid grid-cols-2 gap-2.5" x-show="form.subtitle_burn">
+      <template x-for="s in subtitleStyles" :key="s.id">
+        <button type="button" @click="form.subtitle_style = s.id"
+                :class="form.subtitle_style === s.id
+                  ? 'border-emerald-500 bg-emerald-50/40 shadow-soft'
+                  : 'border-ink-200 hover:border-emerald-400'"
+                class="text-left px-3 py-2.5 rounded-xl border-2 transition">
+          <div class="font-semibold text-[12.5px] text-ink-900" x-text="s.name"></div>
+          <div class="text-[10.5px] text-ink-500 mt-0.5" x-text="s.desc"></div>
+        </button>
+      </template>
+    </div>
+
+    <div x-show="!form.subtitle_burn" class="text-[12px] text-ink-500 px-3 py-2 rounded-lg bg-ink-50">
+      不烧字幕 — 成片纯净，发布平台自行加字幕
+    </div>
+  </div>
+
+  <!-- ===== 分组 2.5 · 背景音乐 (BGM) ===== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="font-display text-[18px] font-semibold text-ink-900 flex items-center gap-2">
+        <i data-lucide="music" class="w-4 h-4 text-emerald-600"></i>
+        <span>🎵 背景音乐 (BGM)</span>
+        <span class="text-[10px] font-normal text-ink-400">来自 ./口播bgm/ · 增删文件刷新即生效</span>
+      </h2>
+      <span class="text-[11px] text-ink-500" x-show="bgmList.length > 1"
+            x-text="`${bgmList.length - 1} 个可选`"></span>
+    </div>
+
+    <audio x-ref="bgmPlayer" :src="bgmPreviewUrl" class="hidden" controls></audio>
+
+    <div x-show="bgmList.length === 0" class="text-[12px] text-ink-500 px-3 py-2 rounded-lg bg-ink-50">
+      口播bgm/ 目录为空 — 放 .mp3 / .wav / .m4a 文件进去再刷新本页
+    </div>
+
+    <div x-show="bgmList.length > 0" class="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+      <template x-for="item in bgmList" :key="item.id">
+        <div class="relative">
+          <button type="button" @click="form.bgm_id = item.id"
+                  :class="form.bgm_id === item.id
+                    ? 'border-emerald-500 bg-emerald-50/40 shadow-soft'
+                    : 'border-ink-200 hover:border-emerald-400 hover:bg-ink-50/30'"
+                  class="w-full text-left px-3 py-2.5 rounded-xl border-2 transition">
+            <div class="flex items-start gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold text-[12.5px] text-ink-900 leading-tight truncate" x-text="item.name || '不加 BGM'"></div>
+                <div class="text-[10.5px] text-ink-500 mt-0.5 leading-snug truncate" x-text="item.desc"></div>
+              </div>
+            </div>
+          </button>
+          <!-- 试听 · 浮于右下（"不加 BGM" 项无试听） -->
+          <button type="button" x-show="item.url" @click="previewBgm(item)"
+                  class="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-ink-900 text-white text-[10px] flex items-center justify-center hover:bg-emerald-700 transition shadow"
+                  :title="`试听 ${item.name}`">
+            <i data-lucide="play" class="w-3 h-3"></i>
+          </button>
+        </div>
+      </template>
+    </div>
+
+    <!-- 音量调节（仅在选中真实 BGM 时显示） -->
+    <div x-show="form.bgm_id" class="mt-4 p-3 rounded-lg bg-ink-50 border border-ink-100">
+      <div class="flex items-center justify-between mb-2">
+        <label class="text-[11px] font-bold text-ink-700 uppercase tracking-wider">BGM 音量</label>
+        <span class="text-[12px] font-mono font-bold text-ink-900">
+          <span x-text="form.bgm_volume_db"></span> dB
+          <span class="text-[10px] text-ink-500 font-normal ml-1" x-text="form.bgm_volume_db >= -10 ? '(强)' : form.bgm_volume_db >= -20 ? '(中)' : '(轻)'"></span>
+        </span>
+      </div>
+      <input type="range" min="-40" max="0" step="1"
+             x-model.number="form.bgm_volume_db"
+             class="w-full accent-emerald-600">
+      <div class="flex justify-between text-[9.5px] text-ink-400 mt-1">
+        <span>-40 dB · 极轻</span><span>-16 dB · 默认</span><span>0 dB · 与人声同响</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 分组 3 · 新闻栏目条 ===== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="font-display text-[18px] font-semibold text-ink-900 flex items-center gap-2">
+        <i data-lucide="newspaper" class="w-4 h-4 text-emerald-600"></i>
+        <span>📺 新闻栏目条</span>
+        <span class="text-[10px] font-normal text-ink-400">底部装饰层</span>
+      </h2>
+      <label class="flex items-center gap-2 text-[12px] font-medium text-ink-700 cursor-pointer">
+        <input type="checkbox" x-model="form.chyron_enabled"
+               class="w-4 h-4 rounded accent-emerald-600">
+        <span>叠加新闻栏目条</span>
+      </label>
+    </div>
+
+    <div x-show="form.chyron_enabled" class="space-y-3">
+      <!-- 风格选择 -->
+      <div>
+        <label class="block text-[10px] font-bold text-ink-500 uppercase tracking-wider mb-1.5">风格</label>
+        <div class="grid grid-cols-2 gap-2.5">
+          <template x-for="s in chyronStyles" :key="s.id">
+            <button type="button" @click="form.chyron_style = s.id"
+                    :class="form.chyron_style === s.id
+                      ? 'border-emerald-500 shadow-soft'
+                      : 'border-ink-200 hover:border-emerald-400'"
+                    class="text-left px-3 py-2.5 rounded-xl border-2 transition relative overflow-hidden">
+              <div class="flex items-center gap-1.5 mb-0.5">
+                <span class="text-[9px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 text-emerald-700 uppercase tracking-wider"
+                      x-show="s.engine === 'hyperframes'">Hyper</span>
+                <div class="font-semibold text-[12.5px] text-ink-900" x-text="s.name"></div>
+              </div>
+              <div class="text-[10.5px] text-ink-500 mt-0.5 leading-snug" x-text="s.desc"></div>
+              <!-- mini preview bar：hyperframes 用预定义双色条，pil/drawbox 用 hex -->
+              <template x-if="s.template_id === 'funny_zoo'">
+                <div class="mt-2 h-3 rounded-sm flex overflow-hidden bg-white">
+                  <div class="w-1/4 h-full bg-[#E62436]"></div>
+                  <div class="flex-1 h-full bg-[#0A2E5C]"></div>
+                  <div class="w-[18%] h-full bg-[#E62436]"></div>
+                </div>
+              </template>
+              <template x-if="s.template_id === 'black_gold'">
+                <div class="mt-2 h-3 rounded-sm flex overflow-hidden" style="background:#1A1F2E">
+                  <div class="w-[8px] h-full" style="background:linear-gradient(180deg,#C8A654,#8F7434)"></div>
+                  <div class="flex-1 h-full" style="background:#0A0E1A"></div>
+                  <div class="w-[22%] h-full" style="background:#0A0E1A;border-left:1px solid rgba(200,166,84,0.5)"></div>
+                </div>
+              </template>
+              <template x-if="!s.template_id">
+                <div class="mt-2 h-3 rounded-sm flex overflow-hidden" :style="`background:#${s.bar_color_hex || 'CC2222'}`">
+                  <div class="w-1/4 h-full" :style="`background:#${s.label_bg_hex || '8C0000'}`"></div>
+                </div>
+              </template>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- 文字 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-[10px] font-bold text-ink-500 uppercase tracking-wider mb-1">栏目名 (左侧 ≤6 字)</label>
+          <input type="text" x-model="form.chyron_label" maxlength="6"
+                 placeholder="新闻速递 / 财经观察 / 游戏攻略"
+                 class="w-full h-9 px-3 rounded-lg border border-ink-200 focus:border-emerald-400 outline-none text-[13px]">
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-ink-500 uppercase tracking-wider mb-1">标题 (中部 ≤16 字)</label>
+          <input type="text" x-model="form.chyron_title" maxlength="16"
+                 :placeholder="defaultTitle || '留空则用文案标题'"
+                 class="w-full h-9 px-3 rounded-lg border border-ink-200 focus:border-emerald-400 outline-none text-[13px]">
+        </div>
+      </div>
+    </div>
+
+    <div x-show="!form.chyron_enabled" class="text-[12px] text-ink-500 px-3 py-2 rounded-lg bg-ink-50">
+      不叠加栏目条 — 视频底部纯净
+    </div>
+  </div>
+
+  <!-- ===== 文案预览（小卡） ===== -->
+  <details class="rounded-xl border border-ink-100 bg-ink-50/40 px-3 py-2">
+    <summary class="text-[11px] font-semibold text-ink-600 cursor-pointer">查看待配音文案 ({{ news_data.script_char_count }} 字)</summary>
+    <div class="mt-2 p-2 text-[12px] text-ink-700 leading-relaxed whitespace-pre-wrap">{{ news_data.script_text or '（还没有文案）' }}</div>
+  </details>
+
+  <!-- ===== 合成动作 ===== -->
+  <div class="rounded-2xl bg-emerald-50/60 border border-emerald-200 p-4 flex items-center gap-3 flex-wrap">
+    <button type="button" @click="synth()" :disabled="!form.voice_id || loading || !hasScript"
+            class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-2 disabled:bg-ink-300 disabled:cursor-not-allowed">
+      <i data-lucide="mic" class="w-4 h-4" :class="loading ? 'animate-pulse' : ''"></i>
+      <span x-text="loading ? `合成中… ${elapsed}s` : (audioUrl ? '重新合成配音' : '合成配音')"></span>
+    </button>
+    <span x-show="duration > 0" class="text-[12px] text-ink-700">
+      时长 <b class="text-ink-900" x-text="duration + 's'"></b>
+    </span>
+    <span x-show="!form.voice_id" class="text-[11px] text-ink-500">↑ 先挑一个声音</span>
+  </div>
+
+  <div x-show="error" x-text="error" class="px-3 py-2 rounded bg-rose-50 text-rose-700 text-[12px]"></div>
+
+  <!-- ===== 已合成配音预览 ===== -->
+  <div x-show="audioUrl" class="p-3 rounded-xl bg-white border border-ink-100">
+    <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-wider mb-2">已合成配音</div>
+    <audio controls class="w-full" :src="audioUrl"></audio>
+  </div>
+
+  <!-- ===== 底部翻页 ===== -->
+  <div class="flex items-center justify-between pt-2">
+    <a href="/project/{{ video_id }}/news/presenter" class="btn-ghost text-[12px]">
+      <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i><span>返回镜头模板</span>
+    </a>
+    <button type="button" @click="next()" :disabled="!audioUrl"
+            class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold transition flex items-center gap-1.5 disabled:bg-ink-300">
+      <span>下一步 · 视频合成</span>
+      <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    </button>
+  </div>
+
+</div>
+
+<script>
+function newsBible() {
+  const init = {{ news_data | tojson }};
+  return {
+    providers: [],
+    subtitleStyles: [],
+    chyronStyles: [],
+    defaultTitle: init.script_title || '',
+    form: {
+      voice_provider: init.voice_provider || 'edge_tts',
+      voice_id: init.voice_id || '',
+      subtitle_burn: init.subtitle_burn !== false,
+      subtitle_style: init.subtitle_style || 'classic_white',
+      chyron_enabled: !!init.chyron_enabled,
+      chyron_style: init.chyron_style || 'znn_intl',
+      chyron_label: init.chyron_label || '新闻速递',
+      chyron_title: init.chyron_title || '',
+      bgm_id: init.bgm_id || '',
+      bgm_volume_db: typeof init.bgm_volume_db === 'number' ? init.bgm_volume_db : -16,
+    },
+    bgmList: [],
+    bgmPreviewUrl: '',
+    bgmPreviewId: '',
+    audioUrl: init.audio_path ? '/' + init.audio_path + '?t=' + Date.now() : '',
+    duration: init.audio_duration_sec || 0,
+    hasScript: !!(init.script_text || '').trim(),
+    loading: false, error: '',
+    elapsed: 0, _tick: null,
+    previewUrl: '', previewLoading: '',
+    _formWatcher: null,
+
+    async init() {
+      try {
+        const r = await fetch('/api/news/voice_presets');
+        const d = await r.json();
+        this.providers = d.providers || [];
+        this.subtitleStyles = d.subtitle_styles || [];
+        this.chyronStyles = d.chyron_styles || [];
+        // 老项目存的 chyron_style 可能已退役（hidden），fallback 到第一个可见项
+        const visibleIds = this.chyronStyles.map(s => s.id);
+        if (this.form.chyron_style && !visibleIds.includes(this.form.chyron_style)) {
+          this.form.chyron_style = visibleIds[0] || 'znn_intl';
+        }
+      } catch(e) { this.error = '加载音色注册表失败: ' + e.message; }
+      try {
+        const rb = await fetch('/api/news/bgm_library');
+        const db = await rb.json();
+        this.bgmList = db.items || [];
+      } catch(e) { /* BGM 加载失败不阻塞主流程，UI 显示空 */ }
+      // 表单变化自动 debounced 保存 bible
+      this.$watch('form', () => this._scheduleSave(), {deep: true});
+      setTimeout(() => window.lucide?.createIcons(), 100);
+    },
+
+    previewBgm(item) {
+      if (!item.url) { // 'none' 占位
+        this.bgmPreviewUrl = ''; this.bgmPreviewId = '';
+        return;
+      }
+      this.bgmPreviewId = item.id;
+      this.bgmPreviewUrl = item.url + '?t=' + Date.now();
+      this.$nextTick(() => { this.$refs.bgmPlayer?.play(); });
+    },
+    currentProvider() {
+      return this.providers.find(p => p.id === this.form.voice_provider);
+    },
+    _scheduleSave() {
+      clearTimeout(this._formWatcher);
+      this._formWatcher = setTimeout(() => this.saveBible(), 500);
+    },
+    async saveBible() {
+      try {
+        await fetch(`/api/news/{{ video_id }}/save-bible`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(this.form),
+        });
+      } catch(e) {}
+    },
+    async preview(voiceId) {
+      this.previewLoading = voiceId;
+      try {
+        const r = await fetch('/api/news/preview-voice', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({voice_provider: this.form.voice_provider, voice_id: voiceId}),
+        });
+        const d = await r.json();
+        if (!d.ok) { this.error = d.error || '试听失败'; return; }
+        this.previewUrl = d.audio_url + '?t=' + Date.now();
+        this.$nextTick(() => { this.$refs.player?.play(); });
+      } catch(e) { this.error = '网络错误: ' + e.message; }
+      finally { this.previewLoading = ''; }
+    },
+    async synth() {
+      if (!this.form.voice_id) return;
+      this.loading = true; this.error = ''; this.elapsed = 0;
+      const t0 = Date.now();
+      this._tick = setInterval(() => { this.elapsed = Math.round((Date.now() - t0) / 1000); }, 500);
+      try {
+        const r = await fetch(`/api/news/{{ video_id }}/generate-audio`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(this.form),
+        });
+        const d = await r.json();
+        if (!d.ok) { this.error = d.error || '合成失败'; return; }
+        this.audioUrl = d.audio_url + '?t=' + Date.now();
+        this.duration = d.duration;
+      } catch(e) { this.error = '网络错误: ' + e.message; }
+      finally { this.loading = false; clearInterval(this._tick); }
+    },
+    next() { if (this.audioUrl) location.href = `/project/{{ video_id }}/news/video`; },
+  };
+}
+</script>
+{% endblock %}
