@@ -92,8 +92,8 @@
           字数 <b x-text="charCount"></b> · 估时 <b x-text="estDuration + 's'"></b>
         </span>
       </label>
-      <textarea x-model="script" @input="recount()" rows="12"
-                placeholder="点上面「生成文案」让 AI 出稿；也可以手敲或粘贴自己的稿"
+      <textarea x-model="script" @input="recount()" @blur="autoSegmentIfNeeded()" rows="12"
+                placeholder="点上面「生成文案」让 AI 出稿；也可以手敲或粘贴自己的稿（粘贴后失焦会自动切字幕单元）"
                 class="w-full px-3 py-2 rounded-lg border border-ink-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none text-[13px] leading-relaxed font-mono"></textarea>
     </div>
 
@@ -342,17 +342,23 @@ function newsScript() {
       }
     },
     async resegment() {
+      if (!this.script.trim()) { this.error = '还没有文案'; return; }
       this.resegmenting = true;
       try {
-        const r = await fetch(`/api/news/{{ video_id }}/segment-script`, {method:'POST'});
+        // 直接拿当前 textarea 内容去切 + 保存（save-script 端点：传 script 不传 units 即自动切）
+        const r = await fetch(`/api/news/{{ video_id }}/save-script`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({title: this.title, script: this.script}),
+        });
         const data = await r.json();
         if (data.ok) {
           this.units = (data.script_units || []).slice();
           this.recountUnits();
-          // 自动保存这次自动切分结果
-          this.markDirty();
-          clearTimeout(this._unitsSaveTimer);
-          this._unitsSaveTimer = setTimeout(() => this.saveUnits(), 300);
+          // save-script 已经持久化，前端无需再标 dirty
+          this.unitsDirty = false;
+          this.unitsSavedFlash = true;
+          setTimeout(() => { this.unitsSavedFlash = false; }, 1800);
         } else {
           this.error = data.error || '切分失败';
         }
@@ -361,6 +367,12 @@ function newsScript() {
       } finally {
         this.resegmenting = false;
         this.$nextTick(() => window.lucide?.createIcons());
+      }
+    },
+    autoSegmentIfNeeded() {
+      // textarea 失焦时：units 还空 + script 已有内容 → 自动切一次，不用 user 再点按钮
+      if (this.units.length === 0 && this.script.trim() && !this.resegmenting) {
+        this.resegment();
       }
     },
     mergeUp(i) {

@@ -1243,6 +1243,7 @@ async def api_news_save_bible(video_id: str, payload: dict):
         chyron_time_str=str(payload.get("chyron_time_str", "")).strip()[:10],
         bgm_id=bgm_id,
         bgm_volume_db=bgm_vol,
+        audio_speed=max(0.5, min(2.0, float(payload.get("audio_speed", 1.0) or 1.0))),
     )
     return JSONResponse({"ok": True})
 
@@ -1263,35 +1264,58 @@ async def api_news_generate_audio(video_id: str, payload: dict):
     voice_id = str(payload.get("voice_id", data.get("voice_id", ""))).strip()
     sub_burn = bool(payload.get("subtitle_burn", data.get("subtitle_burn", True)))
     sub_style = str(payload.get("subtitle_style", data.get("subtitle_style", "classic_white")))
+    # 语速档位（用户在 UI 4 档选）：1.05 快 / 1.0 正常 / 0.92 缓 / 0.85 慢
+    # ffmpeg atempo 是变速 factor：>1 加快、<1 减慢，preserves pitch
+    try:
+        audio_speed = float(payload.get("audio_speed", data.get("audio_speed", 1.0)))
+    except (TypeError, ValueError):
+        audio_speed = 1.0
+    audio_speed = max(0.5, min(2.0, audio_speed))
 
-    # TTS 输入构造：优先用 script_units（每个 unit 末尾 "。" 喂 → TTS 在每个 unit 边界真停顿，字幕能 1:1 对齐）
-    # 兼容老项目（无 units）→ 走原始 script 拆 A:/B: 前缀
-    units = data.get("script_units") or []
-    if units:
+    out_dir = _NEWS_AUDIO_DIR / video_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "voice.mp3"
+    raw_path = out_dir / ".voice_raw.mp3"  # 整段合成的原始 mp3，atempo 前
+
+    # 整段合成 —— 保留 Fish/Edge 自然 prosody，不切碎；字幕对齐走 librosa 找真停顿
+    # （per-unit 合成虽然对齐精，但 prosody 碎，用户反馈"断句不流畅"，故回滚）
+    if units := data.get("script_units"):
+        # 拿 units 拼成"对 TTS 友好的整段文本"——unit 之间补 "。" 让 TTS 在边界自然停顿
+        # 这些停顿后续被 librosa 检测出来 → 字幕能 1:1 对齐
         from pipeline.agents.news_script_segmenter import tts_text as _tts_text
-        plain = _tts_text(units)
+        plain = _tts_text(units, ssml_breaks=False)
     else:
         plain = "\n".join(
             line.split(":", 1)[-1].strip() if ":" in line else line
             for line in script.split("\n")
         )
-    out_dir = _NEWS_AUDIO_DIR / video_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "voice.mp3"
 
     if provider == "fish_audio":
         if not voice_id:
             return JSONResponse({"ok": False, "error": "Fish Audio 必须选一个角色音色"})
-        r = await _fish_audio.synthesize_async(plain, voice_id, out_path)
+        r = await _fish_audio.synthesize_async(plain, voice_id, raw_path)
     else:  # edge_tts
         if not voice_id or not _edge_tts.voice_exists(voice_id):
             voice_id = "zh-CN-XiaoxiaoNeural"
-        r = await _edge_tts.synthesize_async(plain, voice_id, out_path)
-
+        r = await _edge_tts.synthesize_async(plain, voice_id, raw_path)
     if not r.get("ok"):
         return JSONResponse({"ok": False, "error": r.get("error", "TTS 合成失败")})
 
+    # 应用 atempo 语速调节（如果 ≠ 1.0）
     from pipeline.tools import ffmpeg_client as _ffm
+    import subprocess as _sp
+    if abs(audio_speed - 1.0) > 0.001:
+        proc = _sp.run([
+            _ffm._ffmpeg_binary(), "-y", "-i", str(raw_path),
+            "-af", f"atempo={audio_speed:.3f}",
+            "-c:a", "libmp3lame", "-b:a", "128k", str(out_path),
+        ], capture_output=True, text=True, timeout=120)
+        if proc.returncode != 0:
+            # atempo 失败 fallback 用原始 mp3
+            raw_path.rename(out_path)
+    else:
+        raw_path.rename(out_path)
+
     dur = _ffm.probe_duration(str(out_path)) or 0.0
     rel_path = str(out_path.relative_to(_DATA_DIR.parent))
     _news_meta.update_news_data(
@@ -1302,6 +1326,7 @@ async def api_news_generate_audio(video_id: str, payload: dict):
         subtitle_style=sub_style,
         audio_path=rel_path,
         audio_duration_sec=round(dur, 2),
+        audio_speed=audio_speed,
         current_step=max(_news_meta.get_news_data(video_id).get("current_step", 4), 5),
     )
     return JSONResponse({

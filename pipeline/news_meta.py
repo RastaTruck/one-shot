@@ -67,6 +67,8 @@ DEFAULT_NEWS = {
     "bgm_volume_db": -16.0,          # BGM 相对音量（dB），人声不变，BGM 衰减
     "audio_path": None,              # 项目相对路径，如 data/news_audio/V0042/voice.mp3
     "audio_duration_sec": 0.0,
+    "audio_speed": 1.0,              # 语速档位：1.10 快 / 1.0 正常 / 0.92 缓 / 0.85 慢
+                                     # 走 ffmpeg atempo 后处理（preserves pitch）
     # 步骤 5 · 视频合成
     "final_video_path": None,        # 切镜+原音轨成片路径
     "switch_every": 6.0,             # 切镜节奏（秒）

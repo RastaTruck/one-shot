@@ -127,9 +127,18 @@ def display_text(unit: str) -> str:
     return _strip_trailing_punct(unit)
 
 
-def tts_text(units: list[str]) -> str:
+def tts_text(units: list[str], **_unused) -> str:
     """把 units 拼成喂 TTS 的字符串。
-    末尾没强标点的 unit 补一个 "。" 确保 TTS 在 unit 边界真停顿。"""
+
+    停顿策略最终方案（实测踩坑后的结论）：
+    - 每个 unit 末尾保证有强标点（默认补"。"）让 TTS 在边界停 ~150ms
+    - **不插入 SSML `<break/>` tag**：实测虽然 edge_tts 真识别，但每个 break
+      平均增加 ~2s 静音（无视 time 值），听感像断电
+    - **整体语速由 edge_tts_client.py 的 rate="-15%" 默认值控制**（~18% 慢于
+      默认），是"清晰不催"的甜点
+    - 双标点 "，。" 等小冗余 Azure TTS 会自动归一
+    - 关键字 ssml_breaks / break_ms 保留（**_unused）兼容老调用方
+    """
     if not units:
         return ""
     out: list[str] = []
@@ -137,7 +146,6 @@ def tts_text(units: list[str]) -> str:
         u = u.strip()
         if not u:
             continue
-        # \n 翻译为 "。" — TTS 不识别 \n 当停顿但识别 "。"
         u = u.replace("\n", "。").strip()
         if u and u[-1] not in _STRONG:
             u += "。"

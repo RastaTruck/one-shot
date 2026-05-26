@@ -100,6 +100,32 @@
     </div>
   </div>
 
+  <!-- ===== 分组 1.5 · 语速档位 ===== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="font-display text-[18px] font-semibold text-ink-900 flex items-center gap-2">
+        <i data-lucide="gauge" class="w-4 h-4 text-emerald-600"></i>
+        <span>🎚️ 语速档位</span>
+        <span class="text-[10px] font-normal text-ink-400">影响整段配音的播放速度（preserves pitch）</span>
+      </h2>
+    </div>
+    <div class="grid grid-cols-4 gap-2.5">
+      <template x-for="opt in speedOptions" :key="opt.value">
+        <button type="button" @click="form.audio_speed = opt.value; saveBible()"
+                :class="Math.abs(form.audio_speed - opt.value) < 0.001
+                  ? 'border-emerald-500 bg-emerald-50/40 shadow-soft'
+                  : 'border-ink-200 hover:border-emerald-400'"
+                class="text-left px-3 py-2.5 rounded-xl border-2 transition">
+          <div class="flex items-baseline gap-1.5">
+            <div class="font-semibold text-[13px] text-ink-900" x-text="opt.label"></div>
+            <div class="text-[10.5px] font-mono text-ink-500" x-text="opt.value.toFixed(2) + '×'"></div>
+          </div>
+          <div class="text-[10.5px] text-ink-500 mt-0.5" x-text="opt.desc"></div>
+        </button>
+      </template>
+    </div>
+  </div>
+
   <!-- ===== 分组 2.5 · 背景音乐 (BGM) ===== -->
   <div class="rounded-2xl bg-white border border-ink-200 p-5 shadow-soft">
     <div class="mb-3 flex items-center justify-between">
@@ -182,7 +208,7 @@
         <label class="block text-[10px] font-bold text-ink-500 uppercase tracking-wider mb-1.5">风格</label>
         <div class="grid grid-cols-2 gap-2.5">
           <template x-for="s in chyronStyles" :key="s.id">
-            <button type="button" @click="form.chyron_style = s.id"
+            <button type="button" @click="form.chyron_style = s.id; form.chyron_enabled = true; saveBible()"
                     :class="form.chyron_style === s.id
                       ? 'border-emerald-500 shadow-soft'
                       : 'border-ink-200 hover:border-emerald-400'"
@@ -300,7 +326,14 @@ function newsBible() {
       chyron_title: init.chyron_title || '',
       bgm_id: init.bgm_id || '',
       bgm_volume_db: typeof init.bgm_volume_db === 'number' ? init.bgm_volume_db : -16,
+      audio_speed: typeof init.audio_speed === 'number' ? init.audio_speed : 1.0,
     },
+    speedOptions: [
+      {value: 1.10, label: '快', desc: '紧凑 · 10% 加速'},
+      {value: 1.00, label: '正常', desc: 'TTS 原速'},
+      {value: 0.92, label: '缓', desc: '清晰 · 8% 减速'},
+      {value: 0.85, label: '慢', desc: '从容 · 15% 减速'},
+    ],
     bgmList: [],
     bgmPreviewUrl: '',
     bgmPreviewId: '',
@@ -379,6 +412,9 @@ function newsBible() {
       const t0 = Date.now();
       this._tick = setInterval(() => { this.elapsed = Math.round((Date.now() - t0) / 1000); }, 500);
       try {
+        // 先 flush 任何 pending 的 bible 保存（避免 chyron / bgm 等设置丢失）
+        clearTimeout(this._formWatcher);
+        await this.saveBible();
         const r = await fetch(`/api/news/{{ video_id }}/generate-audio`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(this.form),
