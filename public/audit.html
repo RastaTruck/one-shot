@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>项目鸟瞰站 · 视频批量生成</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/static/vendor/alpine.min.js" defer></script>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+  [x-cloak] { display: none !important; }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 3px; }
+</style>
+</head>
+<body class="bg-stone-50 text-stone-900 min-h-screen">
+
+<div x-data="auditApp()" x-init="load()" x-cloak class="max-w-[1600px] mx-auto px-6 py-6 space-y-5">
+
+  <!-- HEADER -->
+  <header class="flex items-baseline justify-between border-b border-stone-200 pb-3">
+    <div>
+      <h1 class="text-[22px] font-semibold text-stone-900">项目鸟瞰站</h1>
+      <p class="text-[12px] text-stone-500 mt-0.5">视频批量生成 · 三管线 + 工坊 + 共享层 + 基建</p>
+    </div>
+    <div class="text-right text-[11px] text-stone-500" x-show="data">
+      最后构建：<span x-text="data.generated_at"></span> ·
+      <code class="bg-stone-100 px-1.5 py-0.5 rounded">python3 scripts/build_audit_data.py</code> 重建
+    </div>
+  </header>
+
+  <!-- ERROR -->
+  <div x-show="error" x-text="error" class="rounded p-4 bg-rose-50 text-rose-700 text-[13px]"></div>
+
+  <!-- SUMMARY HERO -->
+  <div x-show="data" class="grid grid-cols-5 gap-3">
+    <div class="rounded-xl bg-stone-900 text-white p-4">
+      <div class="text-[10px] uppercase tracking-wider text-stone-400">总实体</div>
+      <div class="mt-1 text-[32px] font-bold leading-none" x-text="data.summary.total_entities"></div>
+      <div class="mt-1 text-[10px] text-stone-400">含 module/template/tool/config</div>
+    </div>
+    <div class="rounded-xl bg-white border border-stone-200 p-4">
+      <div class="text-[10px] uppercase tracking-wider text-stone-500">代码行</div>
+      <div class="mt-1 text-[32px] font-bold leading-none text-stone-900" x-text="(data.summary.total_lines / 1000).toFixed(1) + 'k'"></div>
+      <div class="mt-1 text-[10px] text-stone-500" x-text="data.summary.total_lines + ' 行'"></div>
+    </div>
+    <div class="rounded-xl bg-amber-50 border border-amber-200 p-4">
+      <div class="text-[10px] uppercase tracking-wider text-amber-700">已废 entities</div>
+      <div class="mt-1 text-[32px] font-bold leading-none text-amber-700" x-text="data.summary.deprecated_count"></div>
+      <div class="mt-1 text-[10px] text-amber-600">deprecated 注释命中</div>
+    </div>
+    <div class="rounded-xl bg-rose-50 border border-rose-200 p-4">
+      <div class="text-[10px] uppercase tracking-wider text-rose-700">孤儿 (no_source)</div>
+      <div class="mt-1 text-[32px] font-bold leading-none text-rose-700" x-text="data.summary.orphan_count"></div>
+      <div class="mt-1 text-[10px] text-rose-600">没人 import 的 module</div>
+    </div>
+    <div class="rounded-xl bg-blue-50 border border-blue-200 p-4">
+      <div class="text-[10px] uppercase tracking-wider text-blue-700">DB 项目</div>
+      <div class="mt-1 text-[28px] font-bold leading-none text-blue-700">
+        <span x-text="totalProjects"></span>
+      </div>
+      <div class="mt-1 text-[10px] text-blue-700 space-x-2">
+        <template x-for="(n, t) in (data.summary.db_projects || {})">
+          <span><b x-text="t"></b>:<span x-text="n"></span></span>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB BAR -->
+  <div x-show="data" class="flex items-center gap-1 border-b border-stone-200">
+    <template x-for="t in tabs" :key="t.id">
+      <button @click="tab = t.id"
+              :class="tab === t.id ? 'border-emerald-600 text-emerald-700 font-semibold' : 'border-transparent text-stone-500 hover:text-stone-900'"
+              class="px-4 py-2.5 text-[13px] border-b-2 -mb-px transition flex items-center gap-2">
+        <span x-text="t.label"></span>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-stone-100 text-stone-600" x-text="t.count"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- ===== TAB 1 · 管线 lanes ===== -->
+  <div x-show="data && tab === 'lanes'" class="space-y-3">
+    <div class="flex items-center gap-3">
+      <input x-model="filter" type="text" placeholder="按文件名 / 路径过滤..."
+             class="flex-1 px-3 py-2 rounded-lg border border-stone-200 text-[13px]
+                    focus:border-emerald-400 focus:ring-1 focus:ring-emerald-100 outline-none">
+      <label class="flex items-center gap-1.5 text-[12px] text-stone-600">
+        <input type="checkbox" x-model="hideActive" class="rounded text-emerald-600">
+        <span>只看 deprecated / 孤儿</span>
+      </label>
+    </div>
+
+    <div class="grid grid-cols-6 gap-3">
+      <template x-for="p in PIPELINE_ORDER" :key="p.id">
+        <div class="rounded-xl border border-stone-200 bg-white overflow-hidden flex flex-col">
+          <!-- lane header -->
+          <div :class="p.color + ' border-b'" class="px-3 py-2">
+            <div class="flex items-baseline justify-between">
+              <div class="font-semibold text-[13px]" x-text="p.label"></div>
+              <div class="text-[11px] text-stone-500" x-text="entitiesInLane(p.id).length + ' 项'"></div>
+            </div>
+          </div>
+          <!-- entity list -->
+          <div class="flex-1 overflow-y-auto max-h-[640px] scrollbar-thin p-2 space-y-1">
+            <template x-for="e in entitiesInLane(p.id).filter(filterFn)" :key="e.id">
+              <div @click="selected = e"
+                   :class="entityCardClass(e)"
+                   class="px-2 py-1.5 rounded border cursor-pointer transition text-[11.5px] hover:border-stone-400">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="font-mono truncate" x-text="e.id.split('/').slice(-1)[0]" :title="e.id"></div>
+                  <span class="shrink-0 text-[9px] uppercase px-1 py-0.5 rounded font-semibold"
+                        :class="kindBadgeClass(e.kind)" x-text="e.kind"></span>
+                </div>
+                <div class="mt-0.5 flex items-center gap-2 text-[10px] text-stone-500">
+                  <span x-text="e.lines + ' 行'"></span>
+                  <span x-show="e.lifecycle === 'deprecated'" class="text-amber-700 font-semibold">⚠ deprecated</span>
+                  <span x-show="e.used_by.length === 0 && e.kind !== 'template' && e.kind !== 'route_hub' && e.kind !== 'config' && e.kind !== 'script'" class="text-rose-600">无引用</span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== TAB 2 · Lifecycle signals ===== -->
+  <div x-show="data && tab === 'lifecycle'" class="space-y-5">
+
+    <!-- legacy endpoints -->
+    <section class="rounded-xl bg-white border border-stone-200 p-4">
+      <h3 class="font-semibold text-[14px] mb-2 text-amber-700">⚠ Legacy 端点（仍在 app.py 提供服务）</h3>
+      <p class="text-[11px] text-stone-500 mb-3">这些路由 / 函数名带 legacy / v1 / v2 标记 —— 应该有计划下线或迁移</p>
+      <div class="space-y-1.5">
+        <template x-for="ep in (data.lifecycle_signals.legacy_endpoints || [])">
+          <div class="flex items-center gap-3 px-3 py-2 rounded bg-amber-50/40 border border-amber-100 text-[12px]">
+            <span class="px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 text-[10px] font-mono font-bold" x-text="ep.method"></span>
+            <code class="font-mono text-stone-900" x-text="ep.path"></code>
+            <span class="text-stone-400">→</span>
+            <code class="font-mono text-amber-700" x-text="ep.function"></code>
+          </div>
+        </template>
+        <div x-show="!(data.lifecycle_signals.legacy_endpoints || []).length" class="text-[12px] text-stone-400 italic">无</div>
+      </div>
+    </section>
+
+    <!-- deprecated fields -->
+    <section class="rounded-xl bg-white border border-stone-200 p-4">
+      <h3 class="font-semibold text-[14px] mb-2 text-amber-700">⚠ 已废字段（schema 还在但不再用）</h3>
+      <p class="text-[11px] text-stone-500 mb-3">_meta.py 里注释含「已废 / deprecated」的字段</p>
+      <table class="w-full text-[12px]">
+        <thead><tr class="text-left text-[10px] uppercase tracking-wider text-stone-500 border-b border-stone-200">
+          <th class="py-2">文件</th><th>行</th><th>字段</th><th>注释片段</th>
+        </tr></thead>
+        <tbody>
+          <template x-for="f in (data.lifecycle_signals.deprecated_fields || [])">
+            <tr class="border-b border-stone-100 hover:bg-stone-50">
+              <td class="py-1.5 font-mono text-[11px] text-stone-700" x-text="f.file.split('/').slice(-1)[0]"></td>
+              <td class="text-stone-500" x-text="f.line"></td>
+              <td class="font-mono text-amber-700 font-semibold" x-text="f.field"></td>
+              <td class="text-stone-600 truncate max-w-md" x-text="f.context"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- V1/V2 共存 -->
+    <section class="rounded-xl bg-white border border-stone-200 p-4">
+      <h3 class="font-semibold text-[14px] mb-2 text-blue-700">🔄 V1 / V2 共存（重构期信号）</h3>
+      <p class="text-[11px] text-stone-500 mb-3">同文件里 V1 + V2 标记 → 重构未完成 / 双轨服务中</p>
+      <div class="space-y-2">
+        <template x-for="v in (data.lifecycle_signals.v1_v2_pairs || [])">
+          <div class="px-3 py-2 rounded bg-blue-50/40 border border-blue-100">
+            <div class="font-mono text-[11px] text-stone-900 mb-1" x-text="v.file"></div>
+            <div class="grid grid-cols-2 gap-2 text-[10.5px]">
+              <div>
+                <span class="text-blue-700 font-semibold">V1 ({{ '$' }}{v.v1_count}):</span>
+                <code class="block mt-0.5 text-stone-600" x-text="v.v1_example"></code>
+              </div>
+              <div>
+                <span class="text-blue-700 font-semibold">V2 ({{ '$' }}{v.v2_count}):</span>
+                <code class="block mt-0.5 text-stone-600" x-text="v.v2_example"></code>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <!-- removed in 180d -->
+    <section class="rounded-xl bg-white border border-stone-200 p-4">
+      <h3 class="font-semibold text-[14px] mb-2 text-rose-700">🗑 180 天内删除的文件</h3>
+      <p class="text-[11px] text-stone-500 mb-3">git log 反推 · ⚠ 标记的还有现存代码引用（潜在 dead reference）</p>
+      <div class="space-y-1.5">
+        <template x-for="d in (data.lifecycle_signals.removed_files_180d || [])">
+          <div class="px-3 py-2 rounded border text-[12px]"
+               :class="d.still_referenced_in?.length ? 'bg-rose-50/40 border-rose-200' : 'bg-stone-50 border-stone-200'">
+            <div class="flex items-center justify-between gap-3">
+              <code class="font-mono text-stone-900" x-text="d.path"></code>
+              <div class="text-[10px] text-stone-500">
+                <span x-text="d.deleted_at"></span>
+                <code class="ml-2 text-stone-400" x-text="d.deleted_in"></code>
+              </div>
+            </div>
+            <div class="mt-0.5 text-[10.5px] text-stone-600" x-text="d.commit_msg"></div>
+            <div x-show="d.still_referenced_in?.length" class="mt-1.5 text-[10.5px] text-rose-700">
+              ⚠ 还被引用：<span x-text="d.still_referenced_in.join(', ')"></span>
+            </div>
+          </div>
+        </template>
+        <div x-show="!(data.lifecycle_signals.removed_files_180d || []).length" class="text-[12px] text-stone-400 italic">无</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== TAB 3 · Orphans ===== -->
+  <div x-show="data && tab === 'orphans'" class="space-y-5">
+
+    <section class="rounded-xl bg-white border border-stone-200 p-4">
+      <h3 class="font-semibold text-[14px] mb-2 text-rose-700">无引用 entities（dead code 候选）</h3>
+      <p class="text-[11px] text-stone-500 mb-3">没人 import · 不是 template/route/config/script —— 可能是真死代码，也可能是被动态加载</p>
+      <table class="w-full text-[12px]">
+        <thead><tr class="text-left text-[10px] uppercase tracking-wider text-stone-500 border-b border-stone-200">
+          <th class="py-2">文件</th><th>类型</th><th>管线</th>
+        </tr></thead>
+        <tbody>
+          <template x-for="o in (data.orphans.no_source || [])">
+            <tr class="border-b border-stone-100 hover:bg-stone-50">
+              <td class="py-1.5 font-mono text-[11px]" x-text="o.id"></td>
+              <td class="text-stone-600" x-text="o.kind"></td>
+              <td><span class="text-[10px] px-1.5 py-0.5 rounded bg-stone-100" x-text="o.pipeline"></span></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="rounded-xl bg-white border border-stone-200 p-4">
+      <h3 class="font-semibold text-[14px] mb-2 text-amber-700">⚠ 已废但仍被引用（最危险类）</h3>
+      <p class="text-[11px] text-stone-500 mb-3">deprecated 标记 + 还有 used_by —— 应清理调用方或正式移除标记</p>
+      <div class="space-y-2">
+        <template x-for="o in (data.orphans.deprecated_with_refs || [])">
+          <div class="px-3 py-2 rounded bg-amber-50/40 border border-amber-200 text-[12px]">
+            <code class="font-mono font-semibold text-amber-900" x-text="o.id"></code>
+            <div class="mt-1 text-[10.5px] text-stone-600">仍被：<span x-text="o.used_by.join(', ')"></span></div>
+            <div class="mt-1 text-[10px] text-amber-700">信号：<span x-text="(o.signals||[]).join(' | ')"></span></div>
+          </div>
+        </template>
+        <div x-show="!(data.orphans.deprecated_with_refs || []).length" class="text-[12px] text-stone-400 italic">无</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== SELECTED ENTITY DRAWER ===== -->
+  <div x-show="selected" x-cloak @click.away="selected = null"
+       class="fixed inset-y-0 right-0 w-[480px] bg-white border-l border-stone-300 shadow-2xl overflow-y-auto z-50"
+       x-transition:enter="transition transform ease-out duration-200"
+       x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0">
+    <div x-show="selected" class="p-5 space-y-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-stone-500" x-text="selected.kind + ' · ' + selected.pipeline"></div>
+          <div class="mt-1 font-mono text-[13px] font-semibold text-stone-900 break-all" x-text="selected.id"></div>
+        </div>
+        <button @click="selected = null" class="text-stone-400 hover:text-stone-900 text-[20px] leading-none">×</button>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="rounded bg-stone-100 p-2">
+          <div class="text-[20px] font-bold" x-text="selected.lines"></div>
+          <div class="text-[10px] text-stone-500">行数</div>
+        </div>
+        <div class="rounded bg-stone-100 p-2">
+          <div class="text-[20px] font-bold" x-text="selected.depends_on.length"></div>
+          <div class="text-[10px] text-stone-500">依赖</div>
+        </div>
+        <div class="rounded bg-stone-100 p-2">
+          <div class="text-[20px] font-bold" x-text="selected.used_by.length"></div>
+          <div class="text-[10px] text-stone-500">被引用</div>
+        </div>
+      </div>
+
+      <div x-show="selected.lifecycle === 'deprecated'" class="rounded p-2.5 bg-amber-50 border border-amber-200 text-[12px] text-amber-800">
+        ⚠ deprecated 信号：
+        <ul class="mt-1 pl-4 list-disc text-[11px] space-y-0.5">
+          <template x-for="s in selected.lifecycle_signals"><li x-text="s"></li></template>
+        </ul>
+      </div>
+
+      <div x-show="selected.depends_on.length">
+        <div class="text-[10px] uppercase tracking-wider text-stone-500 mb-1.5">依赖（imports）</div>
+        <div class="space-y-0.5">
+          <template x-for="d in selected.depends_on">
+            <div class="px-2 py-1 rounded bg-stone-50 text-[11px] font-mono" x-text="d"></div>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="selected.used_by.length">
+        <div class="text-[10px] uppercase tracking-wider text-stone-500 mb-1.5">被引用</div>
+        <div class="space-y-0.5">
+          <template x-for="u in selected.used_by">
+            <div class="px-2 py-1 rounded bg-stone-50 text-[11px] font-mono" x-text="u"></div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function auditApp() {
+  return {
+    data: null,
+    error: '',
+    tab: 'lanes',
+    filter: '',
+    hideActive: false,
+    selected: null,
+
+    PIPELINE_ORDER: [
+      {id: 'news',     label: 'News',        color: 'bg-emerald-50 border-emerald-200'},
+      {id: 'outhan',   label: 'Outhan',      color: 'bg-blue-50 border-blue-200'},
+      {id: 'yierbubu', label: '一二布布',     color: 'bg-amber-50 border-amber-200'},
+      {id: 'forge',    label: '热点工坊',     color: 'bg-rose-50 border-rose-200'},
+      {id: 'shared',   label: '共享层',       color: 'bg-violet-50 border-violet-200'},
+      {id: 'infra',    label: '基建',         color: 'bg-stone-100 border-stone-300'},
+    ],
+
+    get tabs() {
+      const d = this.data;
+      if (!d) return [];
+      return [
+        {id: 'lanes',     label: '管线 lanes',    count: d.summary.total_entities},
+        {id: 'lifecycle', label: 'Lifecycle 信号', count:
+          (d.lifecycle_signals.legacy_endpoints?.length || 0) +
+          (d.lifecycle_signals.deprecated_fields?.length || 0) +
+          (d.lifecycle_signals.v1_v2_pairs?.length || 0) +
+          (d.lifecycle_signals.removed_files_180d?.length || 0)},
+        {id: 'orphans',   label: 'Orphans',       count: (d.orphans.no_source?.length||0) + (d.orphans.deprecated_with_refs?.length||0)},
+      ];
+    },
+
+    get totalProjects() {
+      const dbp = this.data?.summary?.db_projects || {};
+      return Object.values(dbp).reduce((a,b)=>a+(typeof b==='number'?b:0),0);
+    },
+
+    async load() {
+      try {
+        const r = await fetch('/audit-data.json?t=' + Date.now());
+        if (!r.ok) { this.error = 'audit-data.json 加载失败 · 跑 python3 scripts/build_audit_data.py 生成'; return; }
+        this.data = await r.json();
+      } catch(e) { this.error = '加载失败: ' + e.message; }
+    },
+
+    entitiesInLane(pipelineId) {
+      if (!this.data) return [];
+      return this.data.entities.filter(e => e.pipeline === pipelineId);
+    },
+
+    filterFn(e) {
+      if (this.hideActive && e.lifecycle === 'active' &&
+          !(e.used_by.length === 0 && !['template','route_hub','config','script'].includes(e.kind))) {
+        return false;
+      }
+      if (this.filter && !e.id.toLowerCase().includes(this.filter.toLowerCase())) return false;
+      return true;
+    },
+
+    entityCardClass(e) {
+      if (e.lifecycle === 'deprecated') return 'bg-amber-50 border-amber-200';
+      if (e.used_by.length === 0 && !['template','route_hub','config','script'].includes(e.kind)) return 'bg-rose-50/60 border-rose-200';
+      return 'bg-white border-stone-200';
+    },
+
+    kindBadgeClass(kind) {
+      return {
+        module: 'bg-stone-100 text-stone-700',
+        template: 'bg-blue-100 text-blue-700',
+        tool: 'bg-violet-100 text-violet-700',
+        config: 'bg-emerald-100 text-emerald-700',
+        script: 'bg-stone-100 text-stone-600',
+        schema: 'bg-amber-100 text-amber-800',
+        route_hub: 'bg-rose-100 text-rose-700',
+      }[kind] || 'bg-stone-100 text-stone-600';
+    },
+  };
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block page_title %}鸟瞰 · {{ bird.title or bird.video_id }}{% endblock %}
+
+{% block content %}
+<div class="max-w-[1100px] mx-auto px-6 py-6 space-y-5">
+
+  <!-- ===== 顶部 hero · 项目身份 + 完成度 ===== -->
+  <div class="rounded-2xl bg-white border border-ink-200 p-6 shadow-soft">
+    <div class="flex items-start justify-between gap-6">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-baseline gap-2 mb-1">
+          <span class="text-[11px] font-mono text-ink-400">{{ bird.video_id }}</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded font-semibold
+                       {% if bird.pipeline_type == 'news' %}bg-emerald-100 text-emerald-700{% elif bird.pipeline_type == 'outhan' %}bg-blue-100 text-blue-700{% else %}bg-amber-100 text-amber-700{% endif %}">{{ bird.pipeline_label }}</span>
+        </div>
+        <h1 class="font-display text-[24px] font-bold text-ink-900 truncate">{{ bird.title }}</h1>
+      </div>
+      <div class="shrink-0 text-right">
+        <div class="text-[42px] font-bold leading-none
+                    {% if bird.percent == 100 %}text-emerald-600{% elif bird.percent >= 50 %}text-ink-900{% else %}text-ink-400{% endif %}">
+          {{ bird.percent }}<span class="text-[18px] font-normal text-ink-400">%</span>
+        </div>
+        <div class="mt-1 text-[11px] text-ink-500">{{ bird.n_done }} / {{ bird.n_total }} 步完成</div>
+      </div>
+    </div>
+    <!-- 进度条 -->
+    <div class="mt-4 h-2 rounded-full bg-ink-100 overflow-hidden">
+      <div class="h-full rounded-full transition-all duration-500
+                  {% if bird.pipeline_type == 'news' %}bg-emerald-500{% elif bird.pipeline_type == 'outhan' %}bg-blue-500{% else %}bg-amber-500{% endif %}"
+           style="width: {{ bird.percent }}%"></div>
+    </div>
+  </div>
+
+  <!-- ===== 步骤时间线 ===== -->
+  <div class="space-y-3">
+    {% for s in bird.steps %}
+    <a href="{{ s.url }}"
+       class="block rounded-2xl bg-white border-2 transition shadow-soft hover:shadow-lg
+              {% if s.done %}border-emerald-200 hover:border-emerald-400{% elif s.in_progress %}border-blue-300 hover:border-blue-500 ring-2 ring-blue-100{% else %}border-ink-200 hover:border-ink-300{% endif %}">
+
+      <div class="p-5 flex items-start gap-4">
+        <!-- 步骤序号圆 -->
+        <div class="shrink-0 w-12 h-12 rounded-full flex items-center justify-center text-[20px] font-bold
+                    {% if s.done %}bg-emerald-500 text-white{% elif s.in_progress %}bg-blue-500 text-white animate-pulse{% else %}bg-ink-100 text-ink-400{% endif %}">
+          {% if s.done %}
+          <i data-lucide="check" class="w-6 h-6"></i>
+          {% else %}
+          {{ s.n }}
+          {% endif %}
+        </div>
+
+        <!-- 主体内容 -->
+        <div class="flex-1 min-w-0">
+          <div class="flex items-baseline gap-2 mb-1">
+            <h3 class="font-display text-[17px] font-semibold
+                       {% if s.done %}text-ink-900{% elif s.in_progress %}text-blue-700{% else %}text-ink-500{% endif %}">
+              步骤 {{ s.n }} · {{ s.label }}
+            </h3>
+            {% if s.done %}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold uppercase tracking-wider">已完成</span>
+            {% elif s.in_progress %}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-semibold uppercase tracking-wider animate-pulse">进行中</span>
+            {% else %}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-ink-100 text-ink-500 font-semibold uppercase tracking-wider">未开始</span>
+            {% endif %}
+          </div>
+
+          <!-- 产物预览 -->
+          {% if s.artifact.kind == 'text' and s.artifact.value %}
+          <p class="text-[13px] text-ink-700 leading-relaxed line-clamp-2">{{ s.artifact.value }}</p>
+          {% elif s.artifact.kind == 'image' and s.artifact.value %}
+          <img src="{{ s.artifact.value }}" alt="首帧" class="mt-2 max-h-32 rounded-lg border border-ink-200">
+          {% elif s.artifact.kind == 'audio' and s.artifact.value != '/' %}
+          <audio controls src="{{ s.artifact.value }}" class="mt-2 w-full max-w-md h-9"></audio>
+          {% elif s.artifact.kind == 'video' and s.artifact.value != '/' %}
+          <video controls src="{{ s.artifact.value }}" class="mt-2 max-h-48 rounded-lg border border-ink-200"></video>
+          {% else %}
+          <p class="text-[12px] text-ink-400">{% if s.done %}无可预览产物{% else %}还没开始{% endif %}</p>
+          {% endif %}
+
+          {% if s.artifact.extra %}
+          <div class="mt-2 text-[11px] text-ink-500">{{ s.artifact.extra }}</div>
+          {% endif %}
+        </div>
+
+        <!-- 跳转按钮 -->
+        <div class="shrink-0 self-center">
+          <div class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                      {% if s.done %}text-emerald-700 group-hover:bg-emerald-50{% elif s.in_progress %}text-blue-700 bg-blue-50{% else %}text-ink-500{% endif %}">
+            <span>{% if s.done %}查看{% elif s.in_progress %}继续{% else %}进入{% endif %}</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <!-- 底部 ===== -->
+  <div class="flex items-center justify-between pt-3 text-[11px] text-ink-500">
+    <a href="/" class="hover:underline">← 回项目看板</a>
+    <span>这页只读 · 改动请进各步骤</span>
+  </div>
+
+</div>
+{% endblock %}

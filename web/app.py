@@ -57,6 +57,11 @@ _NEWS_BGM_DIR = Path(__file__).resolve().parent.parent / "口播bgm"
 _NEWS_BGM_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/news-bgm", StaticFiles(directory=str(_NEWS_BGM_DIR)), name="news_bgm")
 
+# 鸟瞰站静态资源 · /audit → public/audit.html · /audit-data.json → 同目录
+_PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
+if _PUBLIC_DIR.exists():
+    app.mount("/public", StaticFiles(directory=str(_PUBLIC_DIR)), name="public")
+
 
 # 禁缓存 HTML —— 否则 user 浏览器会卡在旧 base.html（旧 CDN 链接 / 旧字段）
 @app.middleware("http")
@@ -911,6 +916,25 @@ async def dashboard(request: Request):
     ))
 
 
+@app.get("/audit", response_class=HTMLResponse)
+async def audit_birds_eye():
+    """项目鸟瞰站 · 静态 HTML 读 /audit-data.json 渲染。
+    数据由 scripts/build_audit_data.py 生成。"""
+    audit_html = _PUBLIC_DIR / "audit.html"
+    if not audit_html.exists():
+        return HTMLResponse("<h1>鸟瞰站未生成</h1><p>运行 <code>python3 scripts/build_audit_data.py</code> 生成数据。</p>", status_code=503)
+    return HTMLResponse(audit_html.read_text(encoding="utf-8"))
+
+
+@app.get("/audit-data.json")
+async def audit_data():
+    """暴露 public/audit-data.json 给 /audit 页面读取。"""
+    data_file = _PUBLIC_DIR / "audit-data.json"
+    if not data_file.exists():
+        return JSONResponse({"error": "audit-data.json 未生成 · 跑 scripts/build_audit_data.py"}, status_code=404)
+    return JSONResponse(_json.loads(data_file.read_text(encoding="utf-8")))
+
+
 @app.get("/project/new")
 async def project_new(type: str = "yierbubu"):
     """新建项目入口。
@@ -959,6 +983,125 @@ def _news_render_ctx(video_id: str, current_step: int) -> dict:
         "forge_supplements": data.get("forge_supplements"),
         "forge_signal": data.get("forge_signal"),
     }
+
+
+@app.get("/project/{video_id}/birds-eye", response_class=HTMLResponse)
+async def project_birds_eye(request: Request, video_id: str):
+    """单项目鸟瞰 · 把这个 project 在它管线里 N 步全摊开，每步显示完成度 + 产物 + 跳转。
+
+    用户用来"我自己看进度"——不用一步步翻，一页看完。
+    支持 news / outhan / yierbubu 三种管线，自动按 project_type 渲染对应 schema。
+    """
+    proj = _state.get_video(video_id)
+    if not proj:
+        return RedirectResponse(url="/", status_code=303)
+    pt = proj.project_type or "yierbubu"
+    meta = proj.meta or {}
+
+    # 每条管线的步骤定义 [(step_num, slug, label, done_predicate(sub_data) → bool, artifact_dict(sub_data) → {kind, ...})]
+    def _news_steps(sub):
+        return [
+            (1, "topic", "选题",
+             bool(sub.get("topic_picked")),
+             {"kind": "text", "value": (sub.get("topic_picked") or {}).get("title", "")}),
+            (2, "script", "文案",
+             bool(sub.get("script_text")),
+             {"kind": "text", "value": (sub.get("script_text") or "")[:120],
+              "extra": f"{sub.get('script_char_count', 0)} 字 · {len(sub.get('script_units') or [])} 条字幕单元"}),
+            (3, "presenter", "镜头模板",
+             bool(sub.get("shot_template_id")),
+             {"kind": "text", "value": sub.get("shot_template_id") or ""}),
+            (4, "audio", "成片要素 · 配音",
+             bool(sub.get("audio_path")),
+             {"kind": "audio", "value": "/" + sub.get("audio_path", ""),
+              "extra": f"{sub.get('audio_duration_sec', 0):.1f}s · 语速 {sub.get('audio_speed', 1.0)}× · {sub.get('voice_provider', '')}"}),
+            (5, "video", "视频合成",
+             bool(sub.get("final_video_path")),
+             {"kind": "video", "value": "/" + sub.get("final_video_path", "")}),
+            (6, "export", "导出 / Lipsync",
+             bool(sub.get("lipsync_video_path")),
+             {"kind": "video", "value": "/" + (sub.get("lipsync_video_path") or "")}),
+        ]
+
+    def _outhan_steps(sub):
+        assets = sub.get("outhan_assets") or []
+        segments = sub.get("segments") or []
+        first_frame = next((a for a in assets if a.get("id") == sub.get("first_frame_asset_id")), None)
+        return [
+            (1, "topic", "选题 + 首帧",
+             bool(sub.get("topic_locked") and first_frame),
+             {"kind": "image" if first_frame else "text",
+              "value": f"/api/outhan/{video_id}/asset/{first_frame['id']}" if first_frame else (sub.get("topic_text") or ""),
+              "extra": f"{len(assets)} 个素材"}),
+            (2, "script", "台本",
+             bool(sub.get("script_text")),
+             {"kind": "text", "value": (sub.get("script_text") or "")[:120],
+              "extra": f"{len(segments)} 段"}),
+            (3, "video", "分段视频",
+             segments and all(s.get("video_path") for s in segments),
+             {"kind": "text", "value": f"{sum(1 for s in segments if s.get('video_path'))}/{len(segments)} 段已生成"}),
+            (4, "audio", "配音",
+             segments and all(s.get("audio_path") for s in segments),
+             {"kind": "text", "value": f"{sum(1 for s in segments if s.get('audio_path'))}/{len(segments)} 段已配音"}),
+            (5, "package", "打包成片",
+             bool(sub.get("final_mp4_path")),
+             {"kind": "video", "value": "/" + (sub.get("final_mp4_path") or "")}),
+        ]
+
+    if pt == "news":
+        sub = meta.get("news", {})
+        steps_def = _news_steps(sub)
+        pipeline_label = "News · 新闻口播"
+        route_base = f"/project/{video_id}/news"
+    elif pt == "outhan":
+        sub = meta.get("outhan", {})
+        steps_def = _outhan_steps(sub)
+        pipeline_label = "Outhan · 通用单条"
+        route_base = f"/project/{video_id}/outhan"
+    else:
+        # yierbubu 老管线：用 project_topic / project_style / project_shot_table 等表判断；
+        # 这里给个最小可用版（项目存在即标"草稿"，剩下未实装）
+        sub = {}
+        steps_def = [
+            (1, "topic", "选题", bool(proj.topic), {"kind": "text", "value": proj.topic or ""}),
+            (2, "script", "文案", False, {"kind": "text", "value": ""}),
+            (3, "shots", "分镜", False, {"kind": "text", "value": "（未实装）"}),
+            (4, "assets", "素材", False, {"kind": "text", "value": "（未实装）"}),
+            (5, "audio", "音频", False, {"kind": "text", "value": "（未实装）"}),
+            (6, "edit", "成片", bool(proj.final_video_path), {"kind": "text", "value": ""}),
+        ]
+        pipeline_label = "一二布布 · 多镜头"
+        route_base = f"/project/{video_id}"
+
+    # 进度统计
+    n_total = len(steps_def)
+    n_done = sum(1 for s in steps_def if s[3])
+    current_step = sub.get("current_step", 1) if sub else 1
+
+    steps_view = []
+    for n, slug, label, done, artifact in steps_def:
+        in_progress = (not done) and (n == current_step)
+        steps_view.append({
+            "n": n, "slug": slug, "label": label,
+            "done": done, "in_progress": in_progress,
+            "artifact": artifact,
+            "url": f"{route_base}/{slug}" if slug else route_base,
+        })
+
+    return TEMPLATES.TemplateResponse("project_birds_eye.html", build_ctx(
+        request, "birds-eye", video_id=video_id,
+        bird={
+            "video_id": video_id,
+            "title": proj.title,
+            "pipeline_label": pipeline_label,
+            "pipeline_type": pt,
+            "n_done": n_done,
+            "n_total": n_total,
+            "percent": int(n_done * 100 / n_total) if n_total else 0,
+            "current_step": current_step,
+            "steps": steps_view,
+        }
+    ))
 
 
 @app.get("/project/{video_id}/news", response_class=HTMLResponse)

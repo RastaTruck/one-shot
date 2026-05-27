@@ -68,3 +68,6 @@ hyperframes_studio/renders/
 
 # Claude worktrees（隔离工作树，不进主仓库历史）
 .claude/worktrees/
+
+# 鸟瞰站生成数据（每机器路径 + 各自重建）
+public/audit-data.json
